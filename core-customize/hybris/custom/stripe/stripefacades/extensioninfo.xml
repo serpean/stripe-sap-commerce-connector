@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensioninfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="extensioninfo.xsd">
+    
+      <extension abstractclassprefix="Generated" classprefix="StripeFacades" name="stripefacades">
+        <requires-extension name="commercefacades"/>
+        <requires-extension name="stripecore"/>
+
+          <coremodule generated="true" manager="de.hybris.platform.jalo.extension.GenericManager" packageroot="com.stripe.facades"/>
+
+        <meta key="extgen-template-extension" value="true"/>
+    </extension>
+</extensioninfo>

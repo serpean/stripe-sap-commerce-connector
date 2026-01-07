@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<items xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="items.xsd">
+
+    <enumtypes>
+        <enumtype code="StripeCaptureMode">
+            <value code="automatic"/>
+            <value code="manual"/>
+        </enumtype>
+    </enumtypes>
+
+    <itemtypes>
+        <typegroup name="PaymentInfo">
+            <itemtype code="StripePaymentInfo" extends="PaymentInfo">
+                <description>
+                    Genric PaymentInfo for all Stripe-managed methods (card, PayPal, APMs, wallets).
+                    Avoids method-specific fields.
+                </description>
+                <attributes>
+                    <attribute qualifier="stripePaymentIntentId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true" write="true" read="true" search="true"/>
+                    </attribute>
+                </attributes>
+            </itemtype>
+        </typegroup>
+
+        <typegroup name="Payment">
+            <itemtype code="PaymentTransaction" autocreate="false" generate="false">
+                <attributes>
+                    <attribute qualifier="stripeCaptureMode" type="StripeCaptureMode">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                        <description>automatic/manual</description>
+                    </attribute>
+                </attributes>
+            </itemtype>
+        </typegroup>
+    </itemtypes>
+</items>

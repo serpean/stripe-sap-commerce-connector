@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "StripePaymentSchematicsSchema",
+  "title": "Stripe Payment Schematics",
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "The name of the project.",
+      "$default": {
+        "$source": "projectName"
+      }
+    },
+    "publishableKey": {
+      "type": "string",
+      "description": "Your Stripe publishable API key (pk_test_... or pk_live_...)",
+      "x-prompt": "Enter your Stripe publishable key:"
+    },
+    "lazy": {
+      "type": "boolean",
+      "description": "Lazy load the Stripe Payment feature",
+      "default": true
+    },
+    "debug": {
+      "type": "boolean",
+      "description": "Display additional details during the running process",
+      "default": false
+    }
+  },
+  "required": []
+}

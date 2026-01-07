@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <bean id="stripeConfigurationService" class="com.stripe.core.config.DefaultStripeConfigurationService">
+        <property name="configurationService" ref="configurationService"/>
+    </bean>
+
+    <bean id="stripeClient" class="com.stripe.core.stripe.StripeClient">
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+    </bean>
+
+    <bean id="stripePaymentProvider" class="com.stripe.core.stripe.StripePaymentProvider">
+        <property name="stripeClient" ref="stripeClient"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <bean id="stripeWebhookService" class="com.stripe.core.stripe.StripeWebhookService">
+        <property name="modelService" ref="modelService"/>
+        <property name="assistedServiceService" ref="assistedServiceService"/>
+    </bean>
+
+    <alias name="defaultStripePaymentTransactionService" alias="stripePaymentTransactionService"/>
+    <bean id="defaultStripePaymentTransactionService"
+          class="com.stripe.core.payment.services.impl.DefaultStripePaymentTransactionService">
+        <property name="modelService" ref="modelService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
+    <alias name="defaultStripeRequestFactory" alias="stripeRequestFactory"/>
+    <bean id="defaultStripeRequestFactory"
+          class="com.stripe.core.payment.request.impl.DefaultStripeRequestFactory">
+        <property name="commonI18NService" ref="commonI18NService"/>
+    </bean>
+
+    <alias name="defaultStripePaymentIntegrationService" alias="stripePaymentIntegrationService"/>
+    <bean id="defaultStripePaymentIntegrationService"
+          class="com.stripe.core.payment.services.impl.DefaultStripePaymentIntegrationService">
+        <property name="stripeClient" ref="stripeClient"/>
+    </bean>
+
+    <import resource="stripecore-commands-spring.xml"/>
+</beans>

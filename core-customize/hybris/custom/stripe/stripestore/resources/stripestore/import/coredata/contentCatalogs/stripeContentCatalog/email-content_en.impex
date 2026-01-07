@@ -1,0 +1,112 @@
+# -----------------------------------------------------------------------
+# Copyright (c) 2022 SAP SE or an SAP affiliate company. All rights reserved.
+# -----------------------------------------------------------------------
+#
+# Import the CMS content for the Stripe site emails
+#
+$contentCatalog=stripeContentCatalog
+$contentCV=catalogVersion(CatalogVersion.catalog(Catalog.id[default=$contentCatalog]),CatalogVersion.version[default=Staged])[default=$contentCatalog:Staged]
+
+# Import config properties into impex macros for modulegen
+UPDATE GenericItem[processor=de.hybris.platform.commerceservices.impex.impl.ConfigPropertyImportProcessor];pk[unique=true]
+$emailResource=$config-emailResourceValue
+
+# Language
+$lang=en
+
+# CMS components and Email velocity templates
+UPDATE RendererTemplate;code[unique=true];description[lang=$lang];templateScript[lang=$lang,translator=de.hybris.platform.commerceservices.impex.impl.FileLoaderValueTranslator]
+ ;stripe-BannerComponent-template;"CMSBannerComponent Template";$emailResource/email-bannerComponentTemplate.vm
+ ;stripe-CMSImageComponent-template;"CMSImageComponent Template";$emailResource/email-cmsImageComponentTemplate.vm
+ ;stripe-CMSLinkComponent-template;"CMSLinkComponent Template";$emailResource/email-cmsLinkComponentTemplate.vm
+ ;stripe-CMSParagraphComponent-template;"CMSParagraphComponent Template";$emailResource/email-cmsParagraphComponentTemplate.vm
+ ;stripe-SimpleBannerComponent-template;"CMSSimpleBannerComponent Template";$emailResource/email-bannerComponentTemplate.vm
+ ;stripe-standalone-BannerComponent-template;"CMSBannerComponent Template";$emailResource/email-bannerComponentTemplate.vm
+ ;stripe-standalone-CMSImageComponent-template;"CMSImageComponent Template";$emailResource/email-cmsImageComponentTemplate.vm
+ ;stripe-standalone-CMSLinkComponent-template;"CMSLinkComponent Template";$emailResource/email-cmsLinkComponentTemplate.vm
+ ;stripe-standalone-CMSParagraphComponent-template;"CMSParagraphComponent Template";$emailResource/email-cmsParagraphComponentTemplate.vm
+ ;stripe-standalone-SimpleBannerComponent-template;"CMSSimpleBannerComponent Template";$emailResource/email-bannerComponentTemplate.vm
+ ;stripe_Email_Customer_Registration_Body;"Customer Registration Email Body";$emailResource/email-customerRegistrationBody.vm
+ ;stripe_Email_Customer_Registration_Subject;"Customer Registration Email Subject";$emailResource/email-customerRegistrationSubject.vm
+ ;stripe_Email_Delivery_Sent_Body;"Delivery Sent Email Body";$emailResource/email-deliverySentBody.vm
+ ;stripe_Email_Delivery_Sent_Subject;"Delivery Sent Email Subject";$emailResource/email-deliverySentSubject.vm
+ ;stripe_Email_Forgotten_Password_Body;"Forgotten Password Email Body";$emailResource/email-forgottenPasswordBody.vm
+ ;stripe_Email_Forgotten_Password_Subject;"Forgotten Password Email Subject";$emailResource/email-forgottenPasswordSubject.vm
+ ;stripe_Email_NotPickedUpConsignment_Canceled_Body;"Not Picked Up Consignment Canceled Email Body";$emailResource/email-notPickedUpConsignmentCanceledBody.vm
+ ;stripe_Email_NotPickedUpConsignment_Canceled_Subject;"Not Picked Up Consignment Canceled Email Subject";$emailResource/email-notPickedUpConsignmentCanceledSubject.vm
+ ;stripe_Email_Order_Cancelled_Body;"Order Cancelled Email Body";$emailResource/email-orderCancelledBody.vm
+ ;stripe_Email_Order_Cancelled_Subject;"Order Cancelled Email Subject";$emailResource/email-orderCancelledSubject.vm
+ ;stripe_Email_Order_Collection_Reminder_Body;"Order Collection Reminder Body";$emailResource/email-orderCollectionReminderBody.vm
+ ;stripe_Email_Order_Collection_Reminder_Subject;"Order Collection Reminder Subject";$emailResource/email-orderCollectionReminderSubject.vm
+ ;stripe_Email_Order_Confirmation_Body;"Order Confirmation Email Body";$emailResource/email-orderConfirmationBody.vm
+ ;stripe_Email_Order_Confirmation_Subject;"Order Confirmation Email Subject";$emailResource/email-orderConfirmationSubject.vm
+ ;stripe_Email_Order_Move_To_CS_Body;"Order Move To CS Body";$emailResource/email-orderMoveToCsBody.vm
+ ;stripe_Email_Order_Move_To_CS_Subject;"Order Move To CS Subject";$emailResource/email-orderMoveToCsSubject.vm
+ ;stripe_Email_Order_Partially_Canceled_Body;"Order Partially Canceled Email Body";$emailResource/email-orderPartiallyCanceledBody.vm
+ ;stripe_Email_Order_Partially_Canceled_Subject;"Order Partially Canceled Email Subject";$emailResource/email-orderPartiallyCanceledSubject.vm
+ ;stripe_Email_Order_Partially_Refunded_Body;"Order Partially Refunded Email Body";$emailResource/email-orderPartiallyRefundedBody.vm
+ ;stripe_Email_Order_Partially_Refunded_Subject;"Order Partially Refunded Email Subject";$emailResource/email-orderPartiallyRefundedSubject.vm
+ ;stripe_Email_Order_Refund_Body;"Order Refund Email Body";$emailResource/email-orderRefundBody.vm
+ ;stripe_Email_Order_Refund_Subject;"Order Refund Email Subject";$emailResource/email-orderRefundSubject.vm
+ ;stripe_Email_Ready_For_Pickup_Body;"Ready For Pickup Email Body";$emailResource/email-readyForPickupBody.vm
+ ;stripe_Email_Ready_For_Pickup_Subject;"Ready For Pickup Email Subject";$emailResource/email-readyForPickupSubject.vm
+ ;stripe_Email_Verification_Token_Body;"Verification Token Email Body";$emailResource/email-verificationTokenBody.vm
+ ;stripe_Email_Verification_Token_Subject;"Verification Token Email Subject";$emailResource/email-verificationTokenSubject.vm
+
+# Email Pages
+UPDATE EmailPage;$contentCV[unique=true];uid[unique=true];fromEmail[lang=$lang];fromName[lang=$lang]
+ ;;CustomerRegistrationEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;DeliverySentEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;ForgottenPasswordEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderCancelledEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderCollectionReminderEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderConfirmationEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderMoveToCsEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderPartiallyCanceledEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderPartiallyRefundedEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;OrderRefundEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;ReadyForPickupEmail;"customerservices@hybris.com";"Customer Services Team"
+ ;;VerificationTokenEmail;"customerservices@hybris.com";"Customer Services Team"
+
+# CMS components and Email velocity templates
+UPDATE RendererTemplate;code[unique=true];description[lang=$lang];templateScript[lang=$lang,translator=de.hybris.platform.commerceservices.impex.impl.FileLoaderValueTranslator]
+"#%beforeEach:
+import de.hybris.platform.core.Registry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.commons.lang3.StringUtils;
+import de.hybris.platform.util.Config;
+
+Logger LOG = LoggerFactory.getLogger(""ImpExImportReader"");
+extensionNames = Registry.getCurrentTenant().getTenantSpecificExtensionNames();
+extensionName = ""customercouponfacades"";
+if(!extensionNames.contains(extensionName))
+{
+	templateId = line.get(1);
+	LOG.info(""RendererTemplate [{}] was skipped because the extension [{}] is not included in the setup"", templateId, extensionName);
+	line.clear();
+}
+"
+ ;stripe_Email_Customer_Customer_Coupon_Body;"Customer Coupon Email Body";jar:/stripestore/import/coredata/contentCatalogs/stripeContentCatalog/emails/email-customerCouponBody.vm
+ ;stripe_Email_Customer_Customer_Coupon_Subject;"Customer Coupon Email Subject";jar:/stripestore/import/coredata/contentCatalogs/stripeContentCatalog/emails/email-customerCouponSubject.vm
+
+# Email Pages
+UPDATE EmailPage;$contentCV[unique=true];uid[unique=true];fromEmail[lang=$lang];fromName[lang=$lang]
+"#%beforeEach:
+import de.hybris.platform.core.Registry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.commons.lang3.StringUtils;
+import de.hybris.platform.util.Config;
+
+Logger LOG = LoggerFactory.getLogger(""ImpExImportReader"");
+extensionNames = Registry.getCurrentTenant().getTenantSpecificExtensionNames();
+extensionName = ""customercouponfacades"";
+if(!extensionNames.contains(extensionName))
+{
+	templateId = line.get(1);
+	LOG.info(""EmailPage [{}] was skipped because the extension [{}] is not included in the setup"", templateId, extensionName);
+	line.clear();
+}
+"
+ ;;CustomerCouponEmail;"customerservices@hybris.com";"Customer Services Team"

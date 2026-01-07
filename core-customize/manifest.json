@@ -1,0 +1,191 @@
+{
+    "commerceSuiteVersion": "2211",
+    "enableImageProcessingService": true,
+    "extensions": [
+        "cloudmediaconversion",  
+        "mediaconversionbackoffice"
+    ],
+    "useConfig": {
+        "properties": [
+            {
+                "location": "hybris/config/environments/dev/hybris/config/local.properties",
+                "persona": "development"
+            },
+            {
+                "location": "hybris/config/environments/stage/hybris/config/local.properties",
+                "persona": "staging"
+            },
+            {
+                "location": "hybris/config/environments/prod/hybris/config/local.properties",
+                "persona": "production"
+            },
+            {
+                "location": "hybris/config/environments/common/hybris/config/local.properties"
+             }
+        ],
+        "extensions": {
+            "location": "hybris/config/environments/common/hybris/config/localextensions.xml",
+            "exclude": [
+                "azurecloudhotfolder",
+                "cloudcommons",
+                "cloudhotfolder"
+            ]
+        }
+    },
+    "properties": [
+        {
+            "key": "lang.packs",
+            "value": "de,en"
+        },
+        {
+            "key": "commercewebservices.api.restrictions.disabled.endpoints",
+            "value": " "
+        }
+    ],
+    "storefrontAddons": [
+    ],
+    "aspects": [
+        {
+            "name": "backoffice",
+            "properties": [],
+            "webapps": [
+                {
+                    "name": "hac",
+                    "contextPath": "/hac"
+                },
+                {
+                    "name": "mediaweb",
+                    "contextPath": "/medias"
+                },
+                {
+                    "name": "backoffice",
+                    "contextPath": "/backoffice"
+                },
+                {
+                  "name":"odata2webservices",
+                  "contextPath":"/odata2webservices"
+               }
+            ]
+        },
+        {
+            "name": "backgroundProcessing",
+            "properties": [
+                {
+                    "key": "cluster.node.groups",
+                    "value": "integration,yHotfolderCandidate"
+                }
+            ],
+            "webapps": [
+                {
+                    "name": "hac",
+                    "contextPath": "/hac"
+                },
+                {
+                    "name": "mediaweb",
+                    "contextPath": "/medias"
+                }
+            ]
+        },
+        {
+            "name": "api",
+            "properties": [
+                {
+                    "key": "xss.filter.header.X-Frame-Options",
+                    "value": ""
+                },
+                {
+                    "key": "ccv2.platform.tomcat.serverxml.maxThreads",
+                    "value": "1200"
+                },
+                {
+                    "key": "storefrontContextRoot",
+                    "value": "/yacceleratorstorefront"
+                }
+            ],
+            "webapps": [
+                {
+                    "name": "hac",
+                    "contextPath": "/hac"
+                },
+                {
+                    "name": "commercewebservices",
+                    "contextPath": "/occ"
+                },
+                {
+                    "name": "yacceleratorstorefront",
+                    "contextPath": "/yacceleratorstorefront"
+                },
+                {
+                    "name": "smartedit",
+                    "contextPath": "/smartedit"
+                },
+                {
+                    "name": "cmssmartedit",
+                    "contextPath": "/cmssmartedit"
+                },
+                {
+                    "name": "smarteditwebservices",
+                    "contextPath": "/smarteditwebservices"
+                },
+                {
+                    "name": "cmssmarteditwebservices",
+                    "contextPath": "/cmssmarteditwebservices"
+                },
+                {
+                    "name": "acceleratorservices",
+                    "contextPath": "/acceleratorservices"
+                },
+                {
+                    "name": "oauth2",
+                    "contextPath": "/authorizationserver"
+                },
+                {
+                    "name": "cmswebservices",
+                    "contextPath": "/cmswebservices"
+                },
+                {
+                    "name": "permissionswebservices",
+                    "contextPath": "/permissionswebservices"
+                },
+                {
+                    "name": "previewwebservices",
+                    "contextPath": "/previewwebservices"
+                },
+                {
+                    "name": "mediaweb",
+                    "contextPath": "/medias"
+                },
+                {
+                    "name": "personalizationsmartedit",
+                    "contextPath": "/personalizationsmartedit"
+                },
+                {
+                    "name": "personalizationpromotionssmartedit",
+                    "contextPath": "/personalizationpromotionssmartedit"
+                },
+                {
+                    "name": "personalizationwebservices",
+                    "contextPath": "/personalizationwebservices"
+                },
+                {
+                    "name": "personalizationsearchsmartedit",
+                    "contextPath": "/personalizationsearchsmartedit"
+                },
+                {
+                    "name":"odata2webservices",
+                    "contextPath":"/odata2webservices"
+               }
+            ]
+        }
+    ],
+    "tests": {
+        "extensions": [],
+        "annotations": [
+            "UnitTests",
+            "IntegrationTests"
+        ],
+        "packages": [
+            "com.acme.*"
+        ]
+    }
+}

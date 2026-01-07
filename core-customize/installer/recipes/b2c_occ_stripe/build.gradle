@@ -1,0 +1,262 @@
+apply plugin: 'installer-platform-plugin'
+
+def pl = platform {
+    localProperties {
+        property 'recaptcha.publickey', ''
+        property 'recaptcha.privatekey', ''
+        property 'googleApiKey', ''
+        property 'csrf.allowed.url.patterns', '/[^/]+(/[^?]*)+(sop/response)$,/[^/]+(/[^?]*)+(merchant_callback)$,/[^/]+(/[^?]*)+(hop/response)$,/[^/]+(/[^?]*)+(language)$,/[^/]+(/[^?]*)+(currency)$,/(events)$'
+        // Demo only
+        property 'log4j2.logger.auditableActionsHandler.name', 'de.hybris.platform.audit.actions.impl.Slf4jAuditableActionHandler'
+        property 'log4j2.logger.auditableActionsHandler.level', 'OFF'
+        // Stripe configuration
+        property 'stripe.api.secret.key', 'sk_test_your_secret_key'
+        property 'stripe.api.public.key', 'pk_test_your_public_key'
+        property 'stripe.webhook.secret', 'whsec_your_webhook_secret'
+        property 'stripe.capture.mode', 'manual'
+        property 'stripe.statement.descriptor', 'MYSHOP'
+        property 'stripe.descriptor.suffix', 'ECOM'
+        property 'payment.mode.STRIPE.enabled', 'true'
+    }
+
+    afterSetup {
+        ensureAdminPasswordSet()
+    }
+
+    extensions {
+        /* adaptive-search */
+        extName 'adaptivesearch'
+        extName 'adaptivesearchbackoffice'
+        extName 'adaptivesearchfacades'
+        extName 'adaptivesearchsolr'
+        extName 'adaptivesearchwebservices'
+
+        /* api-registry */
+        extName 'apiregistrybackoffice'
+        extName 'apiregistryservices'
+
+        /* assisted-services */
+        extName 'assistedservicecustomerinterestsfacades'
+        extName 'assistedservicefacades'
+        extName 'assistedservicepromotionfacades'
+        extName 'assistedserviceservices'
+        extName 'assistedservicewebservices'
+
+        /* assisted-services-integrations */
+        extName 'assistedserviceyprofilefacades'
+
+        /* b2c-accelerator-addons */
+        extName 'wishlist'
+
+        /* backoffice-applications */
+        extName 'classificationgroupsservices'
+        extName 'mediaconversionbackoffice'
+        extName 'patchesbackoffice'
+        extName 'pcmbackoffice'
+
+        /* backoffice-framework */
+        extName 'backoffice'
+        extName 'platformbackoffice'
+
+        /* base-commerce */
+        extName 'basecommerce'
+        extName 'basecommercebackoffice'
+        extName 'customerreview'
+        extName 'payment'
+        extName 'promotions'
+        extName 'promotionsbackoffice'
+        extName 'voucher'
+        extName 'voucherbackoffice'
+
+        /* commerce-services */
+        extName 'commercefacades'
+        extName 'commerceservices'
+        extName 'commerceservicesbackoffice'
+        extName 'commercewebservices'
+        extName 'commercewebservicescommons'
+
+        /* configurable-bundle */
+        extName 'configurablebundlebackoffice'
+        extName 'configurablebundlefacades'
+        extName 'configurablebundleocc'
+        extName 'configurablebundleservices'
+
+        /* core-accelerator */
+        extName 'acceleratorbackoffice'
+        extName 'acceleratorcms'
+        extName 'acceleratorfacades'
+        extName 'acceleratorocc'
+        extName 'acceleratorservices'
+
+        /* coupon */
+        extName 'couponbackoffice'
+        extName 'couponfacades'
+        extName 'couponservices'
+        extName 'couponwebservices'
+
+        /* customer-coupon */
+        extName 'customercouponbackoffice'
+        extName 'customercouponfacades'
+        extName 'customercouponocc'
+        extName 'customercouponservices'
+
+        /* customer-interest */
+        extName 'customerinterestsfacades'
+        extName 'customerinterestsocc'
+        extName 'customerinterestsservices'
+
+        /* integration-apis */
+        extName 'inboundservices'
+        extName 'integrationbackoffice'
+        extName 'integrationmonitoringbackoffice'
+        extName 'integrationservices'
+        extName 'odata2services'
+        extName 'odata2webservices'
+        extName 'outboundservices'
+        extName 'outboundsync'
+        extName 'outboundsyncbackoffice'
+        extName 'webhookbackoffice'
+        extName 'webhookservices'
+
+        /* message-center */
+        extName 'messagecentercsfacades'
+        extName 'messagecentercsocc'
+        extName 'messagecentercsservices'
+
+        /* notification */
+        extName 'notificationfacades'
+        extName 'notificationocc'
+        extName 'notificationservices'
+
+        /* npm-ancillary */
+        extName 'npmancillary'
+
+        /* order-management */
+        extName 'ordermanagementfacades'
+        extName 'ordermanagementwebservices'
+        extName 'warehousing'
+        extName 'warehousingbackoffice'
+        extName 'warehousingfacades'
+        extName 'warehousingwebservices'
+
+        /* personalization */
+        extName 'personalizationcms'
+        extName 'personalizationcmsbackoffice'
+        extName 'personalizationcmsweb'
+        extName 'personalizationfacades'
+        extName 'personalizationintegration'
+        extName 'personalizationintegrationbackoffice'
+        extName 'personalizationservices'
+        extName 'personalizationservicesbackoffice'
+        extName 'personalizationsmartedit'
+        extName 'personalizationwebservices'
+        extName 'previewpersonalizationweb'
+
+        /* personalization-integration */
+        extName 'personalizationyprofile'
+
+        /* search-and-navigation */
+        extName 'backofficesolrsearch'
+        extName 'solrfacetsearch'
+        extName 'solrfacetsearchbackoffice'
+        extName 'solrserver'
+
+        /* search-services */
+        extName 'backofficesearchservices'
+        extName 'searchbackoffice'
+        extName 'searchprovidercssearchbackoffice'
+        extName 'searchprovidercssearchservices'
+        extName 'searchservices'
+
+        /* selective-cart */
+        extName 'selectivecartfacades'
+        extName 'selectivecartservices'
+
+        /* smartedit */
+        extName 'cmssmartedit'
+        extName 'cmssmarteditwebservices'
+        extName 'smartedit'
+        extName 'smartedittools'
+        extName 'smarteditwebservices'
+
+        /* stock-notification */
+        extName 'stocknotificationfacades'
+        extName 'stocknotificationservices'
+
+        /* subscription-bundles */
+        extName 'subscriptionbundlebackoffice'
+        extName 'subscriptionbundlefacades'
+        extName 'subscriptionbundleservices'
+
+        /* subscriptions */
+        extName 'subscriptionbackoffice'
+        extName 'subscriptionfacades'
+        extName 'subscriptionservices'
+
+        /* web-content-management-system */
+        extName 'cms2'
+        extName 'cms2lib'
+        extName 'cmsbackoffice'
+        extName 'cmsfacades'
+        extName 'cmsocc'
+        extName 'cmswebservices'
+        extName 'previewwebservices'
+
+        /* web-services-commons */
+        extName 'permissionsfacades'
+        extName 'permissionswebservices'
+        extName 'swaggerintegration'
+        extName 'webservicescommons'
+        /* DEMO reasons, remove in production ready projects */
+        extName 'yacceleratorcore'
+
+        /* Store - usar electronicsstore en lugar de stripestore */
+        extName 'electronicsstore'
+        // extName 'stripestore'  // TODO: Migrar datos de stripestore a electronicsstore
+
+        /* Spartacus sample data */
+        extName 'spartacussampledata'
+
+        /* Stripe Payment */
+        extName 'stripecore'
+        extName 'stripefacades'
+        extName 'stripeocc'
+        extName 'stripefulfilmentprocess'
+    }
+}
+
+task setup {
+    doLast {
+        pl.setup()
+    }
+}
+
+task buildSystem(dependsOn: setup) {
+    doLast {
+        pl.build()
+    }
+}
+
+task initialize(dependsOn: buildSystem) {
+    doLast {
+        pl.initialize()
+    }
+}
+
+task start {
+    doLast {
+        pl.start()
+    }
+}
+
+task startInBackground {
+    doLast {
+        pl.startInBackground()
+    }
+}
+
+task stopInBackground {
+    doLast {
+        pl.stopInBackground()
+    }
+}

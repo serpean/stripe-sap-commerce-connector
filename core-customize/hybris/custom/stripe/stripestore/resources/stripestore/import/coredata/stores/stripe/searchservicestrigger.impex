@@ -1,0 +1,33 @@
+# -----------------------------------------------------------------------
+# Copyright (c) 2020 SAP SE or an SAP affiliate company. All rights reserved.
+# -----------------------------------------------------------------------
+#
+# Import the search services CronJob Trigger configuration for the Stripe Product Catalog
+#
+$snIndexType=stripe-product
+
+INSERT FlexibleSearchSnIndexerItemSource ; &indexerItemSourceID ; query
+                                         ; $snIndexType-full    ; "SELECT {p:pk} FROM {Product AS p LEFT JOIN ArticleApprovalStatus AS a ON {p:approvalStatus} = {a:pk}} WHERE {a:code} = 'approved'"
+
+INSERT_UPDATE FullSnIndexerCronJob ; code[unique=true]         ; job(code)        ; sessionLanguage(isocode) ; indexType(id) ; indexerItemSource(&indexerItemSourceID) ; active
+                                   ; indexer-$snIndexType-full ; fullSnIndexerJob ; en                       ; $snIndexType  ; $snIndexType-full                       ; false
+
+# Run the full indexer cron job at 3:00 AM every day
+INSERT_UPDATE Trigger ; cronJob(code)[unique=true] ; second ; minute ; hour ; day ; month ; year ; relative ; active ; maxAcceptableDelay
+                      ; indexer-$snIndexType-full  ; 0      ; 0      ; 3    ; -1  ; -1    ; -1   ; false    ; true   ; -1
+
+INSERT FlexibleSearchSnIndexerItemSource ; &indexerItemSourceID                   ; query
+                                         ; $snIndexType-incremental-create-update ; "SELECT {p:pk} FROM {Product AS p LEFT JOIN ArticleApprovalStatus AS a ON {p:approvalStatus} = {a:pk}} WHERE {a:code} = 'approved' AND {p.modifiedtime} > ?startTime"
+                                         ; $snIndexType-incremental-delete        ; "SELECT {p:pk} FROM {Product AS p LEFT JOIN ArticleApprovalStatus AS a ON {p:approvalStatus} = {a:pk}} WHERE NOT {a:code} = 'approved' AND {p.modifiedtime} > ?startTime"
+
+INSERT SnIndexerItemSourceOperation ; &indexerItemSourceOperationID          ; documentOperationType(code) ; indexerItemSource(&indexerItemSourceID)
+                                    ; $snIndexType-incremental-create-update ; CREATE_UPDATE               ; $snIndexType-incremental-create-update
+                                    ; $snIndexType-incremental-delete        ; DELETE                      ; $snIndexType-incremental-delete
+
+INSERT_UPDATE IncrementalSnIndexerCronJob ; code[unique=true]                ; job(code)               ; sessionLanguage(isocode) ; indexType(id) ; indexerItemSourceOperations(&indexerItemSourceOperationID)             ; active
+                                          ; indexer-$snIndexType-incremental ; incrementalSnIndexerJob ; en                       ; $snIndexType  ; $snIndexType-incremental-create-update,$snIndexType-incremental-delete ; false
+
+# Run the incremental indexer cron job every 5 minutes
+INSERT_UPDATE Trigger ; cronJob(code)[unique=true]       ; active ; cronExpression
+                      ; indexer-$snIndexType-incremental ; true   ; 0 0/5 * * * ?
+

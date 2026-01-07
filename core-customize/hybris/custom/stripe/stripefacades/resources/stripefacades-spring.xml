@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:util="http://www.springframework.org/schema/util"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+        http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd">
+
+    <bean id="stripePaymentFacade" class="com.stripe.facades.impl.DefaultStripePaymentFacade">
+        <property name="stripeClient" ref="stripeClient"/>
+        <property name="stripeWebhookService" ref="stripeWebhookService"/>
+        <property name="cartService" ref="cartService"/>
+        <property name="baseStoreService" ref="baseStoreService"/>
+        <property name="userService" ref="userService"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>
+    <bean id="stripeCheckoutFacade" class="com.stripe.facades.order.impl.StripeCheckoutFacade" parent="defaultCheckoutFacade">
+        <property name="stripePaymentProvider" ref="stripePaymentProvider"/>
+    </bean>
+
+    <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>
+    <bean id="defaultStripePaymentInfoPopulator"
+          class="com.stripe.facades.order.converters.populators.StripePaymentInfoPopulator"/>
+
+    <alias name="defaultStripePaymentInfoConverter" alias="stripePaymentInfoConverter"/>
+    <bean id="defaultStripePaymentInfoConverter" parent="abstractPopulatingConverter">
+        <property name="targetClass" value="de.hybris.platform.commercefacades.payment.data.GenericPaymentInfoData"/>
+        <property name="populators">
+            <list>
+                <ref bean="stripePaymentInfoPopulator"/>
+            </list>
+        </property>
+    </bean>
+
+    <alias name="defaultStripeOrderGenericPaymentInfoPopulator" alias="stripeOrderGenericPaymentInfoPopulator"/>
+    <bean id="defaultStripeOrderGenericPaymentInfoPopulator"
+          class="com.stripe.facades.order.converters.populators.StripeOrderPaymentInfoPopulator" parent="baseOrderPopulator">
+        <constructor-arg name="stripePaymentInfoConverter" ref="stripePaymentInfoConverter"/>
+    </bean>
+
+    <bean parent="modifyPopulatorList">
+        <property name="list" ref="extendedCartConverter"/>
+        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+    </bean>
+
+    <bean parent="modifyPopulatorList">
+        <property name="list" ref="orderConverter"/>
+        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+    </bean>
+
+</beans>

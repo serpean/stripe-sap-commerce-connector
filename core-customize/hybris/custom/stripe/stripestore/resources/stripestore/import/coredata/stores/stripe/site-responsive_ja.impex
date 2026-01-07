@@ -1,0 +1,14 @@
+# -----------------------------------------------------------------------
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+# -----------------------------------------------------------------------
+#
+# Import the CMS Site configuration for the Stripe store
+#
+
+# Language
+$lang=ja
+
+# Create CMS Site
+UPDATE CMSSite;uid[unique=true];name[lang=$lang];locale[lang=$lang]
+ ;stripe;"エレクトロニクスサイト";ja_JP
+ ;stripe-standalone;"エレクトロニクスサイト スタンドアロン";ja_JP

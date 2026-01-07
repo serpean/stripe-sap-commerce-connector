@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Stripe Payment Commands Configuration
+ Registers payment commands with the Hybris CommandFactory for PaymentService integration.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- Abstract Command Base -->
+    <bean id="abstractStripeCommand" abstract="true"
+          class="com.stripe.core.commands.impl.AbstractStripeCommand">
+        <property name="stripeRequestFactory" ref="stripeRequestFactory"/>
+        <property name="stripePaymentIntegrationService" ref="stripePaymentIntegrationService"/>
+        <property name="stripePaymentTransactionService" ref="stripePaymentTransactionService"/>
+        <property name="timeService" ref="timeService"/>
+    </bean>
+
+    <!-- Capture Command -->
+    <bean id="stripeCaptureCommand" parent="abstractStripeCommand"
+          class="com.stripe.core.commands.impl.StripeCaptureCommand"/>
+
+    <!-- Void Command -->
+    <bean id="stripeVoidCommand" parent="abstractStripeCommand"
+          class="com.stripe.core.commands.impl.StripeVoidCommand"/>
+
+    <!-- Refund Command -->
+    <bean id="stripeRefundCommand" parent="abstractStripeCommand"
+          class="com.stripe.core.commands.impl.StripeRefundCommand"/>
+
+    <!-- Command Factory - Registers commands with PaymentService -->
+    <bean id="stripeCommandFactory"
+          class="de.hybris.platform.payment.commands.factory.impl.DefaultCommandFactoryImpl">
+        <property name="paymentProvider" value="Stripe"/>
+        <property name="commands">
+            <map>
+                <entry>
+                    <key>
+                        <value type="java.lang.Class">de.hybris.platform.payment.commands.CaptureCommand</value>
+                    </key>
+                    <ref bean="stripeCaptureCommand"/>
+                </entry>
+                <entry>
+                    <key>
+                        <value type="java.lang.Class">de.hybris.platform.payment.commands.VoidCommand</value>
+                    </key>
+                    <ref bean="stripeVoidCommand"/>
+                </entry>
+                <entry>
+                    <key>
+                        <value type="java.lang.Class">de.hybris.platform.payment.commands.FollowOnRefundCommand</value>
+                    </key>
+                    <ref bean="stripeRefundCommand"/>
+                </entry>
+            </map>
+        </property>
+    </bean>
+
+</beans>

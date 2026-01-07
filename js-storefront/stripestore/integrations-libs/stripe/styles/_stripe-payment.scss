@@ -1,0 +1,49 @@
+/*
+ * SPDX-FileCopyrightText: 2025 SAP Spartacus team <spartacus-team@sap.com>
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.stripe-payment-review {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+
+  @media (min-width: 992px) {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+}
+
+.stripe-payment-review__form {
+  min-width: 0;
+}
+
+.stripe-payment-review__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.stripe-payment-card {
+  border: 1px solid var(--cx-color-light, #e0e0e0);
+  border-radius: 4px;
+  padding: 1.5rem;
+  background-color: var(--cx-color-inverse, #fff);
+}
+
+.payment-element {
+  padding: 1rem;
+  border: 1px solid var(--cx-color-light, #ccc);
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.error {
+  margin-top: 1rem;
+  color: var(--cx-color-danger, #c41d7f);
+}

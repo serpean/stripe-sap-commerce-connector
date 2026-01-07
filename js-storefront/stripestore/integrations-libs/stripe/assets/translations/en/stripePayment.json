@@ -1,0 +1,14 @@
+{
+  "stripePayment": {
+    "title": "Credit or debit card",
+    "payNow": "Pay now with Stripe",
+    "processing": "Processing...",
+    "success": "Payment authorized successfully.",
+    "missingPublishableKey": "Stripe publishable key is not configured.",
+    "unableToInitialize": "Unable to initialize Stripe payment. Please try again.",
+    "genericError": "An unexpected error occurred while processing the payment.",
+    "missingClientSecret": "Missing client secret for Stripe intent. Please contact support.",
+    "noPaymentIntent": "Payment intent was not returned by Stripe.",
+    "saveForLater": "Save this card for future orders"
+  }
+}

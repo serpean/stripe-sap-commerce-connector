@@ -1,0 +1,44 @@
+{
+  "name": "sap-commerce-stripe-payment",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Stripe Payment integration library for SAP Commerce Spartacus",
+  "homepage": "https://github.com/SAP-samples/sap-commerce-stripe-payment",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SAP-samples/sap-commerce-stripe-payment.git"
+  },
+  "keywords": [
+    "spartacus",
+    "stripe",
+    "payment",
+    "sap-commerce",
+    "angular",
+    "opf"
+  ],
+  "peerDependencies": {
+    "@angular/common": "^19.0.0",
+    "@angular/core": "^19.0.0",
+    "@angular/forms": "^19.0.0",
+    "@angular/router": "^19.0.0",
+    "@angular-devkit/schematics": "^19.0.0",
+    "@spartacus/cart": "~2211.37.0",
+    "@spartacus/checkout": "~2211.37.0",
+    "@spartacus/core": "~2211.37.0",
+    "@spartacus/order": "~2211.37.0",
+    "@spartacus/schematics": "~2211.37.0",
+    "@spartacus/storefront": "~2211.37.0",
+    "@stripe/stripe-js": "^2.0.0",
+    "rxjs": "^7.8.0"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "schematics": "./schematics/collection.json",
+  "ng-add": {
+    "save": "dependencies"
+  },
+  "scripts": {
+    "build:schematics": "tsc -p tsconfig.schematics.json"
+  }
+}

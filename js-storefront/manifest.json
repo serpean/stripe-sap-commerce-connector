@@ -1,0 +1,18 @@
+{
+    "applications":
+    [
+      {
+        "name": "stripestore",
+        "path": "stripestore",
+        "ssr": {
+          "enabled": true,
+          "path": "dist/stripestore/server/server.mjs"
+        },
+        "csr": {
+          "webroot": "dist/stripestore/browser/"
+        },
+        "enabledRepositories": ["spartacus-6"]
+      }
+    ],
+    "nodeVersion": "22"
+  } 

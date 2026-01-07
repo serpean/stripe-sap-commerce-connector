@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensioninfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="extensioninfo.xsd">
+               
+<extension abstractclassprefix="Generated" classprefix="StripeCore" managername="StripeCoreManager" managersuperclass="de.hybris.platform.jalo.extension.Extension" name="stripecore" usemaven="true">
+        <requires-extension name="payment"/>
+        <requires-extension name="paymentstandard"/>
+        <requires-extension name="assistedserviceservices"/>
+        <coremodule generated="true" manager="com.stripe.core.jalo.StripeCoreManager" packageroot="com.stripe.core"/>
+    </extension>
+</extensioninfo>
