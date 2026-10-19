@@ -81,8 +81,7 @@ public class StripeCheckoutFacade extends DefaultCheckoutFacade {
             // The frontend still needs to confirm with card details
             // We return true to allow checkout to proceed to the payment confirmation step
             return TransactionStatus.ACCEPTED.name().equals(status)
-                    || TransactionStatus.REVIEW.name().equals(status)
-                    || TransactionStatus.WAITING.name().equals(status);
+                    || TransactionStatus.REVIEW.name().equals(status);
 
         } catch (final Exception e) {
             LOG.error("Exception creating authorization for cart: {}", cart.getCode(), e);

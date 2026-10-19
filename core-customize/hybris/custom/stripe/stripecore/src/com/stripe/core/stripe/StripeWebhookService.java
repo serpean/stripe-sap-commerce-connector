@@ -153,7 +153,7 @@ public class StripeWebhookService {
             return TransactionStatus.ACCEPTED;
         }
         if ("processing".equalsIgnoreCase(status)) {
-            return TransactionStatus.WAITING;
+            return TransactionStatus.REVIEW;
         }
         if ("requires_action".equalsIgnoreCase(status)) {
             return TransactionStatus.REVIEW;
@@ -168,7 +168,7 @@ public class StripeWebhookService {
         if ("failed".equalsIgnoreCase(status)) {
             return TransactionStatus.REJECTED;
         }
-        return TransactionStatus.WAITING;
+        return TransactionStatus.REVIEW;
     }
 
     protected StripeObject deserialize(final Event event) {
