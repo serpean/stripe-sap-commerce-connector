@@ -40,10 +40,12 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 |------|---------|
 | `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe |
 | `core-customize/hybris/custom/spartacus/spartacussampledata` | Official SAP Spartacus sample data (`electronics-spa`) |
-| `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore |
+| `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore and creates the demo OAuth client `mobile_android` |
 | `core-customize/manifest.json`, `js-storefront/manifest.json` | CCv2 manifests |
 | `js-storefront/stripestore/src` | Spartacus demo app |
 | `js-storefront/stripestore/e2e` | Playwright end-to-end tests |
+
+> **Warning:** `stripesampledata` creates the OAuth client `mobile_android` with the well-known secret `secret` and the `password` and `client_credentials` grants. It is for local demos and tests only. Never deploy the reference project to an environment that other people can reach.
 
 Breaking changes are listed in [docs/migration/cleanup.md](docs/migration/cleanup.md).
 
@@ -159,7 +161,7 @@ npm ci
 npm start
 ```
 
-`npm start` writes the publishable key from `STRIPE_PUBLISHABLE_KEY` into a git-ignored file. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
+`npm start` writes the publishable key from `STRIPE_PUBLISHABLE_KEY` into a git-ignored file. Use the npm scripts (`npm start`, `npm run build`, `npm run watch`, `npm test`), not `ng` directly: on a fresh clone the file does not exist until a script creates it. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
 
 ## 5. End-to-end tests
 

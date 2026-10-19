@@ -7,6 +7,7 @@
     "start": "ng serve",
     "prebuild": "node scripts/write-stripe-config.mjs",
     "build": "ng build",
+    "prewatch": "node scripts/write-stripe-config.mjs",
     "watch": "ng build --watch --configuration development",
     "pretest": "node scripts/write-stripe-config.mjs",
     "test": "ng test",
