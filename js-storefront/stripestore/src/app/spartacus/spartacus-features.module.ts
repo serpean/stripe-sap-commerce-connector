@@ -9,7 +9,6 @@ import { CartQuickOrderFeatureModule } from './features/cart/cart-quick-order-fe
 import { CartSavedCartFeatureModule } from './features/cart/cart-saved-cart-feature.module';
 import { WishListFeatureModule } from './features/cart/wish-list-feature.module';
 import { CheckoutFeatureModule } from './features/checkout/checkout-feature.module';
-import { OpfFeatureModule } from './features/opf/opf-feature.module';
 import { OrderFeatureModule } from './features/order/order-feature.module';
 import { ProductImageZoomFeatureModule } from './features/product/product-image-zoom-feature.module';
 import { ProductVariantsFeatureModule } from './features/product/product-variants-feature.module';
@@ -80,7 +79,6 @@ import { StripePaymentFeatureModule } from './features/stripe/stripe-feature.mod
     OrderFeatureModule,
     CheckoutFeatureModule,
     PersonalizationFeatureModule,
-    OpfFeatureModule,
     StoreFinderFeatureModule,
     AsmFeatureModule,
     AsmCustomer360FeatureModule,

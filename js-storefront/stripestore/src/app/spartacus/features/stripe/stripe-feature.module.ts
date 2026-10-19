@@ -9,6 +9,7 @@ import {
   stripePaymentTranslationChunksConfig,
   stripePaymentTranslationsEn,
 } from 'sap-commerce-stripe-payment/assets';
+import { STRIPE_PUBLISHABLE_KEY } from './stripe-keys.generated';
 
 @NgModule({
   imports: [StripePaymentRootModule],
@@ -33,7 +34,7 @@ import {
     }),
     provideConfig(<StripePaymentConfig>{
       stripePayment: {
-        publishableKey: 'pk_test_51L2c2dBLWRvZiE6aSenfb7sPSzCuYNgoxruUOjQH7Lp2hibR98h7O0fIuALD6Edt2UjfSBVjSwjwbvDPKJger0dk00VhWAwwC3',
+        publishableKey: STRIPE_PUBLISHABLE_KEY,
       },
     }),
     provideConfig(<I18nConfig>{

@@ -108,3 +108,26 @@ eclipsebin/
 
 #JRebel
 rebel.xml
+# SAP Commerce distribution zips
+*.ZIP
+*.zip
+
+# IDE files
+.classpath
+.settings/
+.project
+.env
+
+# Jars downloaded by Maven (usemaven=true)
+core-customize/hybris/custom/stripe/stripecore/lib/
+
+# Generated Stripe key file for the reference app
+js-storefront/stripestore/src/app/spartacus/features/stripe/stripe-keys.generated.ts
+
+# Playwright output
+js-storefront/stripestore/test-results/
+js-storefront/stripestore/playwright-report/
+
+# Official SAP Spartacus sample data: a dependency of the reference project,
+# downloaded by core-customize/scripts/fetch-spartacussampledata.sh
+core-customize/hybris/custom/spartacus/spartacussampledata/

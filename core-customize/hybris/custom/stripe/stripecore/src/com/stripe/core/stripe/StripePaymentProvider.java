@@ -117,7 +117,7 @@ public class StripePaymentProvider {
         entry.setCurrency(order.getCurrency());
         entry.setTime(new Date());
         entry.setCode(order.getCode() + "-" + type.name() + "-" + System.currentTimeMillis());
-        entry.setTransactionStatus(TransactionStatus.WAITING.name());
+        entry.setTransactionStatus(TransactionStatus.REVIEW.name());
         entry.setTransactionStatusDetails(TransactionStatusDetails.UNKNOWN_CODE.name());
         modelService.save(entry);
         return entry;
@@ -178,7 +178,7 @@ public class StripePaymentProvider {
         if ("requires_payment_method".equalsIgnoreCase(stripeStatus)) {
             return TransactionStatus.REJECTED;
         }
-        return TransactionStatus.WAITING;
+        return TransactionStatus.REVIEW;
     }
 
     protected TransactionStatus mapCaptureStatus(final String stripeStatus) {
@@ -191,14 +191,14 @@ public class StripePaymentProvider {
         if ("canceled".equalsIgnoreCase(stripeStatus) || "requires_payment_method".equalsIgnoreCase(stripeStatus)) {
             return TransactionStatus.REJECTED;
         }
-        return TransactionStatus.WAITING;
+        return TransactionStatus.REVIEW;
     }
 
     protected TransactionStatus mapCancelStatus(final String stripeStatus) {
         if ("canceled".equalsIgnoreCase(stripeStatus)) {
             return TransactionStatus.ACCEPTED;
         }
-        return TransactionStatus.WAITING;
+        return TransactionStatus.REVIEW;
     }
 
     protected TransactionStatus mapRefundStatus(final String refundStatus) {
@@ -208,7 +208,7 @@ public class StripePaymentProvider {
         if ("failed".equalsIgnoreCase(refundStatus)) {
             return TransactionStatus.REJECTED;
         }
-        return TransactionStatus.WAITING;
+        return TransactionStatus.REVIEW;
     }
 
     protected Map<String, String> buildMetadata(final AbstractOrderModel order) {

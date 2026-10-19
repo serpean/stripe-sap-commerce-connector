@@ -91,7 +91,7 @@ public class DefaultStripePaymentTransactionService implements StripePaymentTran
     @Override
     public PaymentTransactionEntryModel findPendingAuthorizationEntry(final PaymentTransactionModel transaction) {
         return findEntryByTypeAndStatus(transaction, PaymentTransactionType.AUTHORIZATION,
-                TransactionStatus.WAITING.name());
+                TransactionStatus.REVIEW.name());
     }
 
     protected PaymentTransactionEntryModel findEntryByTypeAndStatus(final PaymentTransactionModel transaction,

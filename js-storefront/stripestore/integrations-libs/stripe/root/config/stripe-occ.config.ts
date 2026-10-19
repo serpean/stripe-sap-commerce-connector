@@ -12,7 +12,6 @@ export const defaultStripeOccConfig: OccConfig = {
     occ: {
       endpoints: {
         stripeIntent: 'users/${userId}/carts/${cartId}/payments/stripe/intent',
-        stripeConfirm: 'users/${userId}/carts/${cartId}/payments/stripe/confirm',
       },
     },
   },

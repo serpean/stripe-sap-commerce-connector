@@ -1,0 +1,5 @@
+# Reference project only: the OAuth client that the Spartacus reference app uses by default
+# (client_id mobile_android, client_secret secret) and that the e2e tests use to register customers.
+# The official spartacussampledata creates only public authorization_code clients.
+INSERT_UPDATE OAuthClientDetails; clientId[unique = true]; resourceIds; scope; authorizedGrantTypes                         ; authorities; clientSecret; registeredRedirectUri
+                                ; mobile_android         ; hybris     ; basic; authorization_code,refresh_token,password,client_credentials; ROLE_CLIENT; secret      ; http://localhost:4200

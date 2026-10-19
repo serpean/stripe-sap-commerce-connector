@@ -16,8 +16,7 @@ import {defaultCmsContentProviders, layoutConfig, mediaConfig} from "@spartacus/
         occ: {
           baseUrl: 'https://localhost:9002',
           endpoints: {
-            stripeIntent: 'users/${userId}/carts/${cartId}/payments/stripe/intent',
-            stripeConfirm: 'users/${userId}/carts/${cartId}/payments/stripe/confirm'
+            stripeIntent: 'users/${userId}/carts/${cartId}/payments/stripe/intent'
           }
         }
       },
