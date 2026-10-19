@@ -20,71 +20,47 @@ This release is compatible with:
 
 ## Project Structure
 
-```
-core-customize/
-├── hybris/custom/stripe/
-│   ├── stripecore/              # Core services, Stripe API client
-│   ├── stripefacades/           # Facade layer, DTOs
-│   ├── stripeocc/               # OCC REST controllers
-│   ├── stripefulfilmentprocess/ # Order process actions
-│   └── stripestore/             # Store configuration
-├── installer/recipes/
-│   └── b2c_occ_stripe/          # Installer recipe
-└── manifest.json                # CCv2 deployment manifest
+The repository holds two things. Only the connector is published.
 
-js-storefront/stripestore/
-├── src/app/                     # Angular application
-└── integrations-libs/stripe/    # Stripe integration library
-```
+### Connector (published)
 
-## Extensions
+| Path | Content |
+|------|---------|
+| `core-customize/hybris/custom/stripe/stripecore` | Core services, Stripe API client, payment commands |
+| `core-customize/hybris/custom/stripe/stripefacades` | Facade layer with DTOs and converters |
+| `core-customize/hybris/custom/stripe/stripeocc` | OCC REST endpoints for payment operations |
+| `core-customize/hybris/custom/stripe/stripefulfilmentprocess` | Order process actions for payment authorization and capture |
+| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` |
 
-| Extension | Description |
-|-----------|-------------|
-| `stripecore` | Core services, Stripe API client, payment commands |
-| `stripefacades` | Facade layer with DTOs and converters |
-| `stripeocc` | OCC REST endpoints for payment operations |
-| `stripefulfilmentprocess` | Order process actions for payment authorization and capture |
-| `stripestore` | Store-specific configuration and sample data |
+### Reference project (not published)
+
+Use it for demos and to run the end-to-end tests. Do not copy it into a customer project.
+
+| Path | Content |
+|------|---------|
+| `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe |
+| `core-customize/hybris/custom/spartacus/spartacussampledata` | Official SAP Spartacus sample data (`electronics-spa`) |
+| `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore |
+| `core-customize/manifest.json`, `js-storefront/manifest.json` | CCv2 manifests |
+| `js-storefront/stripestore/src` | Spartacus demo app |
+| `js-storefront/stripestore/e2e` | Playwright end-to-end tests |
+
+Breaking changes are listed in [docs/migration/cleanup.md](docs/migration/cleanup.md).
 
 # Installation and Usage
 
 ## Prerequisites
 
-- SAP Commerce Cloud 2211
-- Java 17
-- Node.js 18+ (for Spartacus)
+- SAP Commerce Cloud 2211 (tested with 2211.55)
+- Java 17 (SAP Commerce 2211 rejects other versions)
+- Node.js 20+ (for Spartacus)
 - Stripe account with API keys
 
-## Installation using recipes
+## Install the connector in your project
 
-The Connector ships with a gradle recipe for the SAP Commerce installer:
+1. Copy the connector extensions to `${HYBRIS_BIN_DIR}/custom/stripe`.
 
-**Recipe**: `b2c_occ_stripe` - B2C with OCC and Stripe payment functionality
-
-Recipes are located under the `installer` folder.
-
-### Install Commands
-
-```bash
-# Navigate to installer directory
-cd HYBRIS_HOME/installer
-
-# Setup: Create solution from templates
-./install.sh -r b2c_occ_stripe setup
-
-# Initialize: Build and initialize the platform
-./install.sh -r b2c_occ_stripe initialize
-
-# Start: Launch commerce suite instance
-./install.sh -r b2c_occ_stripe start
-```
-
-## Manual Installation
-
-1. Copy the stripe extensions to `${HYBRIS_BIN_DIR}/custom/stripe`
-
-2. Add the following to your `localextensions.xml`:
+2. Add the extensions to your `localextensions.xml`:
 
 ```xml
 <!-- Stripe Payment -->
@@ -92,10 +68,11 @@ cd HYBRIS_HOME/installer
 <extension name="stripefacades"/>
 <extension name="stripeocc"/>
 <extension name="stripefulfilmentprocess"/>
-<extension name="stripestore"/>
 ```
 
-3. Run the build commands:
+3. Set `paymentProvider=Stripe` on the BaseStore that uses Stripe.
+
+4. Build. The Stripe Java SDK is downloaded by Maven (`usemaven=true`).
 
 ```bash
 cd hybris/bin/platform
@@ -103,7 +80,7 @@ cd hybris/bin/platform
 ant clean all
 ```
 
-4. Start the server and update the system:
+5. Start the server and update the system:
 
 ```bash
 ./hybrisserver.sh
@@ -112,12 +89,16 @@ ant updatesystem
 
 ## Configuration
 
-Add your Stripe API keys to `local.properties`:
+Add your Stripe settings to `local.properties`. Never store real keys in git.
 
 ```properties
-stripe.api.secret.key=sk_test_your_secret_key
-stripe.api.public.key=pk_test_your_public_key
+stripe.secret.key=sk_test_your_secret_key
+stripe.publishable.key=pk_test_your_public_key
 stripe.webhook.secret=whsec_your_webhook_secret
+stripe.capture.mode=manual
+stripe.statement.descriptor=MYSHOP
+stripe.descriptor.suffix=ECOM
+stripe.capture.manual.methods=card,paypal,klarna
 ```
 
 ## Installing on SAP Commerce Cloud
@@ -126,21 +107,71 @@ Follow the [SAP Commerce Cloud documentation](https://help.sap.com/docs/SAP_COMM
 
 1. Include the Stripe extensions in the `core-customize` folder
 2. Update your `manifest.json` to include the extensions
-3. Add Stripe API keys as environment properties in SAP Commerce Cloud Portal
+3. Add the Stripe keys as environment properties in SAP Commerce Cloud Portal
 
 # Spartacus Frontend
 
-The Connector supports Spartacus storefronts through OCC APIs. The frontend integration is located in `js-storefront/stripestore/integrations-libs/stripe/`.
+The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/`. Your app gives the library the Stripe publishable key through `StripePaymentConfig` (`stripePayment.publishableKey`).
 
-## Frontend Installation
+# Reference project
+
+## 1. Platform
+
+The platform lives outside the repository. Example with the SAP Commerce zip in `/path/to/platform`:
 
 ```bash
+unzip CXCOMCL221100U_55-*.ZIP -d /path/to/platform
+ln -s "$PWD/core-customize/hybris/custom" /path/to/platform/hybris/bin/custom
+# Gradle does not follow a symlinked recipe: copy it before every installer run
+rsync -a --delete core-customize/installer/recipes/b2c_occ_stripe/ /path/to/platform/installer/recipes/b2c_occ_stripe/
+```
+
+## 2. Stripe keys
+
+Put the test keys in a `.env` file in the repository root. Git ignores it.
+
+```bash
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+## 3. Build, initialize and start
+
+Use Java 17.
+
+```bash
+set -a; . ./.env; set +a
+cd /path/to/platform/installer
+./install.sh -r b2c_occ_stripe setup -A initAdminPassword=<password>
+./install.sh -r b2c_occ_stripe initialize -A initAdminPassword=<password>
+./install.sh -r b2c_occ_stripe start
+```
+
+## 4. Storefront
+
+The `@spartacus/*` packages come from the SAP npm repository. Configure access in `js-storefront/stripestore/.npmrc` (git ignores it).
+
+```bash
+set -a; . ./.env; set +a
 cd js-storefront/stripestore
-npm install
+npm ci
 npm start
 ```
 
-The storefront will be available at `http://localhost:4200`.
+`npm start` writes the publishable key from `STRIPE_PUBLISHABLE_KEY` into a git-ignored file. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
+
+## 5. End-to-end tests
+
+With the server and the storefront running:
+
+```bash
+cd js-storefront/stripestore
+npx playwright install chromium
+npm run e2e
+```
+
+Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_CODE` (default `1934793`).
 
 # Support
 
