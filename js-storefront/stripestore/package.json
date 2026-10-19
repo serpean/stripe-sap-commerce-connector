@@ -12,7 +12,8 @@
     "test": "ng test",
     "serve:ssr:stripestore": "node dist/stripestore/server/server.mjs",
     "prebuild:ssr": "node scripts/write-stripe-config.mjs",
-    "build:ssr": "ng build"
+    "build:ssr": "ng build",
+    "e2e": "playwright test"
   },
   "private": true,
   "dependencies": {
@@ -65,6 +66,7 @@
     "@angular/cli": "^19.2.6",
     "@angular/compiler": "^19.0.3",
     "@angular/compiler-cli": "^19.2.0",
+    "@playwright/test": "^1.49.1",
     "@schematics/angular": "^19.0.4",
     "@spartacus/schematics": "~2211.37.0",
     "@types/express": "^4.17.17",

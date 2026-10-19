@@ -28,3 +28,11 @@ Decisión: se sustituye `WAITING` por `REVIEW`, el estado estándar de SAP para 
 - `StripePaymentControllerTest.java:31` no compila: llama a `createOrUpdateIntent()`, un método que no existe. `ant all` también compila `testsrc`, así que bloqueaba la build. Se elimina. El proyecto 2 escribe los tests nuevos.
 - Los `buildcallbacks.xml` de `stripecore`, `stripefacades` y `stripefulfilmentprocess` copiaban el `.classpath` de Eclipse durante `ant clean`. Al eliminar los ficheros de IDE, la build fallaba. Se quitan esos pasos, que solo sirven al IDE.
 - Con `lib/stripe-java-30.0.0.jar` fuera de git, Maven lo descarga en la build (`usemaven=true`) y `ant all` termina con `BUILD SUCCESSFUL`.
+
+## Tareas 7 a 9: plataforma de referencia y e2e
+
+- La HAC se sirve en la raíz (`https://localhost:9002/`), no en `/hac`.
+- macOS mata el wrapper de Tomcat (`Killed: 9`) en el primer arranque, hasta que el usuario lo permite en la configuración de seguridad.
+- El paquete oficial `spartacussampledata` 221121.x solo crea clientes OAuth públicos (`authorization_code`). La app de referencia usa el cliente por defecto de Spartacus, `mobile_android`, y la prueba e2e necesita `client_credentials` para registrar clientes. `stripesampledata` crea ese cliente (solo referencia).
+- El producto 1934793 está agotado. La prueba usa 816324, y la ruta de producto de Spartacus necesita el código y el nombre.
+- Resultado: `npm run e2e` pasa dos veces seguidas. En el backend, cada pedido tiene una transacción `*-STRIPE` con AUTHORIZATION y CAPTURE en estado `ACCEPTED`, y el pedido llega a `COMPLETED`. No se ha encontrado ningún fallo del conector que bloquee el checkout con tarjeta sin 3DS.
