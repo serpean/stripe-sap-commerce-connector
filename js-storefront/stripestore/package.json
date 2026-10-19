@@ -33,7 +33,6 @@
     "@spartacus/cart": "~2211.37.0",
     "@spartacus/checkout": "~2211.37.0",
     "@spartacus/core": "~2211.37.0",
-    "@spartacus/opf": "~2211.37.0",
     "@spartacus/order": "~2211.37.0",
     "@spartacus/pdf-invoices": "~2211.37.0",
     "@spartacus/product": "~2211.37.0",

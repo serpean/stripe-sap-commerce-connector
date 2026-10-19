@@ -19,6 +19,5 @@ export interface StripePaymentResult {
 declare module '@spartacus/core' {
   interface OccEndpoints {
     stripeIntent?: string;
-    stripeConfirm?: string;
   }
 }

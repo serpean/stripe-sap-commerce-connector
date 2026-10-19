@@ -13,8 +13,7 @@
     "stripe",
     "payment",
     "sap-commerce",
-    "angular",
-    "opf"
+    "angular"
   ],
   "peerDependencies": {
     "@angular/common": "^19.0.0",
