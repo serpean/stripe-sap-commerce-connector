@@ -111,3 +111,11 @@ rebel.xml
 # SAP Commerce distribution zips
 *.ZIP
 *.zip
+
+# IDE files
+.classpath
+.settings/
+.project
+
+# Jars downloaded by Maven (usemaven=true)
+core-customize/hybris/custom/stripe/stripecore/lib/

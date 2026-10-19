@@ -69,41 +69,9 @@
  
 --><project name="stripefulfilmentprocess_buildcallbacks">
     	
-    <macrodef name="stripefulfilmentprocess_clean_classpath_file">
-        		
-        <sequential>
-            			
-            <copy failonerror="true" file="${ext.stripefulfilmentprocess.path}/.classpath" overwrite="true" tofile="${ext.stripefulfilmentprocess.path}/.classpath.edit">
-                				
-                <filterchain>
-                    					
-                    <linecontainsregexp negate="true">
-                        						
-                        <regexp pattern="^(\t\t\t\t|)$"/>
-                          
-                        <!-- added by script -->
-                        					
-                    </linecontainsregexp>
-                    				
-                </filterchain>
-                			
-            </copy>
-            			
-            <move failonerror="true" file="${ext.stripefulfilmentprocess.path}/.classpath.edit" overwrite="true" tofile="${ext.stripefulfilmentprocess.path}/.classpath"/>
-            		
-        </sequential>
-        	
-    </macrodef>
-    	
     <macrodef name="stripefulfilmentprocess_after_clean">
         		
         <sequential>
-            			
-            <echo level="info" message="Generating .classpath file for stripefulfilmentprocess"/>
-            			
-            <create_extension_classpath_file extname="stripefulfilmentprocess"/>
-            			
-            <stripefulfilmentprocess_clean_classpath_file/>
             		
         </sequential>
         	

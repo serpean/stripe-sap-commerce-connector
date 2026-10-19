@@ -22,3 +22,9 @@ Decisión: se sustituye `WAITING` por `REVIEW`, el estado estándar de SAP para 
 ### Resultado del front: compila
 
 `npm ci`, `ng build sap-commerce-stripe-payment` y `ng build` terminan sin errores, con avisos de módulos CommonJS. Para instalar los paquetes `@spartacus/*` hace falta acceso al repositorio npm de SAP. Ese acceso se configura en `js-storefront/stripestore/.npmrc`, que está fuera de git.
+
+## Tarea 2
+
+- `StripePaymentControllerTest.java:31` no compila: llama a `createOrUpdateIntent()`, un método que no existe. `ant all` también compila `testsrc`, así que bloqueaba la build. Se elimina. El proyecto 2 escribe los tests nuevos.
+- Los `buildcallbacks.xml` de `stripecore`, `stripefacades` y `stripefulfilmentprocess` copiaban el `.classpath` de Eclipse durante `ant clean`. Al eliminar los ficheros de IDE, la build fallaba. Se quitan esos pasos, que solo sirven al IDE.
+- Con `lib/stripe-java-30.0.0.jar` fuera de git, Maven lo descarga en la build (`usemaven=true`) y `ant all` termina con `BUILD SUCCESSFUL`.

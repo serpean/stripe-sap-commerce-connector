@@ -210,9 +210,8 @@ def pl = platform {
         /* DEMO reasons, remove in production ready projects */
         extName 'yacceleratorcore'
 
-        /* Store - usar electronicsstore en lugar de stripestore */
+        /* Store */
         extName 'electronicsstore'
-        // extName 'stripestore'  // TODO: Migrar datos de stripestore a electronicsstore
 
         /* Spartacus sample data */
         extName 'spartacussampledata'
