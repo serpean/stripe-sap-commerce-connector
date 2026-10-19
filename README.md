@@ -39,7 +39,7 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 | Path | Content |
 |------|---------|
 | `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe |
-| `core-customize/scripts/fetch-spartacussampledata.sh` | Downloads the official SAP Spartacus sample data (`electronics-spa`), release `221121-x` of [SAP-samples/cloud-commerce-sample-setup](https://github.com/SAP-samples/cloud-commerce-sample-setup/releases/tag/sampledata), into `core-customize/hybris/custom/spartacus/spartacussampledata`. The extension is a dependency and is not stored in git. It contains OPF sample data that is imported only when `opfservices` is loaded. |
+| `core-customize/scripts/fetch-spartacussampledata.sh` | Downloads the official SAP Spartacus sample data (`electronics-spa`), release `221121-x` of [SAP-samples/cloud-commerce-sample-setup](https://github.com/SAP-samples/cloud-commerce-sample-setup/releases/tag/sampledata), into `core-customize/hybris/custom/spartacus/spartacussampledata`. The extension is a dependency and is not stored in git. It contains sample data for SAP Open Payment Framework, which is imported only when that framework is installed. |
 | `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore and creates the demo OAuth client `mobile_android` |
 | `core-customize/manifest.json`, `js-storefront/manifest.json` | CCv2 manifests |
 | `js-storefront/stripestore/src` | Spartacus demo app |
