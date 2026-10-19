@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Reference project only. Not part of the published connector. -->
+<extensioninfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="extensioninfo.xsd">
+    <extension abstractclassprefix="Generated" classprefix="StripeSampleData" name="stripesampledata">
+        <requires-extension name="commerceservices"/>
+        <requires-extension name="electronicsstore"/>
+        <requires-extension name="spartacussampledata"/>
+        <requires-extension name="stripecore"/>
+
+        <coremodule generated="true" manager="de.hybris.platform.jalo.extension.GenericManager" packageroot="com.stripe.sampledata"/>
+    </extension>
+</extensioninfo>

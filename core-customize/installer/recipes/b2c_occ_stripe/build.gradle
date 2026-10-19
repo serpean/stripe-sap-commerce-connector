@@ -10,9 +10,10 @@ def pl = platform {
         property 'log4j2.logger.auditableActionsHandler.name', 'de.hybris.platform.audit.actions.impl.Slf4jAuditableActionHandler'
         property 'log4j2.logger.auditableActionsHandler.level', 'OFF'
         // Stripe configuration
-        property 'stripe.api.secret.key', 'sk_test_your_secret_key'
-        property 'stripe.api.public.key', 'pk_test_your_public_key'
-        property 'stripe.webhook.secret', 'whsec_your_webhook_secret'
+        // Keys come from the environment and are never stored in git
+        property 'stripe.secret.key', System.getenv('STRIPE_SECRET_KEY') ?: ''
+        property 'stripe.publishable.key', System.getenv('STRIPE_PUBLISHABLE_KEY') ?: ''
+        property 'stripe.webhook.secret', System.getenv('STRIPE_WEBHOOK_SECRET') ?: ''
         property 'stripe.capture.mode', 'manual'
         property 'stripe.statement.descriptor', 'MYSHOP'
         property 'stripe.descriptor.suffix', 'ECOM'
@@ -221,6 +222,9 @@ def pl = platform {
         extName 'stripefacades'
         extName 'stripeocc'
         extName 'stripefulfilmentprocess'
+
+        /* Reference project only: enables Stripe on the electronics store */
+        extName 'stripesampledata'
     }
 }
 
