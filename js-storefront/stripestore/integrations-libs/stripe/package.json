@@ -1,6 +1,6 @@
 {
   "name": "sap-commerce-stripe-payment",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "license": "Apache-2.0",
   "description": "Stripe Payment integration library for SAP Commerce Spartacus",
   "homepage": "https://github.com/SAP-samples/sap-commerce-stripe-payment",
