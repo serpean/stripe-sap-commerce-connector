@@ -21,7 +21,7 @@
 
 # CMS Link Components
 #set ($data = $query.load('cms-responsive-content', 'CMSLinkComponent') )
-UPDATE CMSLinkComponent;$escContentCV;uid[unique=true];linkName[lang=$lang]
+INSERT_UPDATE CMSLinkComponent;$escContentCV;uid[unique=true];linkName[lang=$lang]
 #foreach( $row in $data )
  ;;$row.key;"$row.values.linkName"
 #end
