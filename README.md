@@ -39,7 +39,7 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 | Path | Content |
 |------|---------|
 | `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe |
-| `core-customize/hybris/custom/spartacus/spartacussampledata` | Official SAP Spartacus sample data (`electronics-spa`) |
+| `core-customize/scripts/fetch-spartacussampledata.sh` | Downloads the official SAP Spartacus sample data (`electronics-spa`), release `221121-x` of [SAP-samples/cloud-commerce-sample-setup](https://github.com/SAP-samples/cloud-commerce-sample-setup/releases/tag/sampledata), into `core-customize/hybris/custom/spartacus/spartacussampledata`. The extension is a dependency and is not stored in git. It contains OPF sample data that is imported only when `opfservices` is loaded. |
 | `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore and creates the demo OAuth client `mobile_android` |
 | `core-customize/manifest.json`, `js-storefront/manifest.json` | CCv2 manifests |
 | `js-storefront/stripestore/src` | Spartacus demo app |
@@ -122,6 +122,8 @@ The connector supports Spartacus storefronts through OCC APIs. The library is in
 The platform lives outside the repository. Example with the SAP Commerce zip in `/path/to/platform`:
 
 ```bash
+# Download the official Spartacus sample data (checks the SHA-256 of the release asset)
+core-customize/scripts/fetch-spartacussampledata.sh
 unzip CXCOMCL221100U_55-*.ZIP -d /path/to/platform
 ln -s "$PWD/core-customize/hybris/custom" /path/to/platform/hybris/bin/custom
 # Gradle does not follow a symlinked recipe: copy it before every installer run
