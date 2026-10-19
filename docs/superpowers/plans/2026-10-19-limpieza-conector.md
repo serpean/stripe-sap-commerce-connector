@@ -30,7 +30,7 @@
 
 ---
 
-### Tarea 1: Plataforma de prueba y estado inicial
+### Task 1: Plataforma de prueba y estado inicial
 
 Prepara la plataforma fuera del repositorio y guarda el resultado de la build **antes** de cambiar nada. Sin commit en el repositorio, excepto la nota.
 
@@ -54,7 +54,7 @@ Prepara la plataforma fuera del repositorio y guarda el resultado de la build **
   git commit -m "docs: record baseline build before cleanup"
   ```
 
-### Tarea 2: Eliminar `stripestore`, el jar de Stripe y los ficheros de IDE
+### Task 2: Eliminar `stripestore`, el jar de Stripe y los ficheros de IDE
 
 **Ficheros:**
 - Eliminar: `core-customize/hybris/custom/stripe/stripestore/` (entera)
@@ -74,7 +74,7 @@ Prepara la plataforma fuera del repositorio y guarda el resultado de la build **
   Esperado: `BUILD SUCCESSFUL`, y existe `core-customize/hybris/custom/stripe/stripecore/lib/stripe-java-30.0.0.jar` descargado por Maven (no seguido por git: `git status --short` no lo muestra).
 - [ ] **Paso 5: commit** — `git commit -m "chore: remove stripestore copy, committed Stripe jar and IDE files"`
 
-### Tarea 3: Eliminar OPF del front y el endpoint `stripeConfirm` sin backend
+### Task 3: Eliminar OPF del front y el endpoint `stripeConfirm` sin backend
 
 **Ficheros:**
 - Modificar: `js-storefront/stripestore/package.json` (quitar `@spartacus/opf`) y regenerar `js-storefront/stripestore/package-lock.json`
@@ -100,7 +100,7 @@ Nota: `stripeocc-items.xml` y `stripeocc-beans.xml` se quedan. Solo tienen ejemp
 - [ ] **Paso 5:** `git grep -in "opf" -- js-storefront core-customize/hybris/custom/stripe` → sin resultados.
 - [ ] **Paso 6: commit** — `git commit -m "chore: remove SAP OPF from storefront and unused stripeConfirm endpoint"`
 
-### Tarea 4: Clave pública de Stripe fuera del código
+### Task 4: Clave pública de Stripe fuera del código
 
 La clave `pk_test_…` de `stripe-feature.module.ts:36` sale del código. La app de referencia la lee de un fichero generado desde `STRIPE_PUBLISHABLE_KEY`.
 
@@ -120,7 +120,7 @@ La clave `pk_test_…` de `stripe-feature.module.ts:36` sale del código. La app
 - [ ] **Paso 4:** `git grep -n "pk_test_51" ` → sin resultados.
 - [ ] **Paso 5: commit** — `git commit -m "chore: read Stripe publishable key from environment in reference app"`
 
-### Tarea 5: Datos de ejemplo oficiales de Spartacus
+### Task 5: Datos de ejemplo oficiales de Spartacus
 
 **Bloqueada** hasta que el propietario aporte el paquete oficial `spartacussampledata` 2211.37 de SAP. Si no está, pasar a la tarea 6 y volver después.
 
@@ -133,12 +133,12 @@ La clave `pk_test_…` de `stripe-feature.module.ts:36` sale del código. La app
 - [ ] **Paso 4:** `ant clean all` → `BUILD SUCCESSFUL`.
 - [ ] **Paso 5: commit** — `git commit -m "chore: replace custom spartacussampledata with official SAP package 2211.37"`
 
-### Tarea 6: Comprobación de OPF
+### Task 6: Comprobación de OPF
 
 - [ ] **Paso 1:** `git grep -il opf -- ':!docs'` → sin resultados. Si queda algo, eliminarlo en esta tarea con un commit "elimina".
 - [ ] **Paso 2:** `grep -rli opf js-storefront/stripestore/node_modules/.package-lock.json` → sin resultados.
 
-### Tarea 7: Configuración del proyecto de referencia
+### Task 7: Configuración del proyecto de referencia
 
 **Ficheros:**
 - Crear: extensión `core-customize/hybris/custom/reference/stripesampledata/` con `extensioninfo.xml` (`requires-extension` `electronicsstore`, `spartacussampledata`, `stripecore`), `project.properties`, `resources/stripesampledata-spring.xml`, `src/com/stripe/sampledata/setup/StripeSampleDataSystemSetup.java` y `resources/stripesampledata/import/sampledata/stores/electronics/store.impex`
@@ -157,14 +157,14 @@ La clave `pk_test_…` de `stripe-feature.module.ts:36` sale del código. La app
 - [ ] **Paso 5:** comprobar el proveedor en la HAC (FlexibleSearch): `SELECT {paymentProvider} FROM {BaseStore} WHERE {uid}='electronics'` → `Stripe`.
 - [ ] **Paso 6: commit** — `git commit -m "chore: configure reference project with Stripe on electronics store"`
 
-### Tarea 8: Arrancar el servidor y el storefront
+### Task 8: Arrancar el servidor y el storefront
 
 - [ ] **Paso 1:** arrancar el servidor: `cd /Volumes/e/y/stripe-ref-platform/installer && ./install.sh -r b2c_occ_stripe start`. Esperado: `https://localhost:9002/occ/v2/electronics-spa/basestores/electronics` responde 200.
 - [ ] **Paso 2:** arrancar el storefront: `cd js-storefront/stripestore && STRIPE_PUBLISHABLE_KEY=… npm start`. Esperado: `http://localhost:4200/electronics-spa/en/USD` carga la home.
 - [ ] **Paso 3:** prueba manual: añadir un producto al carrito, llegar al paso de pago y ver el formulario de Stripe.
 - [ ] **Paso 4:** si algo falla en datos, receta o configuración de referencia, corregirlo con un commit "configura el proyecto de referencia". Si falla el código del conector, anotarlo en la nota de fallos conocidos y seguir.
 
-### Tarea 9: Prueba e2e de checkout con Playwright
+### Task 9: Prueba e2e de checkout con Playwright
 
 **Ficheros:**
 - Modificar: `js-storefront/stripestore/package.json` (devDependency `@playwright/test`; script `"e2e": "playwright test"`)
@@ -190,7 +190,7 @@ La clave `pk_test_…` de `stripe-feature.module.ts:36` sale del código. La app
 - [ ] **Paso 5:** ejecutar `npm run e2e` dos veces seguidas. Esperado: el mismo resultado las dos veces.
 - [ ] **Paso 6: commit** — `git commit -m "test: add Playwright e2e checkout test to reference project"`
 
-### Tarea 10: README y cambios incompatibles
+### Task 10: README y cambios incompatibles
 
 **Ficheros:**
 - Modificar: `README.md`
