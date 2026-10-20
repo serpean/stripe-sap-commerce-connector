@@ -66,5 +66,13 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
+    <alias name="defaultStripeOrderPlacementLockService" alias="stripeOrderPlacementLockService"/>
+    <bean id="defaultStripeOrderPlacementLockService"
+          class="com.stripe.core.order.impl.DefaultStripeOrderPlacementLockService">
+        <property name="modelService" ref="modelService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+    </bean>
+
     <import resource="stripecore-commands-spring.xml"/>
 </beans>

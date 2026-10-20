@@ -12,9 +12,26 @@
         <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
     </bean>
 
+    <alias name="defaultStripeCheckoutAuthorizer" alias="stripeCheckoutAuthorizer"/>
+    <bean id="defaultStripeCheckoutAuthorizer" class="com.stripe.facades.checkout.impl.DefaultStripeCheckoutAuthorizer">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="commerceCheckoutService" ref="commerceCheckoutService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>
     <bean id="stripeCheckoutFacade" class="com.stripe.facades.order.impl.StripeCheckoutFacade" parent="defaultCheckoutFacade">
-        <property name="stripePaymentProvider" ref="stripePaymentProvider"/>
+        <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
+    </bean>
+
+    <alias name="stripeAcceleratorCheckoutFacade" alias="acceleratorCheckoutFacade"/>
+    <bean id="stripeAcceleratorCheckoutFacade" class="com.stripe.facades.order.impl.StripeAcceleratorCheckoutFacade"
+          parent="defaultAcceleratorCheckoutFacade">
+        <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
     </bean>
 
     <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>
