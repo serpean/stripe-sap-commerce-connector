@@ -143,6 +143,8 @@ public class DefaultStripeOrderPlacementServiceTest
 		when(lockService.tryAcquire(PI_ID)).thenReturn(true);
 		when(recordService.findLiveOrder(PI_ID)).thenReturn(Optional.empty());
 		when(order.getCode()).thenReturn("order-1");
+		when(order.getCurrency()).thenReturn(currency);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(AMOUNT_MINOR);
 
 		when(acceptedEntry.getTransactionStatus()).thenReturn(TransactionStatus.ACCEPTED.name());
 		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(acceptedEntry);
@@ -361,6 +363,8 @@ public class DefaultStripeOrderPlacementServiceTest
 		assertFalse(service.placeOrderFor(paymentIntent).isPresent());
 
 		verify(paymentIntentService).releaseFunds(PI_ID, "authorization-rejected");
+		verify(paymentInfo).setStripePaymentIntentId(null);
+		verify(modelService).save(paymentInfo);
 		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
 		verify(lockService, never()).release(anyString());
 		verify(modelService, never()).remove(cart);
@@ -439,7 +443,6 @@ public class DefaultStripeOrderPlacementServiceTest
 	@Test
 	public void orderTotalMismatchAfterPlacementIsLogged()
 	{
-		when(order.getCurrency()).thenReturn(currency);
 		when(amountConverter.chargeAmountMinor(order)).thenReturn(AMOUNT_MINOR + 100);
 		final List<String> errors = new ArrayList<>();
 		final org.apache.logging.log4j.core.Logger logger = (org.apache.logging.log4j.core.Logger) LogManager
@@ -477,9 +480,6 @@ public class DefaultStripeOrderPlacementServiceTest
 	@Test
 	public void matchingOrderTotalLogsNoError()
 	{
-		when(order.getCurrency()).thenReturn(currency);
-		when(amountConverter.chargeAmountMinor(order)).thenReturn(AMOUNT_MINOR);
-
 		assertSame(order, service.placeOrderFor(paymentIntent).get());
 
 		verify(amountConverter).chargeAmountMinor(order);

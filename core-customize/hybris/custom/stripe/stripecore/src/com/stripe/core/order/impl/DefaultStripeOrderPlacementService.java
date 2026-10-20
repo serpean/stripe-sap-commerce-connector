@@ -138,6 +138,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 			LOG.error("Authorization of payment intent {} for cart {} was rejected: releasing the funds", paymentIntentId,
 					cart.getCode());
 			stripePaymentIntentService.releaseFunds(paymentIntentId, AUTHORIZATION_REJECTED);
+			detachPaymentIntent(cart);
 			return Optional.empty();
 		}
 		stripePaymentIntentRecordService.linkOrder(paymentIntentId, order);
