@@ -2,6 +2,7 @@ package com.stripe.core.commands.impl;
 
 import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.status.StripePaymentIntentStatus;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.payment.commands.request.CaptureRequest;
 import de.hybris.platform.payment.commands.result.CaptureResult;
@@ -12,7 +13,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Captures the amount of a capture request. A PaymentIntent that Stripe already captured (automatic capture) is
- * accepted without a call to Stripe, but only when Stripe received the requested amount.
+ * accepted without a call to Stripe, but only when the amount Stripe holds (received minus refunded) is the requested
+ * amount.
  */
 public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 {
@@ -55,18 +57,23 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 	}
 
 	/**
-	 * Stripe captured the PaymentIntent before (automatic capture). The capture is accepted only for the amount that
-	 * Stripe received.
+	 * Stripe captured the PaymentIntent before (automatic capture). The capture is accepted only for the net amount that
+	 * Stripe holds: the amount received minus the amount refunded on the latest charge (for example, after a partial
+	 * cancel). When the charge details are missing, the amount received is used.
 	 */
 	private CaptureResult alreadyCaptured(final PaymentIntent paymentIntent, final long amount, final CaptureResult result,
 			final CaptureRequest request)
 	{
-		if (Long.valueOf(amount).equals(paymentIntent.getAmountReceived()))
+		final long received = paymentIntent.getAmountReceived() == null ? 0L : paymentIntent.getAmountReceived();
+		final Charge charge = paymentIntent.getLatestChargeObject();
+		final long refunded = charge == null || charge.getAmountRefunded() == null ? 0L : charge.getAmountRefunded();
+		final long net = received - refunded;
+		if (net == amount)
 		{
 			return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
 		}
-		LOG.warn("PaymentIntent [{}] received [{}], not the requested [{}] of transaction [{}]", paymentIntent.getId(),
-				paymentIntent.getAmountReceived(), amount, request.getMerchantTransactionCode());
+		LOG.warn("PaymentIntent [{}] holds [{}] (received [{}], refunded [{}]), not the requested [{}] of transaction [{}]",
+				paymentIntent.getId(), net, received, refunded, amount, request.getMerchantTransactionCode());
 		return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.INVALID_REQUEST);
 	}
 }

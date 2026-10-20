@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.PartialCaptureRequest;
 import de.hybris.platform.payment.commands.result.CaptureResult;
@@ -58,6 +59,31 @@ public class StripePartialCaptureCommandTest
 
 		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
 		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyString());
+	}
+
+	@Test
+	public void capturedIntentWithRefundMatchesNetAmount()
+	{
+		final PaymentIntent captured = intent("succeeded", 1999L, "eur");
+		captured.getLatestChargeObject().setAmountRefunded(999L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(captured);
+
+		final CaptureResult result = command.perform(request(new BigDecimal("10.00")));
+
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyString());
+	}
+
+	@Test
+	public void capturedIntentWithRefundRejectsGrossAmount()
+	{
+		final PaymentIntent captured = intent("succeeded", 1999L, "eur");
+		captured.getLatestChargeObject().setAmountRefunded(999L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(captured);
+
+		final CaptureResult result = command.perform(request(new BigDecimal("19.99")));
+
+		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
 	}
 
 	private static PartialCaptureRequest request(final BigDecimal amount)

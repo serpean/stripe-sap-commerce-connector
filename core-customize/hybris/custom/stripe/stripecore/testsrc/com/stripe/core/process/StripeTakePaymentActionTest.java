@@ -114,6 +114,32 @@ public class StripeTakePaymentActionTest
 	}
 
 	@Test
+	public void takePaymentDoesNotCaptureTwice() throws Exception
+	{
+		final PaymentTransactionEntryModel capture = entry(TransactionStatus.ACCEPTED);
+		capture.setType(PaymentTransactionType.PARTIAL_CAPTURE);
+		transaction.getEntries().add(capture);
+		when(amountConverter.chargeAmount(order)).thenReturn(new BigDecimal("60.00"));
+
+		assertEquals("OK", action.execute(process));
+
+		verifyNoInteractions(paymentService);
+		assertEquals(OrderStatus.PAYMENT_CAPTURED, order.getStatus());
+	}
+
+	@Test
+	public void rejectedEarlierCaptureIsRetried() throws Exception
+	{
+		transaction.getEntries().add(entry(TransactionStatus.REJECTED));
+		when(amountConverter.chargeAmount(order)).thenReturn(AUTHORIZED);
+		when(paymentService.capture(transaction)).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		assertEquals("OK", action.execute(process));
+
+		verify(paymentService).capture(transaction);
+	}
+
+	@Test
 	public void rejectedCaptureSetsPaymentNotCaptured() throws Exception
 	{
 		when(amountConverter.chargeAmount(order)).thenReturn(AUTHORIZED);

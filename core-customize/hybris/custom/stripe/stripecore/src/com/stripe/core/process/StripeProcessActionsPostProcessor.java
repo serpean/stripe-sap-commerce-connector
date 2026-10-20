@@ -2,8 +2,11 @@ package com.stripe.core.process;
 
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.processengine.action.AbstractSimpleDecisionAction;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanFactory;
@@ -12,7 +15,7 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
 
 /**
  * Adds the Stripe steps to the order process of SAP, whichever extension defines it (order management, the classic
- * fulfilment process or a copy of it). It works on bean names, not classes:
+ * fulfilment process or a copy of it). It works on bean names and their aliases, not classes:
  * <ul>
  * <li>{@code checkOrderAction} is wrapped by {@link StripeAwaitPaymentCheckOrderAction};</li>
  * <li>{@code takePaymentAction} is wrapped by {@link StripeTakePaymentAction};</li>
@@ -37,17 +40,36 @@ public class StripeProcessActionsPostProcessor implements BeanPostProcessor, Bea
 	@Override
 	public Object postProcessAfterInitialization(final Object bean, final String beanName)
 	{
-		switch (beanName)
+		final Set<String> names = namesOf(beanName);
+		if (names.contains(CHECK_ORDER_ACTION))
 		{
-			case CHECK_ORDER_ACTION:
-				return wrap(bean, beanName, AWAIT_PAYMENT_WRAPPER, StripeAwaitPaymentCheckOrderAction.class);
-			case TAKE_PAYMENT_ACTION:
-				return wrap(bean, beanName, TAKE_PAYMENT_WRAPPER, StripeTakePaymentAction.class);
-			case STATUS_DISPLAY_MAP:
-				return bean instanceof Map<?, ?> map ? withPaymentPending(map) : bean;
-			default:
-				return bean;
+			return wrap(bean, beanName, AWAIT_PAYMENT_WRAPPER, StripeAwaitPaymentCheckOrderAction.class);
 		}
+		if (names.contains(TAKE_PAYMENT_ACTION))
+		{
+			return wrap(bean, beanName, TAKE_PAYMENT_WRAPPER, StripeTakePaymentAction.class);
+		}
+		if (names.contains(STATUS_DISPLAY_MAP) && bean instanceof Map<?, ?> map)
+		{
+			return withPaymentPending(map);
+		}
+		return bean;
+	}
+
+	/**
+	 * The bean name and its aliases. SAP extensions override a bean with an alias ({@code <alias name="custom..."
+	 * alias="takePaymentAction"/>}), and Spring post-processes the bean with its own name.
+	 */
+	private Set<String> namesOf(final String beanName)
+	{
+		final Set<String> names = new HashSet<>();
+		names.add(beanName);
+		final String[] aliases = beanFactory.getAliases(beanName);
+		if (aliases != null)
+		{
+			names.addAll(Arrays.asList(aliases));
+		}
+		return names;
 	}
 
 	private Object wrap(final Object bean, final String beanName, final String wrapperName, final Class<?> wrapperClass)

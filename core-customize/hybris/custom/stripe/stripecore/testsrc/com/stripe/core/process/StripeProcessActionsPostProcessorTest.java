@@ -2,8 +2,11 @@ package com.stripe.core.process;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.hybris.bootstrap.annotations.UnitTest;
@@ -47,13 +50,29 @@ public class StripeProcessActionsPostProcessorTest
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	public void aliasedBeansAreWrapped()
+	{
+		final AbstractSimpleDecisionAction<OrderProcessModel> custom = mock(AbstractSimpleDecisionAction.class);
+		final StripeTakePaymentAction takeWrapper = new StripeTakePaymentAction(custom);
+		when(beanFactory.getAliases("customTakePaymentAction")).thenReturn(new String[] { "takePaymentAction" });
+		when(beanFactory.getBean("stripeTakePaymentAction", custom)).thenReturn(takeWrapper);
+		when(beanFactory.getAliases("customStatusDisplayMap")).thenReturn(new String[] { "acceleratorStatusDisplayMap" });
+
+		assertSame(takeWrapper, postProcessor.postProcessAfterInitialization(custom, "customTakePaymentAction"));
+		final Object displayMap = postProcessor.postProcessAfterInitialization(new LinkedHashMap<>(),
+				"customStatusDisplayMap");
+		assertEquals("paymentPending", ((Map<?, ?>) displayMap).get("PAYMENT_PENDING"));
+	}
+
+	@Test
 	public void wrapperIsNotWrappedTwice()
 	{
 		@SuppressWarnings("unchecked")
 		final StripeTakePaymentAction wrapper = new StripeTakePaymentAction(mock(AbstractSimpleDecisionAction.class));
 
 		assertSame(wrapper, postProcessor.postProcessAfterInitialization(wrapper, "takePaymentAction"));
-		verifyNoInteractions(beanFactory);
+		verify(beanFactory, never()).getBean(anyString(), (Object) any());
 	}
 
 	@Test
@@ -62,7 +81,7 @@ public class StripeProcessActionsPostProcessorTest
 		final Object bean = new Object();
 
 		assertSame(bean, postProcessor.postProcessAfterInitialization(bean, "checkOrderAction"));
-		verifyNoInteractions(beanFactory);
+		verify(beanFactory, never()).getBean(anyString(), (Object) any());
 	}
 
 	@Test

@@ -24,7 +24,8 @@ import org.slf4j.LoggerFactory;
  * current charge amount of the order on the transaction whose ACCEPTED authorization belongs to the PaymentIntent of the
  * order: a partial capture when the order total went down (partial cancel), a full capture otherwise. Other
  * transactions (for example, of a PaymentIntent released at checkout) are skipped. When the order total is above the
- * authorized amount, nothing is captured. The order gets PAYMENT_CAPTURED (OK) or PAYMENT_NOT_CAPTURED (NOK). The
+ * authorized amount, nothing is captured. A transaction with an ACCEPTED capture is not captured again (a second entry
+ * would double the captured sum used for refunds). The order gets PAYMENT_CAPTURED (OK) or PAYMENT_NOT_CAPTURED (NOK). The
  * wrapped action does not run for Stripe orders; other orders go to it.
  */
 public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderProcessModel>
@@ -72,6 +73,13 @@ public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderP
 					paymentIntentId);
 			return notCaptured(order);
 		}
+		if (hasAcceptedCapture(authorized))
+		{
+			LOG.info("Transaction {} of order {} is already captured: no new capture", authorized.getCode(),
+					order.getCode());
+			setOrderStatus(order, OrderStatus.PAYMENT_CAPTURED);
+			return Transition.OK;
+		}
 		return capture(order, authorized, authorization);
 	}
 
@@ -113,6 +121,15 @@ public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderP
 	private static List<PaymentTransactionModel> transactionsOf(final OrderModel order)
 	{
 		return order.getPaymentTransactions() == null ? List.of() : List.copyOf(order.getPaymentTransactions());
+	}
+
+	private static boolean hasAcceptedCapture(final PaymentTransactionModel transaction)
+	{
+		return transaction.getEntries() != null && transaction.getEntries().stream()
+				.filter(Objects::nonNull)
+				.anyMatch(entry -> (PaymentTransactionType.CAPTURE.equals(entry.getType())
+						|| PaymentTransactionType.PARTIAL_CAPTURE.equals(entry.getType()))
+						&& TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus()));
 	}
 
 	private static Optional<PaymentTransactionEntryModel> acceptedAuthorization(final PaymentTransactionModel transaction,
