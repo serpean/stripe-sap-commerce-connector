@@ -1,7 +1,9 @@
 package com.stripe.core.payment;
 
+import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -20,4 +22,9 @@ public interface StripeTransactionLookup
 	 * the database, not the cached entries of the model.
 	 */
 	int countSettledRefunds(PaymentTransactionModel transaction);
+
+	/**
+	 * The REFUND_FOLLOW_ON entries of live orders (not order history snapshots) whose requestId is the refund id.
+	 */
+	List<PaymentTransactionEntryModel> findRefundEntries(String refundId);
 }

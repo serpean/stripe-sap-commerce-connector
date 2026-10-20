@@ -14,9 +14,12 @@ import de.hybris.platform.servicelayer.exceptions.ModelSavingException;
 import de.hybris.platform.servicelayer.i18n.CommonI18NService;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.user.UserService;
+import de.hybris.platform.task.TaskModel;
 import org.junit.Test;
 
 import javax.annotation.Resource;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Date;
 import java.util.Optional;
 
@@ -112,6 +115,24 @@ public class StripeRecordsIntegrationTest extends ServicelayerTransactionalTest
 		assertTrue(stripeWebhookEventDao.findByEventId("evt_find").isPresent());
 		assertFalse(stripeWebhookEventDao.findByEventId("evt_missing").isPresent());
 		assertEquals(Integer.valueOf(0), event.getAttempts());
+	}
+
+	@Test
+	public void findsScheduledTaskOfEvent()
+	{
+		final StripeWebhookEventModel scheduled = modelService.create(StripeWebhookEventModel.class);
+		scheduled.setEventId("evt_task");
+		final StripeWebhookEventModel orphan = modelService.create(StripeWebhookEventModel.class);
+		orphan.setEventId("evt_orphan");
+		modelService.saveAll(scheduled, orphan);
+		final TaskModel task = modelService.create(TaskModel.class);
+		task.setRunnerBean("stripeWebhookEventTaskRunner");
+		task.setContextItem(scheduled);
+		task.setExecutionDate(Date.from(Instant.now().plus(Duration.ofDays(1))));
+		modelService.save(task);
+
+		assertTrue(stripeWebhookEventDao.hasScheduledTask(scheduled));
+		assertFalse(stripeWebhookEventDao.hasScheduledTask(orphan));
 	}
 
 	@Test

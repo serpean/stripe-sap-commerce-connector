@@ -80,5 +80,41 @@
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
     </bean>
 
+    <alias name="defaultStripeOrderAuthorizationService" alias="stripeOrderAuthorizationService"/>
+    <bean id="defaultStripeOrderAuthorizationService"
+          class="com.stripe.core.order.impl.DefaultStripeOrderAuthorizationService">
+        <property name="paymentService" ref="paymentService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="i18nService" ref="i18nService"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <!-- stripeOrderPlacementService (Task 11) and stripeOrderCancellationService (Task 12) are added as properties
+         of this bean by the tasks that define those beans. -->
+    <alias name="defaultStripePaymentIntentEventHandler" alias="stripePaymentIntentEventHandler"/>
+    <bean id="defaultStripePaymentIntentEventHandler"
+          class="com.stripe.core.webhook.impl.DefaultStripePaymentIntentEventHandler">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+        <property name="modelService" ref="modelService"/>
+        <property name="timeService" ref="timeService"/>
+    </bean>
+
+    <alias name="defaultStripeRefundEventHandler" alias="stripeRefundEventHandler"/>
+    <bean id="defaultStripeRefundEventHandler" class="com.stripe.core.webhook.impl.DefaultStripeRefundEventHandler">
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <bean id="stripeWebhookEventTaskRunner" class="com.stripe.core.webhook.StripeWebhookEventTaskRunner">
+        <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentIntentEventHandler" ref="stripePaymentIntentEventHandler"/>
+        <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
+    </bean>
+
     <import resource="stripecore-commands-spring.xml"/>
 </beans>

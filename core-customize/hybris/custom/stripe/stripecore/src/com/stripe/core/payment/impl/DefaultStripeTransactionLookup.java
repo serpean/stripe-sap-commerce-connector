@@ -3,6 +3,7 @@ package com.stripe.core.payment.impl;
 import com.stripe.core.payment.StripeTransactionLookup;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.enums.PaymentTransactionType;
+import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.search.FlexibleSearchQuery;
 import de.hybris.platform.servicelayer.search.FlexibleSearchService;
@@ -20,6 +21,10 @@ public class DefaultStripeTransactionLookup implements StripeTransactionLookup
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeTransactionLookup.class);
 
 	private static final String LIVE_TRANSACTION_BY_AUTHORIZATION = "SELECT DISTINCT {t.pk} FROM {PaymentTransactionEntry AS e"
+			+ " JOIN PaymentTransaction AS t ON {e.paymentTransaction} = {t.pk}"
+			+ " JOIN Order AS o ON {t.order} = {o.pk}}"
+			+ " WHERE {e.requestId} = ?requestId AND {e.type} = ?type AND {o.versionID} IS NULL";
+	private static final String LIVE_REFUND_ENTRIES = "SELECT {e.pk} FROM {PaymentTransactionEntry AS e"
 			+ " JOIN PaymentTransaction AS t ON {e.paymentTransaction} = {t.pk}"
 			+ " JOIN Order AS o ON {t.order} = {o.pk}}"
 			+ " WHERE {e.requestId} = ?requestId AND {e.type} = ?type AND {o.versionID} IS NULL";
@@ -52,6 +57,15 @@ public class DefaultStripeTransactionLookup implements StripeTransactionLookup
 		query.addQueryParameter("statuses", List.of(TransactionStatus.ACCEPTED.name(), TransactionStatus.REJECTED.name()));
 		query.setResultClassList(List.of(Integer.class));
 		return flexibleSearchService.<Integer> search(query).getResult().get(0);
+	}
+
+	@Override
+	public List<PaymentTransactionEntryModel> findRefundEntries(final String refundId)
+	{
+		final FlexibleSearchQuery query = new FlexibleSearchQuery(LIVE_REFUND_ENTRIES);
+		query.addQueryParameter("requestId", refundId);
+		query.addQueryParameter("type", PaymentTransactionType.REFUND_FOLLOW_ON);
+		return flexibleSearchService.<PaymentTransactionEntryModel> search(query).getResult();
 	}
 
 	public void setFlexibleSearchService(final FlexibleSearchService flexibleSearchService)

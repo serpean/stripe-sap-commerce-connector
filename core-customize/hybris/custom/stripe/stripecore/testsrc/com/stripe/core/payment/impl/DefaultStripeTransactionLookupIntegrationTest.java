@@ -16,6 +16,7 @@ import de.hybris.platform.servicelayer.i18n.CommonI18NService;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.user.UserService;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 import javax.annotation.Resource;
 import org.junit.Test;
@@ -77,6 +78,21 @@ public class DefaultStripeTransactionLookupIntegrationTest extends ServicelayerT
 		assertEquals(2, stripeTransactionLookup.countSettledRefunds(transaction));
 	}
 
+	@Test
+	public void findsRefundEntriesOfLiveOrdersOnly()
+	{
+		final PaymentTransactionModel live = transaction(order("live-5", null), "txn-live-5", "pi_refund");
+		final PaymentTransactionEntryModel refund = entry(live, "txn-live-5-r1", PaymentTransactionType.REFUND_FOLLOW_ON,
+				TransactionStatus.ACCEPTED, "re_live");
+		final PaymentTransactionModel snapshot = transaction(order("live-5-snapshot", "v1"), "txn-snap-5", "pi_refund");
+		entry(snapshot, "txn-snap-5-r1", PaymentTransactionType.REFUND_FOLLOW_ON, TransactionStatus.ACCEPTED, "re_live");
+		entry(live, "txn-live-5-c1", PaymentTransactionType.CAPTURE, TransactionStatus.ACCEPTED, "re_capture");
+
+		assertEquals(List.of(refund), stripeTransactionLookup.findRefundEntries("re_live"));
+		assertTrue(stripeTransactionLookup.findRefundEntries("re_capture").isEmpty());
+		assertTrue(stripeTransactionLookup.findRefundEntries("re_missing").isEmpty());
+	}
+
 	private OrderModel order(final String code, final String versionId)
 	{
 		final OrderModel order = modelService.create(OrderModel.class);
@@ -101,7 +117,8 @@ public class DefaultStripeTransactionLookupIntegrationTest extends ServicelayerT
 		return transaction;
 	}
 
-	private void entry(final PaymentTransactionModel transaction, final String code, final PaymentTransactionType type,
+	private PaymentTransactionEntryModel entry(final PaymentTransactionModel transaction, final String code,
+			final PaymentTransactionType type,
 			final TransactionStatus status, final String requestId)
 	{
 		final PaymentTransactionEntryModel entry = modelService.create(PaymentTransactionEntryModel.class);
@@ -111,5 +128,6 @@ public class DefaultStripeTransactionLookupIntegrationTest extends ServicelayerT
 		entry.setTransactionStatus(status.name());
 		entry.setRequestId(requestId);
 		modelService.save(entry);
+		return entry;
 	}
 }
