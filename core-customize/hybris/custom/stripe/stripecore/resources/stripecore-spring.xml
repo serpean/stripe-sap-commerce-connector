@@ -89,6 +89,11 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
+    <alias name="defaultStripePaymentInfoUpdater" alias="stripePaymentInfoUpdater"/>
+    <bean id="defaultStripePaymentInfoUpdater" class="com.stripe.core.payment.StripePaymentInfoUpdater">
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
     <alias name="defaultStripeOrderPlacementService" alias="stripeOrderPlacementService"/>
     <bean id="defaultStripeOrderPlacementService" class="com.stripe.core.order.impl.DefaultStripeOrderPlacementService">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
@@ -100,6 +105,7 @@
         <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
     </bean>
 
     <!-- stripeOrderCancellationService (Task 12) is added as a property of this bean by the task that defines it. -->

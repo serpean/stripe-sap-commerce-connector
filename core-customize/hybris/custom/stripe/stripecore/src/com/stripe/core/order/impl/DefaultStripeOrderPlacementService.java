@@ -7,6 +7,7 @@ import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
@@ -70,6 +71,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	private StripePaymentIntentService stripePaymentIntentService;
 	private StripeAmountConverter stripeAmountConverter;
 	private ModelService modelService;
+	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
 
 	@Override
 	public Optional<OrderModel> placeOrderFor(final PaymentIntent paymentIntent)
@@ -125,16 +127,21 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 			return Optional.empty();
 		}
 
-		final OrderModel order = placeInCartContext(cart, paymentIntentId, status);
+		final OrderModel order = placeInCartContext(cart, paymentIntent, status);
 		stripePaymentIntentRecordService.linkOrder(paymentIntentId, order);
 		modelService.remove(cart);
 		LOG.info("Order {} placed from cart {} for payment intent {}", order.getCode(), cart.getCode(), paymentIntentId);
 		return Optional.of(order);
 	}
 
-	protected OrderModel placeInCartContext(final CartModel cart, final String paymentIntentId,
+	/**
+	 * Copies the card display data to the payment info of the cart, authorizes and places the order, as the customer of
+	 * the cart. The copy comes first, so the payment info that the order clones has it.
+	 */
+	protected OrderModel placeInCartContext(final CartModel cart, final PaymentIntent paymentIntent,
 			final StripePaymentIntentStatus status)
 	{
+		final String paymentIntentId = paymentIntent.getId();
 		final ImpersonationContext context = new ImpersonationContext();
 		context.setOrder(cart);
 		context.setSite(cart.getSite());
@@ -144,6 +151,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		try
 		{
 			return impersonationService.<OrderModel, InvalidCartException> executeInContext(context, () -> {
+				stripePaymentInfoUpdater.copyPaymentMethod((StripePaymentInfoModel) cart.getPaymentInfo(), paymentIntent);
 				authorize(cart, paymentIntentId, status);
 				return placeOrder(cart);
 			});
@@ -349,5 +357,10 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	public void setModelService(final ModelService modelService)
 	{
 		this.modelService = modelService;
+	}
+
+	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
+	{
+		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
 	}
 }

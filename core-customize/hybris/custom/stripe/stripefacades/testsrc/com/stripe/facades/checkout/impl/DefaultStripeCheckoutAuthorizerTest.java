@@ -21,6 +21,7 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
+import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.facades.checkout.StripeCheckoutException;
 import com.stripe.model.PaymentIntent;
@@ -94,6 +95,9 @@ public class DefaultStripeCheckoutAuthorizerTest
 		authorizer.setStripeAmountConverter(converter);
 		authorizer.setStripePaymentIntentRecordDao(recordDao);
 		authorizer.setModelService(mock(ModelService.class));
+		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
+		paymentInfoUpdater.setModelService(mock(ModelService.class));
+		authorizer.setStripePaymentInfoUpdater(paymentInfoUpdater);
 	}
 
 	@Test

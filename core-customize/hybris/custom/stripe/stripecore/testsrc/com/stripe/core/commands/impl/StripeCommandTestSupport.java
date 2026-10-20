@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.servicelayer.time.TimeService;
 import java.math.BigDecimal;
@@ -50,6 +51,14 @@ final class StripeCommandTestSupport
 		intent.setAmount(amount);
 		intent.setAmountReceived("succeeded".equals(status) ? amount : 0L);
 		intent.setCurrency(currency);
+		if ("succeeded".equals(status))
+		{
+			final Charge charge = new Charge();
+			charge.setId("ch_1");
+			charge.setAmount(amount);
+			charge.setAmountRefunded(0L);
+			intent.setLatestChargeObject(charge);
+		}
 		return intent;
 	}
 }

@@ -7,13 +7,13 @@ import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
+import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
 import com.stripe.facades.checkout.StripeCheckoutException;
 import com.stripe.facades.checkout.StripeCheckoutException.Reason;
 import com.stripe.model.PaymentIntent;
-import com.stripe.model.PaymentMethod;
 import de.hybris.platform.commerceservices.order.CommerceCheckoutService;
 import de.hybris.platform.commerceservices.service.data.CommerceCheckoutParameter;
 import de.hybris.platform.core.model.order.CartModel;
@@ -44,6 +44,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	private StripeAmountConverter stripeAmountConverter;
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
 	private ModelService modelService;
+	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
 
 	@Override
 	public boolean authorize(final CartModel cart)
@@ -99,7 +100,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 							intent.getId());
 					return true;
 				}
-				copyPaymentMethod(intent, paymentInfo);
+				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
 				if (!isAccepted(commerceCheckoutService.authorizePayment(createParameter(cart))))
 				{
 					LOG.warn("Authorization of payment intent {} for cart {} was not accepted", intent.getId(), cart.getCode());
@@ -115,7 +116,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 							cart.getCode(), intent.getId());
 					return false;
 				}
-				copyPaymentMethod(intent, paymentInfo);
+				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
 				updateRecordState(intent.getId(), StripePaymentIntentState.PROCESSING);
 				return true;
 			default:
@@ -155,26 +156,6 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		{
 			LOG.error("Could not release the funds of payment intent {} for cart {}", intent.getId(), cart.getCode(), e);
 		}
-	}
-
-	protected void copyPaymentMethod(final PaymentIntent intent, final StripePaymentInfoModel paymentInfo)
-	{
-		final PaymentMethod method = intent.getPaymentMethodObject();
-		if (method == null)
-		{
-			return;
-		}
-		paymentInfo.setPaymentMethodType(method.getType());
-		paymentInfo.setPaymentMethodId(method.getId());
-		final PaymentMethod.Card card = method.getCard();
-		if (card != null)
-		{
-			paymentInfo.setCardBrand(card.getBrand());
-			paymentInfo.setCardLast4(card.getLast4());
-			paymentInfo.setCardExpMonth(card.getExpMonth() == null ? null : Math.toIntExact(card.getExpMonth()));
-			paymentInfo.setCardExpYear(card.getExpYear() == null ? null : Math.toIntExact(card.getExpYear()));
-		}
-		modelService.save(paymentInfo);
 	}
 
 	protected void updateRecordState(final String paymentIntentId, final StripePaymentIntentState state)
@@ -256,5 +237,10 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	public void setModelService(final ModelService modelService)
 	{
 		this.modelService = modelService;
+	}
+
+	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
+	{
+		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
 	}
 }

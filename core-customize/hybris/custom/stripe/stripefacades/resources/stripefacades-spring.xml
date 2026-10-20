@@ -22,6 +22,7 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
     </bean>
 
     <alias name="defaultStripePlaceOrderGuard" alias="stripePlaceOrderGuard"/>

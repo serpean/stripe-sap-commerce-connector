@@ -19,7 +19,9 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.PaymentMethod;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.commerceservices.enums.SalesApplication;
@@ -100,6 +102,9 @@ public class DefaultStripeOrderPlacementServiceTest
 		service.setStripePaymentIntentService(paymentIntentService);
 		service.setStripeAmountConverter(amountConverter);
 		service.setModelService(modelService);
+		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
+		paymentInfoUpdater.setModelService(modelService);
+		service.setStripePaymentInfoUpdater(paymentInfoUpdater);
 
 		paymentIntent = new PaymentIntent();
 		paymentIntent.setId(PI_ID);
@@ -170,6 +175,33 @@ public class DefaultStripeOrderPlacementServiceTest
 		verify(recordService).linkOrder(PI_ID, order);
 		verify(lockService, never()).release(anyString());
 		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+	}
+
+	@Test
+	public void placedOrderCarriesCardDisplayData() throws Exception
+	{
+		final PaymentMethod.Card card = new PaymentMethod.Card();
+		card.setBrand("visa");
+		card.setLast4("4242");
+		card.setExpMonth(12L);
+		card.setExpYear(2030L);
+		final PaymentMethod method = new PaymentMethod();
+		method.setId("pm_card");
+		method.setType("card");
+		method.setCard(card);
+		paymentIntent.setPaymentMethodObject(method);
+
+		service.placeOrderFor(paymentIntent);
+
+		final InOrder inOrder = inOrder(paymentInfo, modelService, commerceCheckoutService);
+		inOrder.verify(paymentInfo).setPaymentMethodType("card");
+		inOrder.verify(modelService).save(paymentInfo);
+		inOrder.verify(commerceCheckoutService).placeOrder(any(CommerceCheckoutParameter.class));
+		verify(paymentInfo).setPaymentMethodId("pm_card");
+		verify(paymentInfo).setCardBrand("visa");
+		verify(paymentInfo).setCardLast4("4242");
+		verify(paymentInfo).setCardExpMonth(12);
+		verify(paymentInfo).setCardExpYear(2030);
 	}
 
 	@Test

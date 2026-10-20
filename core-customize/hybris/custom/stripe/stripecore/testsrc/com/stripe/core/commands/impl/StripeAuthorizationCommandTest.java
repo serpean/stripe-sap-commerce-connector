@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.SubscriptionAuthorizationRequest;
 import de.hybris.platform.payment.commands.result.AuthorizationResult;
@@ -67,6 +68,52 @@ public class StripeAuthorizationCommandTest
 
 		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
 		assertEquals(TransactionStatusDetails.GENERAL_SYSTEM_ERROR, result.getTransactionStatusDetails());
+	}
+
+	@Test
+	public void authorizationAcceptsCapturedIntentWithoutRefund()
+	{
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("succeeded", 1999L, "eur"));
+
+		final AuthorizationResult result = command.perform(request(new BigDecimal("19.99")));
+
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+	}
+
+	@Test
+	public void authorizationRejectsRefundedCapturedIntent()
+	{
+		final PaymentIntent refunded = intent("succeeded", 1999L, "eur");
+		refunded.getLatestChargeObject().setAmountRefunded(500L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(refunded);
+
+		final AuthorizationResult result = command.perform(request(new BigDecimal("19.99")));
+
+		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
+	}
+
+	@Test
+	public void authorizationRejectsCapturedIntentWithLessMoneyReceived()
+	{
+		final PaymentIntent partly = intent("succeeded", 1999L, "eur");
+		partly.setAmountReceived(1000L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(partly);
+
+		final AuthorizationResult result = command.perform(request(new BigDecimal("19.99")));
+
+		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
+	}
+
+	@Test
+	public void authorizationRejectsCapturedIntentWithoutChargeDetails()
+	{
+		final PaymentIntent withoutCharge = intent("succeeded", 1999L, "eur");
+		withoutCharge.setLatestCharge("ch_not_expanded");
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(withoutCharge);
+
+		final AuthorizationResult result = command.perform(request(new BigDecimal("19.99")));
+
+		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
 	}
 
 	private static SubscriptionAuthorizationRequest request(final BigDecimal amount)
