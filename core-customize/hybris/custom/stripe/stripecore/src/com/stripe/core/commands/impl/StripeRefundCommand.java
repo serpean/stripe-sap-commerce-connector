@@ -1,100 +1,56 @@
 package com.stripe.core.commands.impl;
 
-import com.stripe.exception.StripeException;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.model.Refund;
 import de.hybris.platform.payment.commands.FollowOnRefundCommand;
-import de.hybris.platform.payment.commands.request.AbstractRequest;
 import de.hybris.platform.payment.commands.request.FollowOnRefundRequest;
-import de.hybris.platform.payment.commands.result.AbstractResult;
 import de.hybris.platform.payment.commands.result.RefundResult;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.dto.TransactionStatusDetails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
-
-import static de.hybris.platform.servicelayer.util.ServicesUtil.validateParameterNotNull;
+import java.util.Set;
 
 /**
- * Stripe implementation of {@link FollowOnRefundCommand}.
- * Refunds a previously captured payment.
+ * Refunds an amount of a captured PaymentIntent. The requestId of the result is the refund id. A pending refund is
+ * accepted; the webhook confirms it later.
  */
-public class StripeRefundCommand extends AbstractStripeCommand implements FollowOnRefundCommand<FollowOnRefundRequest> {
+public class StripeRefundCommand extends AbstractStripeCommand implements FollowOnRefundCommand<FollowOnRefundRequest>
+{
+	private static final Logger LOG = LoggerFactory.getLogger(StripeRefundCommand.class);
+	private static final Set<String> FAILED_STATUSES = Set.of("failed", "canceled");
 
-    private static final Logger LOG = LoggerFactory.getLogger(StripeRefundCommand.class);
+	@Override
+	public RefundResult perform(final FollowOnRefundRequest request)
+	{
+		final String paymentIntentId = requirePaymentIntentId(request.getRequestId());
+		final String key = idempotencyKey("refund-", request);
+		final RefundResult result = new RefundResult();
+		result.setRequestToken(paymentIntentId);
+		result.setCurrency(request.getCurrency());
+		result.setTotalAmount(request.getTotalAmount());
+		result.setPaymentProvider(request.getPaymentProvider());
+		result.setRequestTime(getTimeService().getCurrentTime());
 
-    @Override
-    public RefundResult perform(final FollowOnRefundRequest refundRequest) {
-        validateParameterNotNull(refundRequest, "FollowOnRefundRequest cannot be null");
-        validateParameterNotNull(refundRequest.getMerchantTransactionCode(), "MerchantTransactionCode cannot be null");
-        validateParameterNotNull(refundRequest.getCurrency(), "Currency cannot be null");
+		final Refund refund;
+		try
+		{
+			refund = getStripeGateway().createRefund(paymentIntentId,
+					toMinorUnits(request.getTotalAmount(), request.getCurrency()), key);
+		}
+		catch (final StripeGatewayException e)
+		{
+			result.setRequestId(paymentIntentId);
+			return error(result, e, request);
+		}
 
-        LOG.info("Processing refund request for transaction: {}, amount: {}",
-                refundRequest.getMerchantTransactionCode(), refundRequest.getTotalAmount());
-
-        final String paymentIntentId = stripePaymentTransactionService
-                .getPaymentReferenceFromTransactionEntryCode(refundRequest.getMerchantTransactionCode());
-
-        if (paymentIntentId == null) {
-            LOG.error("Could not find PaymentIntent ID for transaction: {}", refundRequest.getMerchantTransactionCode());
-            return (RefundResult) createErrorResult(TransactionStatusDetails.INVALID_REQUEST);
-        }
-
-        try {
-            // If amount is null or zero, Stripe will refund the full amount
-            final BigDecimal refundAmount = refundRequest.getTotalAmount();
-
-            final Refund refund = stripePaymentIntegrationService.refundPayment(paymentIntentId, refundAmount);
-
-            return buildRefundResult(refundRequest, refund);
-
-        } catch (final StripeException e) {
-            LOG.error("Stripe exception while refunding payment for transaction {}: {}",
-                    refundRequest.getMerchantTransactionCode(), e.getMessage());
-            return (RefundResult) handleStripeException(e);
-        }
-    }
-
-    /**
-     * Builds a successful RefundResult from the Stripe Refund response.
-     *
-     * @param request the original refund request
-     * @param refund  the Stripe Refund response
-     * @return the refund result
-     */
-    protected RefundResult buildRefundResult(final FollowOnRefundRequest request, final Refund refund) {
-        final RefundResult result = new RefundResult();
-
-        result.setCurrency(request.getCurrency());
-        result.setTotalAmount(request.getTotalAmount());
-        result.setRequestId(request.getRequestId());
-        result.setRequestToken(refund.getId());
-        result.setRequestTime(timeService.getCurrentTime());
-
-        final TransactionStatus status = mapRefundStatus(refund.getStatus());
-        result.setTransactionStatus(status);
-
-        if (TransactionStatus.ACCEPTED.equals(status)) {
-            result.setTransactionStatusDetails(TransactionStatusDetails.SUCCESFULL);
-        } else if (TransactionStatus.REVIEW.equals(status)) {
-            result.setTransactionStatusDetails(TransactionStatusDetails.REVIEW_NEEDED);
-        } else {
-            result.setTransactionStatusDetails(TransactionStatusDetails.UNKNOWN_CODE);
-        }
-
-        LOG.info("Refund result for Refund {}: status={}, statusDetails={}",
-                refund.getId(), status, result.getTransactionStatusDetails());
-
-        return result;
-    }
-
-    @Override
-    protected AbstractResult createErrorResult(final TransactionStatusDetails statusDetails) {
-        final RefundResult result = new RefundResult();
-        result.setTransactionStatus(TransactionStatus.ERROR);
-        result.setTransactionStatusDetails(statusDetails);
-        result.setRequestTime(timeService.getCurrentTime());
-        return result;
-    }
+		result.setRequestId(refund.getId());
+		LOG.info("Refund [{}] of PaymentIntent [{}] has status [{}]", refund.getId(), paymentIntentId, refund.getStatus());
+		if (FAILED_STATUSES.contains(refund.getStatus()))
+		{
+			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+		}
+		return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+	}
 }

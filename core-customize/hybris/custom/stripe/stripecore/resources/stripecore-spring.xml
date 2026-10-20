@@ -35,19 +35,6 @@
         <property name="assistedServiceService" ref="assistedServiceService"/>
     </bean>
 
-    <alias name="defaultStripePaymentTransactionService" alias="stripePaymentTransactionService"/>
-    <bean id="defaultStripePaymentTransactionService"
-          class="com.stripe.core.payment.services.impl.DefaultStripePaymentTransactionService">
-        <property name="modelService" ref="modelService"/>
-        <property name="flexibleSearchService" ref="flexibleSearchService"/>
-    </bean>
-
-    <alias name="defaultStripePaymentIntegrationService" alias="stripePaymentIntegrationService"/>
-    <bean id="defaultStripePaymentIntegrationService"
-          class="com.stripe.core.payment.services.impl.DefaultStripePaymentIntegrationService">
-        <property name="stripeClient" ref="stripeClient"/>
-    </bean>
-
     <alias name="defaultStripePaymentIntentRecordDao" alias="stripePaymentIntentRecordDao"/>
     <bean id="defaultStripePaymentIntentRecordDao" class="com.stripe.core.dao.impl.DefaultStripePaymentIntentRecordDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
