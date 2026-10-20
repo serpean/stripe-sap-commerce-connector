@@ -3,11 +3,11 @@ import { expectNoOrderAndCartIntact, expectOneAuthorizedOrder } from '../support
 import { getOrderCodesOfCustomer, getPaymentIntentRecord, getPaymentIntentRecordsOfCart, waitFor } from '../support/backend';
 import {
   checkoutToPayment,
-  ERROR_CODE_BUG,
   expectOrderConfirmation,
   expectPaymentStepReady,
+  MESSAGES,
+  paymentError,
   payWithBancontact,
-  UI_REFRESH_BUG,
   waitForPlaceOrder,
 } from '../support/checkout';
 import { getCart } from '../support/occ';
@@ -70,8 +70,6 @@ test('8. Bancontact cancelled on the provider page: no order, the cart is intact
 });
 
 test('8 (error code). a cancelled Bancontact payment gives the stable Stripe error code', async ({ page }) => {
-  test.info().annotations.push(ERROR_CODE_BUG);
-  test.fail();
   await checkoutToPayment(page, { currency: 'EUR' });
   const placement = waitForPlaceOrder(page);
   await payWithBancontact(page, 'fail', true);
@@ -79,9 +77,8 @@ test('8 (error code). a cancelled Bancontact payment gives the stable Stripe err
 });
 
 test('8 (UI). after a cancelled Bancontact payment the shop shows a warning and the customer can pay again', async ({ page }) => {
-  test.info().annotations.push(UI_REFRESH_BUG);
-  test.fail();
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithBancontact(page, 'fail', true);
   await expectPaymentStepReady(page);
+  await expect(paymentError(page)).toHaveText(MESSAGES.paymentFailed);
 });

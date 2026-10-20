@@ -9,7 +9,6 @@ import {
   expectOrderConfirmation,
   expectPaymentStepReady,
   payWithCard,
-  UI_REFRESH_BUG,
 } from '../support/checkout';
 
 test('2. card with 3DS completed: order created', async ({ page }) => {
@@ -42,8 +41,6 @@ test('3. card with 3DS failed: no order, the customer stays on the payment step,
 });
 
 test('3 (UI). after a failed 3DS the shop shows its error and the customer can pay again', async ({ page }) => {
-  test.info().annotations.push(UI_REFRESH_BUG);
-  test.fail();
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithCard(page, CARDS.threeDs);
   await completeThreeDs(page, 'fail');

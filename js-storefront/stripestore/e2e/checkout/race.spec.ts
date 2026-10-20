@@ -49,8 +49,12 @@ test('9. the customer return and the webhook arrive at the same time: one order'
   await expectOneAuthorizedOrder(orderCode);
   expect(await getPaymentIntentRecord(record.paymentIntentId)).toMatchObject({ orderCode, state: 'AUTHORIZED' });
 
-  // The event was stored once and processed.
-  const stored = await getWebhookEvents(event.id);
+  // The event was stored once and processed. When the OCC placement holds the lock first, the webhook task retries
+  // 30 s later and then finds the order.
+  const stored = await waitFor(async () => {
+    const events = await getWebhookEvents(event.id);
+    return events.length !== 1 || events[0].state === 'PROCESSED' ? events : undefined;
+  }, 60_000, 'the processed webhook event');
   expect(stored).toHaveLength(1);
   expect(stored[0].state).toBe('PROCESSED');
 });

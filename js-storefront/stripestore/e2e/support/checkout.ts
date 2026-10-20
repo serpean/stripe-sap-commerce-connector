@@ -16,25 +16,6 @@ export const CARDS = {
   declined: '4000 0000 0000 0002',
 } as const;
 
-/**
- * Known bug in the Spartacus library (found in Task 16): the component state is correct, but the view is not
- * refreshed. Stripe's own message inside the Payment Element is shown.
- */
-export const UI_REFRESH_BUG = {
-  type: 'known bug B1',
-  description:
-    'StripePaymentFormComponent changes its state without markForCheck inside the OnPush Spartacus page slot: after a ' +
-    'failed confirmation or a failed redirect return the button stays "Processing..." and no shop error is shown',
-};
-
-/** Known bug in the connector: a failed or cancelled PaymentIntent gives SAP's generic error, not a Stripe reason. */
-export const ERROR_CODE_BUG = {
-  type: 'known bug B2',
-  description:
-    'POST /orders with a failed PaymentIntent answers PaymentAuthorizationError instead of StripePaymentError ' +
-    'STRIPE_PAYMENT_FAILED (the authorizer returns false and SAP throws PaymentAuthorizationException)',
-};
-
 /** Starts to wait for the storefront's POST /orders and gives its status and body. Call it before the action. */
 export function waitForPlaceOrder(page: Page): Promise<{ status: number; body: any }> {
   return page

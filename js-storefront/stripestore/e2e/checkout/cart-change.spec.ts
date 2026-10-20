@@ -6,7 +6,18 @@ import {
   getPaymentIntentRecordsOfCart,
   waitFor,
 } from '../support/backend';
-import { CARDS, checkoutToPayment, expectOrderConfirmation, paymentElement, payWithBancontact, payWithCard, waitForPlaceOrder } from '../support/checkout';
+import {
+  CARDS,
+  checkoutToPayment,
+  expectOrderConfirmation,
+  expectPaymentStepReady,
+  MESSAGES,
+  paymentElement,
+  paymentError,
+  payWithBancontact,
+  payWithCard,
+  waitForPlaceOrder,
+} from '../support/checkout';
 import { getCart, updateCartEntry } from '../support/occ';
 import { listRefunds, minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
@@ -42,12 +53,13 @@ test('5 (variant). the cart changes during the payment: the money is returned an
     updateCartEntry(session.customer, session.cart.code, 0, 2, session.currency)
   );
 
-  // Back in the shop: no order; OCC gives the stable error code to the storefront. (The storefront does not show the
-  // message because of known bug B1, see the "(UI)" tests.)
+  // Back in the shop: no order; OCC gives the stable error code and the shop shows its warning.
   const response = await placement;
   expect(response.status).toBe(400);
   expect(response.body.errors[0]).toMatchObject({ type: 'StripePaymentError', reason: 'STRIPE_AMOUNT_MISMATCH' });
   await expect(page).toHaveURL(/checkout\/payment-details/);
+  await expectPaymentStepReady(page);
+  await expect(paymentError(page)).toHaveText(MESSAGES.amountChanged);
   expect(await getOrderCodesOfCustomer(session.customer)).toEqual([]);
 
   // Stripe: the first payment (Bancontact is charged at once) is refunded completely.
@@ -63,8 +75,7 @@ test('5 (variant). the cart changes during the payment: the money is returned an
   // The customer pays again the new total and gets one order.
   const cart = await getCart(session.customer, session.cart.code, session.currency);
   const newTotal = cart!.totalPriceWithTax!.value;
-  // Known bug B1 keeps the button on "Processing...": the customer reloads the payment step to pay again.
-  await page.reload();
+  // The shop mounted a new Payment Element for the new total: the customer pays again without a reload.
   await expect(paymentElement(page).locator('input').first()).toBeAttached({ timeout: 30_000 });
   await payWithBancontact(page, 'authorize', true);
   const orderCode = await expectOrderConfirmation(page);

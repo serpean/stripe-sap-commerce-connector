@@ -7,7 +7,6 @@ import {
   MESSAGES,
   paymentElement,
   payWithCard,
-  UI_REFRESH_BUG,
 } from '../support/checkout';
 
 test('4. declined card: no order', async ({ page }) => {
@@ -20,8 +19,6 @@ test('4. declined card: no order', async ({ page }) => {
 });
 
 test('4 (UI). after a declined card the shop shows its error and the customer can pay again', async ({ page }) => {
-  test.info().annotations.push(UI_REFRESH_BUG);
-  test.fail();
   await checkoutToPayment(page, { currency: 'USD' });
   await payWithCard(page, CARDS.declined);
   await expectPaymentStepReady(page);
