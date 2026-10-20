@@ -8,6 +8,8 @@ import {
   completeThreeDs,
   expectOrderConfirmation,
   expectPaymentStepReady,
+  MESSAGES,
+  paymentError,
   payWithCard,
 } from '../support/checkout';
 
@@ -45,4 +47,5 @@ test('3 (UI). after a failed 3DS the shop shows its error and the customer can p
   await payWithCard(page, CARDS.threeDs);
   await completeThreeDs(page, 'fail');
   await expectPaymentStepReady(page);
+  await expect(paymentError(page)).toHaveText(MESSAGES.paymentFailed);
 });

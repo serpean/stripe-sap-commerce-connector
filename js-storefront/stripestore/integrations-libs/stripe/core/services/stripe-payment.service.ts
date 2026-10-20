@@ -128,7 +128,8 @@ export class StripePaymentService {
     ).pipe(
       map((result): StripePaymentResult => {
         if (result.error) {
-          return { error: result.error.message };
+          // Stripe shows its own message inside the Payment Element; the shop shows a translated one.
+          return { error: 'stripePayment.paymentFailed' };
         }
         const paymentIntent = result.paymentIntent;
         if (!paymentIntent) {

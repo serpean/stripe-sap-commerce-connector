@@ -196,21 +196,19 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 
 	/**
 	 * The object of the event. When the API version of the event is not the version of the library, the object is read
-	 * with {@code deserializeUnsafe}.
+	 * with {@code deserializeUnsafe}. An object that cannot be read (for example an event without API version, where the
+	 * library fails with a NullPointerException) is a permanent error: the event is FAILED at once.
 	 */
 	private StripeObject dataObjectOf(final StripeWebhookEventModel event, final Event stripeEvent)
 	{
-		final EventDataObjectDeserializer deserializer = stripeEvent.getDataObjectDeserializer();
-		final Optional<StripeObject> object = deserializer.getObject();
-		if (object.isPresent())
-		{
-			return object.get();
-		}
 		try
 		{
-			return deserializer.deserializeUnsafe();
+			final EventDataObjectDeserializer deserializer = stripeEvent.getDataObjectDeserializer();
+			final Optional<StripeObject> object = deserializer.getObject();
+			return object.isPresent() ? object.get() : deserializer.deserializeUnsafe();
 		}
-		catch (final EventDataObjectDeserializationException | JsonParseException e)
+		catch (final EventDataObjectDeserializationException | JsonParseException | NullPointerException
+				| IllegalStateException e)
 		{
 			throw unreadable(event, e);
 		}

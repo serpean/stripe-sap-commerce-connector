@@ -35,6 +35,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeCheckoutAuthorizer.class);
 
+	private static final String AUTHORIZATION_REJECTED = "authorization-rejected";
+
 	private static final Set<StripePaymentIntentStatus> WITH_MONEY = EnumSet.of(StripePaymentIntentStatus.AUTHORIZED,
 			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING);
 
@@ -107,6 +109,9 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
 				if (!isAccepted(commerceCheckoutService.authorizePayment(createParameter(cart))))
 				{
+					LOG.warn("Authorization of payment intent {} for cart {} was not accepted: the funds are released",
+							intent.getId(), cart.getCode());
+					releaseHeldFunds(cart, paymentInfo, intent, AUTHORIZATION_REJECTED);
 					throw new StripeCheckoutException(Reason.PAYMENT_FAILED,
 							"Authorization of payment intent " + intent.getId() + " for cart " + cart.getCode() + " was not accepted");
 				}
@@ -140,8 +145,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	}
 
 	/**
-	 * Gives the money back and takes the PaymentIntent off the cart. When Stripe refuses (for example, a processing
-	 * PaymentIntent), the PaymentIntent stays on the cart: the next preparation of the cart releases it.
+	 * Releases the funds of a PaymentIntent whose amount or currency is not the amount of the cart.
 	 */
 	protected void releaseMismatchedFunds(final CartModel cart, final StripePaymentInfoModel paymentInfo,
 			final PaymentIntent intent)
@@ -149,10 +153,20 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		LOG.warn("Payment intent {} has {} {} but cart {} must charge {} {}", intent.getId(), intent.getAmount(),
 				intent.getCurrency(), cart.getCode(), stripeAmountConverter.chargeAmountMinor(cart),
 				cart.getCurrency().getIsocode());
+		releaseHeldFunds(cart, paymentInfo, intent, "amount of cart " + cart.getCode() + " differs from the payment intent");
+	}
+
+	/**
+	 * Gives the money of the PaymentIntent back and takes the PaymentIntent off the cart, so the next payment of the
+	 * cart uses a new PaymentIntent. When Stripe refuses, the PaymentIntent stays on the cart: the next preparation of
+	 * the cart releases it.
+	 */
+	protected void releaseHeldFunds(final CartModel cart, final StripePaymentInfoModel paymentInfo, final PaymentIntent intent,
+			final String reason)
+	{
 		try
 		{
-			stripePaymentIntentService.releaseFunds(intent.getId(),
-					"amount of cart " + cart.getCode() + " differs from the payment intent");
+			stripePaymentIntentService.releaseFunds(intent.getId(), reason);
 			paymentInfo.setStripePaymentIntentId(null);
 			modelService.save(paymentInfo);
 		}

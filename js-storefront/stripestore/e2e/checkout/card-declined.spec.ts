@@ -6,6 +6,7 @@ import {
   expectPaymentStepReady,
   MESSAGES,
   paymentElement,
+  paymentError,
   payWithCard,
 } from '../support/checkout';
 
@@ -22,4 +23,7 @@ test('4 (UI). after a declined card the shop shows its error and the customer ca
   await checkoutToPayment(page, { currency: 'USD' });
   await payWithCard(page, CARDS.declined);
   await expectPaymentStepReady(page);
+  // Stripe explains the decline inside the Payment Element; the shop shows its own translated message.
+  await expect(paymentElement(page).getByText(MESSAGES.declined).first()).toBeVisible();
+  await expect(paymentError(page)).toHaveText(MESSAGES.paymentFailed);
 });

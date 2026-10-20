@@ -395,6 +395,21 @@ public class StripeWebhookEventTaskRunnerTest
 	}
 
 	@Test
+	public void unreadableEventFailsWithoutRetry()
+	{
+		givenEvent("payment_intent.succeeded", paymentIntentJson("succeeded"), null);
+
+		final RuntimeException error = runFailing();
+		runner.handleError(taskService, task, new SystemException(error));
+
+		assertTrue(error instanceof StripeWebhookException);
+		assertEquals(StripeWebhookEventState.FAILED, event.getState());
+		assertEquals(Integer.valueOf(1), event.getAttempts());
+		assertTrue(event.getLastError().contains("cannot be read"));
+		verifyNoInteractions(recordDao, gateway);
+	}
+
+	@Test
 	public void handleErrorMarksReceivedEventFailed()
 	{
 		when(task.getRetry()).thenReturn(2);

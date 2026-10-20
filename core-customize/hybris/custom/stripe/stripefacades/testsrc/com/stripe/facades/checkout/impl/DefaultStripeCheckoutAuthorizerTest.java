@@ -9,6 +9,7 @@ import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -179,6 +180,45 @@ public class DefaultStripeCheckoutAuthorizerTest
 		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void rejectedAuthorizationOfAuthorizedIntentReleasesFundsBeforeFailing()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
+
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+
+		verify(paymentIntentService).releaseFunds(PI_ID, "authorization-rejected");
+		assertNull(paymentInfo.getStripePaymentIntentId());
+		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void failedReleaseOfFundsStillFailsThePayment()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(null);
+		doThrow(new IllegalStateException("Stripe down")).when(paymentIntentService)
+				.releaseFunds(PI_ID, "authorization-rejected");
+
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
+		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void failedIntentDoesNotReleaseFunds()
+	{
+		givenIntent("requires_payment_method", 1999L, "eur");
+
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
 	}
 
 	@Test

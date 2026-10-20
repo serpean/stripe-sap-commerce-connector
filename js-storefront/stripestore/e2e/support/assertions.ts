@@ -3,6 +3,7 @@ import {
   getOrderCodesForPaymentIntent,
   getOrderCodesOfCustomer,
   getPaymentEntries,
+  getPaymentIntentRecord,
   getPaymentIntentRecordsOfCart,
   getSapOrder,
   PaymentEntry,
@@ -33,7 +34,7 @@ export interface PlacedOrder {
 
 /**
  * Exactly one order for the PaymentIntent, an accepted AUTHORIZATION for the order total, and a PaymentIntent of the
- * same amount and currency.
+ * same amount and currency. Rule one for the whole cart: no other PaymentIntent of the cart holds or keeps money.
  */
 export async function expectOneAuthorizedOrder(orderCode: string): Promise<PlacedOrder> {
   const order = (await getSapOrder(orderCode))!;
@@ -47,5 +48,20 @@ export async function expectOneAuthorizedOrder(orderCode: string): Promise<Place
   const intent = await retrievePaymentIntent(paymentIntentId);
   expect(intent.amount).toBe(minor(order.totalPrice));
   expect(intent.currency).toBe(order.currency.toLowerCase());
+  await expectNoOtherMoneyOfCart(paymentIntentId);
   return { order, entries, intent };
+}
+
+/** Every other PaymentIntent of the cart of the order's PaymentIntent is not authorized and keeps no money. */
+async function expectNoOtherMoneyOfCart(paymentIntentId: string): Promise<void> {
+  const record = await getPaymentIntentRecord(paymentIntentId);
+  expect(record?.cartCode, `cart of ${paymentIntentId}`).toBeTruthy();
+  for (const other of await getPaymentIntentRecordsOfCart(record!.cartCode)) {
+    if (other.paymentIntentId === paymentIntentId) {
+      continue;
+    }
+    const live = await retrievePaymentIntent(other.paymentIntentId);
+    expect(live.status, `other PaymentIntent ${live.id} of cart ${record!.cartCode}`).not.toBe('requires_capture');
+    expect(netCaptured(live), `money kept by ${live.id}`).toBe(0);
+  }
 }

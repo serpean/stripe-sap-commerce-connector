@@ -35,7 +35,7 @@ test('9. the customer return and the webhook arrive at the same time: one order'
   for (const answer of [first, second]) {
     expect(answer.status, JSON.stringify(answer.body)).toBeLessThan(500);
     if (answer.status !== 201) {
-      expect(answer.body.errors[0].type).toMatch(/StripePaymentError|CartError|PaymentAuthorizationError/);
+      expect(answer.body.errors[0].type).toMatch(/StripePaymentError|CartError/);
     }
   }
 

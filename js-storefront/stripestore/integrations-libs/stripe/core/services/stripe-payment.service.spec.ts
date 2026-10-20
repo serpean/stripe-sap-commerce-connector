@@ -126,17 +126,17 @@ describe('StripePaymentService', () => {
       });
     });
 
-    it('returns the Stripe error message', (done) => {
+    it('maps a Stripe card error to the translated paymentFailed key', (done) => {
       occService.ensureIntent.and.returnValue(
         of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
       );
       stripe.confirmPayment.and.resolveTo({
-        error: { message: 'Card declined' },
+        error: { type: 'card_error', code: 'card_declined', message: 'Your card has been declined.' },
       } as any);
       const service = createService();
 
       service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
-        expect(result.error).toBe('Card declined');
+        expect(result.error).toBe('stripePayment.paymentFailed');
         done();
       });
     });
