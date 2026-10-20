@@ -11,8 +11,8 @@ public interface StripeCheckoutAuthorizer
 	 * Checks the PaymentIntent of the cart against the cart, takes the order placement lock and records the payment.
 	 *
 	 * @return {@code true} when the order can be placed
-	 * @throws StripeCheckoutException when the amount is different, the payment is missing, or an order is already
-	 *            placed for the PaymentIntent
+	 * @throws StripeCheckoutException when the amount is different, the payment is missing, the payment failed, needs
+	 *            an action of the customer or is cancelled, or an order is already placed for the PaymentIntent
 	 */
 	boolean authorize(CartModel cart);
 }

@@ -1,5 +1,6 @@
 package com.stripe.facades.order.impl;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -16,6 +17,7 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
+import com.stripe.facades.checkout.StripeCheckoutException;
 import com.stripe.facades.order.StripePlaceOrderGuard;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.acceleratorservices.uiexperience.UiExperienceService;
@@ -92,6 +94,22 @@ public class StripeCheckoutFacadeTest
 		assertTrue(checkoutFacade.authorizePayment(null));
 
 		verify(authorizer).authorize(cart);
+	}
+
+	@Test
+	public void failedStripePaymentGivesStableReason()
+	{
+		cart.setPaymentInfo(new StripePaymentInfoModel());
+		when(authorizer.authorize(cart))
+				.thenThrow(new StripeCheckoutException(StripeCheckoutException.Reason.PAYMENT_FAILED, "failed"));
+
+		final StripeCheckoutException fromFacade = assertThrows(StripeCheckoutException.class,
+				() -> checkoutFacade.authorizePayment(null));
+		final StripeCheckoutException fromAccelerator = assertThrows(StripeCheckoutException.class,
+				() -> acceleratorCheckoutFacade.authorizePayment(null));
+
+		assertEquals(StripeCheckoutException.Reason.PAYMENT_FAILED, fromFacade.getReason());
+		assertEquals(StripeCheckoutException.Reason.PAYMENT_FAILED, fromAccelerator.getReason());
 	}
 
 	@Test

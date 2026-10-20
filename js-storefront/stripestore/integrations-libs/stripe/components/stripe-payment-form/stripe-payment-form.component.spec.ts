@@ -1,5 +1,10 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { NO_ERRORS_SCHEMA, Pipe, PipeTransform } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  NO_ERRORS_SCHEMA,
+  Pipe,
+  PipeTransform,
+} from '@angular/core';
 import {
   ComponentFixture,
   TestBed,
@@ -31,6 +36,10 @@ function failLater(error: unknown): Observable<never> {
   return timer(0).pipe(mergeMap(() => throwError(() => error)));
 }
 
+function succeedLater<T>(value: T): Observable<T> {
+  return timer(0).pipe(mergeMap(() => of(value)));
+}
+
 function stripeError(reason: string): HttpErrorResponse {
   return new HttpErrorResponse({
     status: 400,
@@ -50,7 +59,8 @@ describe('StripePaymentFormComponent', () => {
   function setup(
     queryParams: Record<string, string> = {},
     placeOrderResult: Observable<unknown> = of({}),
-    stripe$: Observable<Stripe | null> | undefined = undefined
+    stripe$: Observable<Stripe | null> | undefined = undefined,
+    onPush = false
   ): void {
     paymentElement = {
       mount: jasmine.createSpy('mount'),
@@ -89,6 +99,11 @@ describe('StripePaymentFormComponent', () => {
         { provide: Router, useValue: { navigate: jasmine.createSpy('navigate') } },
       ],
     });
+    if (onPush) {
+      TestBed.overrideComponent(StripePaymentFormComponent, {
+        set: { changeDetection: ChangeDetectionStrategy.OnPush },
+      });
+    }
     fixture = TestBed.createComponent(StripePaymentFormComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -225,6 +240,75 @@ describe('StripePaymentFormComponent', () => {
       expect(stripeService.confirmPayment).toHaveBeenCalledTimes(1);
       expect(component.paymentPending).toBeTrue();
     });
+  });
+
+  describe('inside an OnPush slot', () => {
+    function errorText(): string | undefined {
+      return fixture.nativeElement
+        .querySelector('.error')
+        ?.textContent.trim();
+    }
+
+    function button(): HTMLButtonElement {
+      return fixture.nativeElement.querySelector('button[type="submit"]');
+    }
+
+    it('shows the error and enables the button after a declined card', fakeAsync(() => {
+      setup({}, of({}), undefined, true);
+      stripeService.confirmPayment.and.returnValue(
+        succeedLater({ error: 'Card declined' })
+      );
+
+      button().click();
+      fixture.detectChanges();
+      expect(button().disabled).toBeTrue();
+      tick();
+      fixture.detectChanges();
+
+      expect(errorText()).toBe('Card declined');
+      expect(button().disabled).toBeFalse();
+      expect(button().textContent).toContain('stripePayment.payNow');
+    }));
+
+    it('shows the server decision after a failed redirect return', fakeAsync(() => {
+      setup(
+        { payment_intent: 'pi_1', redirect_status: 'failed' },
+        failLater(stripeError('STRIPE_PAYMENT_FAILED')),
+        undefined,
+        true
+      );
+      tick();
+      fixture.detectChanges();
+
+      expect(errorText()).toBe('stripePayment.paymentFailed');
+      expect(button().disabled).toBeFalse();
+    }));
+
+    it('shows the pending state when the payment is in progress', fakeAsync(() => {
+      setup({}, failLater(stripeError('STRIPE_PAYMENT_IN_PROGRESS')), undefined, true);
+      stripeService.confirmPayment.and.returnValue(succeedLater({ intent: {} }));
+
+      button().click();
+      fixture.detectChanges();
+      tick();
+      fixture.detectChanges();
+
+      expect(errorText()).toBe('stripePayment.paymentPending');
+      expect(button().disabled).toBeTrue();
+    }));
+
+    it('shows unableToInitialize when the Stripe config request fails', fakeAsync(() => {
+      setup(
+        {},
+        of({}),
+        failLater(new HttpErrorResponse({ status: 500 })),
+        true
+      );
+      tick();
+      fixture.detectChanges();
+
+      expect(errorText()).toBe('stripePayment.unableToInitialize');
+    }));
   });
 
   describe('after a redirect return', () => {

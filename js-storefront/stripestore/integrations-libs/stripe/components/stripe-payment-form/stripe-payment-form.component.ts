@@ -6,6 +6,7 @@
 
 import {
   AfterViewInit,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   OnDestroy,
@@ -65,7 +66,8 @@ export class StripePaymentFormComponent
     protected checkoutFlowOrchestrator: CheckoutFlowOrchestratorService,
     protected routingService: RoutingService,
     protected route: ActivatedRoute,
-    protected router: Router
+    protected router: Router,
+    protected changeDetector: ChangeDetectorRef
   ) {
     this.subscription.add(
       this.checkoutFlowOrchestrator
@@ -81,6 +83,7 @@ export class StripePaymentFormComponent
           } else {
             this.resetStripeState();
           }
+          this.changeDetector.markForCheck();
         })
     );
   }
@@ -130,10 +133,12 @@ export class StripePaymentFormComponent
           } else if (this.clientSecret) {
             this.initializeElements(this.clientSecret);
           }
+          this.changeDetector.markForCheck();
         },
         error: () => {
           this.isLoading = false;
           this.error = 'stripePayment.unableToInitialize';
+          this.changeDetector.markForCheck();
         },
       })
     );
@@ -160,6 +165,7 @@ export class StripePaymentFormComponent
           if (this.clientSecret) {
             this.initializeElements(this.clientSecret);
           }
+          this.changeDetector.markForCheck();
         },
         error: (err) => {
           this.isLoading = false;
@@ -187,6 +193,7 @@ export class StripePaymentFormComponent
             this.isLoading = false;
             if (result.error) {
               this.error = result.error;
+              this.changeDetector.markForCheck();
               return;
             }
             this.translation
@@ -219,6 +226,7 @@ export class StripePaymentFormComponent
     }
     this.placingOrder = true;
     this.isLoading = true;
+    this.changeDetector.markForCheck();
 
     this.subscription.add(
       this.stripeService
@@ -230,6 +238,7 @@ export class StripePaymentFormComponent
             this.resetStripeState();
             this.subscription.unsubscribe();
             this.isLoading = false;
+            this.changeDetector.markForCheck();
             this.routingService.go({ cxRoute: 'orderConfirmation' });
           },
           error: (err) => {
@@ -298,6 +307,7 @@ export class StripePaymentFormComponent
       default:
         this.error = fallbackMessage;
     }
+    this.changeDetector.markForCheck();
   }
 
   protected clearUrlParams(): void {

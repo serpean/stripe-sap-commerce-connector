@@ -107,8 +107,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
 				if (!isAccepted(commerceCheckoutService.authorizePayment(createParameter(cart))))
 				{
-					LOG.warn("Authorization of payment intent {} for cart {} was not accepted", intent.getId(), cart.getCode());
-					return false;
+					throw new StripeCheckoutException(Reason.PAYMENT_FAILED,
+							"Authorization of payment intent " + intent.getId() + " for cart " + cart.getCode() + " was not accepted");
 				}
 				updateRecordState(intent.getId(), status == StripePaymentIntentStatus.CAPTURED
 						? StripePaymentIntentState.CAPTURED : StripePaymentIntentState.AUTHORIZED);
@@ -124,8 +124,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 				updateRecordState(intent.getId(), StripePaymentIntentState.PROCESSING);
 				return true;
 			default:
-				LOG.info("Payment intent {} of cart {} is in status {}: no order", intent.getId(), cart.getCode(), status);
-				return false;
+				throw new StripeCheckoutException(Reason.PAYMENT_FAILED,
+						"Payment intent " + intent.getId() + " of cart " + cart.getCode() + " is in status " + status + ": no order");
 		}
 	}
 

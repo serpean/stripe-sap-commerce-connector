@@ -149,45 +149,45 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
-	public void failedIntentReturnsFalseAndReleasesLock()
+	public void failedIntentThrowsPaymentFailedAndReleasesLock()
 	{
 		givenIntent("requires_payment_method", 1999L, "eur");
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).release(PI_ID);
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
 	}
 
 	@Test
-	public void intentThatNeedsActionReturnsFalseAndReleasesLock()
+	public void intentThatNeedsActionThrowsPaymentFailedAndReleasesLock()
 	{
 		givenIntent("requires_action", 1999L, "eur");
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).release(PI_ID);
 	}
 
 	@Test
-	public void rejectedAuthorizationReturnsFalseAndReleasesLock()
+	public void rejectedAuthorizationThrowsPaymentFailedAndReleasesLock()
 	{
 		givenIntent("requires_capture", 1999L, "eur");
 		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
 				.thenReturn(entry(TransactionStatus.REJECTED));
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).release(PI_ID);
 	}
 
 	@Test
-	public void missingAuthorizationReturnsFalseAndReleasesLock()
+	public void missingAuthorizationThrowsPaymentFailedAndReleasesLock()
 	{
 		givenIntent("requires_capture", 1999L, "eur");
 		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(null);
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).release(PI_ID);
 	}
@@ -271,7 +271,7 @@ public class DefaultStripeCheckoutAuthorizerTest
 		givenIntent("canceled", 1999L, "eur");
 		givenAcceptedAuthorization(PI_ID);
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(lockService).tryAcquire(PI_ID);
 		verify(lockService).release(PI_ID);
@@ -324,7 +324,7 @@ public class DefaultStripeCheckoutAuthorizerTest
 		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
 				.thenReturn(entry(TransactionStatus.REJECTED));
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
 
 		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
 		verify(lockService).release(PI_ID);
