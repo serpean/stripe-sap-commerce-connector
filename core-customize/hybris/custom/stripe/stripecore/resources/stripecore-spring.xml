@@ -59,5 +59,12 @@
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
+    <alias name="stripeCommercePaymentAuthorizationStrategy" alias="commercePaymentAuthorizationStrategy"/>
+    <bean id="stripeCommercePaymentAuthorizationStrategy"
+          class="com.stripe.core.order.StripeCommercePaymentAuthorizationStrategy"
+          parent="defaultPaymentAuthorizationStrategy">
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+    </bean>
+
     <import resource="stripecore-commands-spring.xml"/>
 </beans>
