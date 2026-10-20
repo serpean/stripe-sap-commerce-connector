@@ -10,4 +10,9 @@ import java.util.Optional;
 public interface StripeWebhookEventDao
 {
 	Optional<StripeWebhookEventModel> findByEventId(String eventId);
+
+	/**
+	 * @return true if a task already references the event as its context item
+	 */
+	boolean hasScheduledTask(StripeWebhookEventModel event);
 }

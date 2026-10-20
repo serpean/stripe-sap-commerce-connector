@@ -13,7 +13,10 @@ import de.hybris.platform.servicelayer.exceptions.ModelSavingException;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.task.TaskService;
 import de.hybris.platform.task.TaskModel;
+import de.hybris.platform.tx.Transaction;
+import de.hybris.platform.tx.TransactionBody;
 import java.util.Date;
+import java.util.Optional;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,38 +64,93 @@ public class DefaultStripeWebhookFacade implements StripeWebhookFacade
 			return StripeWebhookReceipt.INVALID_SIGNATURE;
 		}
 
-		if (stripeWebhookEventDao.findByEventId(event.getId()).isPresent())
+		if (StringUtils.isBlank(event.getId()))
 		{
-			LOG.debug("Stripe webhook {} is a duplicate", event.getId());
-			return StripeWebhookReceipt.DUPLICATE;
+			LOG.warn("Stripe webhook rejected: the event has no id");
+			return StripeWebhookReceipt.INVALID_SIGNATURE;
 		}
 
-		final StripeWebhookEventModel stored = modelService.create(StripeWebhookEventModel.class);
-		stored.setEventId(event.getId());
-		stored.setType(event.getType());
-		stored.setPayload(payload);
-		stored.setState(StripeWebhookEventState.RECEIVED);
+		final Optional<StripeWebhookEventModel> existing = stripeWebhookEventDao.findByEventId(event.getId());
+		if (existing.isPresent())
+		{
+			return duplicateOf(existing.get());
+		}
+
 		try
 		{
-			modelService.save(stored);
+			storeAndSchedule(event, payload);
 		}
 		catch (final ModelSavingException e)
 		{
-			if (stripeWebhookEventDao.findByEventId(event.getId()).isPresent())
+			final Optional<StripeWebhookEventModel> concurrent = stripeWebhookEventDao.findByEventId(event.getId());
+			if (concurrent.isPresent())
 			{
-				LOG.debug("Stripe webhook {} was stored by a concurrent call", event.getId());
-				return StripeWebhookReceipt.DUPLICATE;
+				return duplicateOf(concurrent.get());
 			}
 			throw e;
 		}
+		LOG.info("Stripe webhook {} ({}) accepted", event.getId(), event.getType());
+		return StripeWebhookReceipt.ACCEPTED;
+	}
 
+	private StripeWebhookReceipt duplicateOf(final StripeWebhookEventModel existing)
+	{
+		if (StripeWebhookEventState.RECEIVED.equals(existing.getState()) && !stripeWebhookEventDao.hasScheduledTask(existing))
+		{
+			LOG.warn("Stripe webhook {} was stored without a task; scheduling it again", existing.getEventId());
+			scheduleTask(existing);
+		}
+		LOG.debug("Stripe webhook {} is a duplicate", existing.getEventId());
+		return StripeWebhookReceipt.DUPLICATE;
+	}
+
+	private void storeAndSchedule(final Event event, final String payload)
+	{
+		executeInTransaction(() -> {
+			final StripeWebhookEventModel stored = modelService.create(StripeWebhookEventModel.class);
+			stored.setEventId(event.getId());
+			stored.setType(event.getType());
+			stored.setPayload(payload);
+			stored.setState(StripeWebhookEventState.RECEIVED);
+			modelService.save(stored);
+			scheduleTask(stored);
+		});
+	}
+
+	private void scheduleTask(final StripeWebhookEventModel stored)
+	{
 		final TaskModel task = modelService.create(TaskModel.class);
 		task.setRunnerBean(RUNNER_BEAN);
 		task.setContextItem(stored);
 		task.setExecutionDate(new Date());
 		taskService.scheduleTask(task);
-		LOG.info("Stripe webhook {} ({}) accepted", event.getId(), event.getType());
-		return StripeWebhookReceipt.ACCEPTED;
+	}
+
+	/**
+	 * Runs the body in the current database transaction: a failure rolls everything back. Tests override it.
+	 */
+	protected void executeInTransaction(final Runnable body)
+	{
+		try
+		{
+			Transaction.current().execute(new TransactionBody()
+			{
+				@Override
+				public <T> T execute() throws Exception
+				{
+					body.run();
+					return null;
+				}
+			});
+		}
+		catch (final RuntimeException e)
+		{
+			throw e;
+		}
+		catch (final Exception e)
+		{
+			throw new IllegalStateException("Stripe webhook intake failed", e);
+		}
 	}
 
 	public void setStripeGateway(final StripeGateway stripeGateway)

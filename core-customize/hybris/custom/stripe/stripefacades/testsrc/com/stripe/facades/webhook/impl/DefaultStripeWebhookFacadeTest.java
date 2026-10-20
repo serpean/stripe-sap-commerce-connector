@@ -1,7 +1,11 @@
 package com.stripe.facades.webhook.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -39,6 +43,7 @@ public class DefaultStripeWebhookFacadeTest
 	private DefaultStripeWebhookFacade facade;
 	private StripeWebhookEventModel stored;
 	private TaskModel task;
+	private boolean transactionOpen;
 
 	@Before
 	public void setUp()
@@ -52,7 +57,22 @@ public class DefaultStripeWebhookFacadeTest
 		when(modelService.create(StripeWebhookEventModel.class)).thenReturn(stored);
 		when(modelService.create(TaskModel.class)).thenReturn(task);
 		when(dao.findByEventId("evt_1")).thenReturn(Optional.empty());
-		facade = new DefaultStripeWebhookFacade();
+		facade = new DefaultStripeWebhookFacade()
+		{
+			@Override
+			protected void executeInTransaction(final Runnable body)
+			{
+				transactionOpen = true;
+				try
+				{
+					body.run();
+				}
+				finally
+				{
+					transactionOpen = false;
+				}
+			}
+		};
 		facade.setStripeGateway(gateway);
 		facade.setStripeWebhookEventDao(dao);
 		facade.setModelService(modelService);
@@ -162,5 +182,94 @@ public class DefaultStripeWebhookFacadeTest
 		assertEquals(StripeWebhookReceipt.ACCEPTED, facade.receive(PAYLOAD, SIGNATURE));
 		verify(modelService).save(stored);
 		verify(taskService).scheduleTask(task);
+	}
+
+	@Test
+	public void eventWithoutIdIsRejected()
+	{
+		final Event noId = new Event();
+		noId.setType("payment_intent.succeeded");
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(noId);
+
+		assertEquals(StripeWebhookReceipt.INVALID_SIGNATURE, facade.receive(PAYLOAD, SIGNATURE));
+		verify(dao, never()).findByEventId(any());
+		verify(modelService, never()).save(any());
+		verify(taskService, never()).scheduleTask(any());
+	}
+
+	@Test
+	public void saveAndScheduleRunInsideTheTransaction()
+	{
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		doAnswer(invocation -> {
+			assertTrue(transactionOpen);
+			return null;
+		}).when(modelService).save(stored);
+		doAnswer(invocation -> {
+			assertTrue(transactionOpen);
+			return null;
+		}).when(taskService).scheduleTask(task);
+
+		assertEquals(StripeWebhookReceipt.ACCEPTED, facade.receive(PAYLOAD, SIGNATURE));
+		verify(taskService).scheduleTask(task);
+	}
+
+	@Test
+	public void schedulingFailureLeavesNoOrphanEvent()
+	{
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		doThrow(new IllegalStateException("scheduler down")).when(taskService).scheduleTask(task);
+
+		try
+		{
+			facade.receive(PAYLOAD, SIGNATURE);
+			fail("the failure must reach the caller");
+		}
+		catch (final IllegalStateException e)
+		{
+			assertEquals("scheduler down", e.getMessage());
+		}
+		assertFalse("the failure must leave the transaction", transactionOpen);
+	}
+
+	@Test
+	public void duplicateOfOrphanReceivedEventIsRescheduled()
+	{
+		final StripeWebhookEventModel orphan = mock(StripeWebhookEventModel.class);
+		when(orphan.getState()).thenReturn(StripeWebhookEventState.RECEIVED);
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		when(dao.findByEventId("evt_1")).thenReturn(Optional.of(orphan));
+		when(dao.hasScheduledTask(orphan)).thenReturn(false);
+
+		assertEquals(StripeWebhookReceipt.DUPLICATE, facade.receive(PAYLOAD, SIGNATURE));
+		verify(task).setContextItem(orphan);
+		verify(taskService).scheduleTask(task);
+		verify(modelService, never()).save(any());
+	}
+
+	@Test
+	public void duplicateOfScheduledEventIsNotRescheduled()
+	{
+		final StripeWebhookEventModel scheduled = mock(StripeWebhookEventModel.class);
+		when(scheduled.getState()).thenReturn(StripeWebhookEventState.RECEIVED);
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		when(dao.findByEventId("evt_1")).thenReturn(Optional.of(scheduled));
+		when(dao.hasScheduledTask(scheduled)).thenReturn(true);
+
+		assertEquals(StripeWebhookReceipt.DUPLICATE, facade.receive(PAYLOAD, SIGNATURE));
+		verify(taskService, never()).scheduleTask(any());
+	}
+
+	@Test
+	public void duplicateOfProcessedEventIsNotRescheduled()
+	{
+		final StripeWebhookEventModel processed = mock(StripeWebhookEventModel.class);
+		when(processed.getState()).thenReturn(StripeWebhookEventState.PROCESSED);
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		when(dao.findByEventId("evt_1")).thenReturn(Optional.of(processed));
+
+		assertEquals(StripeWebhookReceipt.DUPLICATE, facade.receive(PAYLOAD, SIGNATURE));
+		verify(dao, never()).hasScheduledTask(any());
+		verify(taskService, never()).scheduleTask(any());
 	}
 }
