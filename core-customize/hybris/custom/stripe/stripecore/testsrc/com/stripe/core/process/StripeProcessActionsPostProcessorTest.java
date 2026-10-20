@@ -164,6 +164,28 @@ public class StripeProcessActionsPostProcessorTest
 	}
 
 	@Test
+	public void finalExecuteActionIsReplacedByStripeBean()
+	{
+		final FinalExecuteActionStandIn checkOrder = new FinalExecuteActionStandIn();
+		final StripeAwaitPaymentCheckOrderAction stripeAction = new StripeAwaitPaymentCheckOrderAction(checkOrder);
+		when(beanFactory.getBean("stripeAwaitPaymentCheckOrderAction", checkOrder)).thenReturn(stripeAction);
+
+		assertSame("a final executeAction cannot be intercepted", stripeAction,
+				postProcessor.postProcessAfterInitialization(checkOrder, "checkOrderAction"));
+	}
+
+	@Test
+	public void finalCancelPaymentMethodIsReplacedByStripeBean()
+	{
+		final FinalOverloadCancelPaymentAdapter omsAdapter = new FinalOverloadCancelPaymentAdapter();
+		final StripeOrderCancelPaymentServiceAdapter stripeAdapter = new StripeOrderCancelPaymentServiceAdapter(omsAdapter);
+		when(beanFactory.getBean("stripeOrderCancelPaymentServiceAdapter", omsAdapter)).thenReturn(stripeAdapter);
+
+		assertSame("a final overload cannot be intercepted", stripeAdapter,
+				postProcessor.postProcessAfterInitialization(omsAdapter, "OmsOrderCancelPaymentServiceAdapter"));
+	}
+
+	@Test
 	public void beanOfOtherTypeIsKept()
 	{
 		final Object bean = new Object();
@@ -221,6 +243,37 @@ public class StripeProcessActionsPostProcessorTest
 		public Transition executeAction(final OrderProcessModel process)
 		{
 			return Transition.OK;
+		}
+	}
+
+	/**
+	 * Stands for a customer action whose intercepted method is final.
+	 */
+	public static class FinalExecuteActionStandIn extends AbstractSimpleDecisionAction<OrderProcessModel>
+	{
+		@Override
+		public final Transition executeAction(final OrderProcessModel process)
+		{
+			return Transition.OK;
+		}
+	}
+
+	/**
+	 * Stands for a customer cancel payment adapter with one final overload.
+	 */
+	public static class FinalOverloadCancelPaymentAdapter implements OrderCancelPaymentServiceAdapter
+	{
+		@Override
+		public void recalculateOrderAndModifyPayments(final OrderModel order)
+		{
+			// no payment change in this stand-in
+		}
+
+		@Override
+		public final void recalculateOrderAndModifyPayments(final OrderModel order,
+				final OrderCancelRecordEntryModel cancelEntry)
+		{
+			// no payment change in this stand-in
 		}
 	}
 

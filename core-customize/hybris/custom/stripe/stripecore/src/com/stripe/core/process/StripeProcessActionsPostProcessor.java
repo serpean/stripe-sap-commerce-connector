@@ -5,11 +5,13 @@ import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.ordercancel.OrderCancelPaymentServiceAdapter;
 import de.hybris.platform.orderprocessing.model.OrderProcessModel;
 import de.hybris.platform.processengine.action.AbstractSimpleDecisionAction;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -32,9 +34,10 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
  * <li>{@code acceleratorStatusDisplayMap} gets the display value of {@code PAYMENT_PENDING}.</li>
  * </ul>
  * The SAP bean is replaced by a class proxy of itself ({@link StripeOrderRoutingInterceptor}), so the bean keeps its
- * type and other beans can still inject it by its class. When the class of the bean cannot be proxied (for example, a
- * final class), the Stripe bean replaces it and a warning is logged. A bean that does not exist is not changed. The
- * Stripe beans are prototype beans, created with the original bean as constructor argument: other orders go to it.
+ * type and other beans can still inject it by its class. When the bean cannot be proxied (a final class, or a final
+ * intercepted method), the Stripe bean replaces it and a warning is logged. A bean that does not exist is not
+ * changed. The Stripe beans are prototype beans, created with the original bean as constructor argument: other orders
+ * go to it.
  */
 public class StripeProcessActionsPostProcessor implements BeanPostProcessor, BeanFactoryAware
 {
@@ -114,11 +117,17 @@ public class StripeProcessActionsPostProcessor implements BeanPostProcessor, Bea
 		{
 			return replacedBy(stripeBean, bean, beanName, "the class is final");
 		}
+		final StripeOrderRoutingInterceptor interceptor = interceptorFactory.apply(stripeBean);
+		final Optional<Method> finalMethod = interceptor.finalInterceptedMethod(bean.getClass());
+		if (finalMethod.isPresent())
+		{
+			return replacedBy(stripeBean, bean, beanName, "the method " + finalMethod.get() + " is final");
+		}
 		try
 		{
 			final ProxyFactory proxyFactory = new ProxyFactory(bean);
 			proxyFactory.setProxyTargetClass(true);
-			proxyFactory.addAdvice(interceptorFactory.apply(stripeBean));
+			proxyFactory.addAdvice(interceptor);
 			final Object proxy = proxyFactory.getProxy();
 			LOG.info("Bean {} ({}) sends Stripe orders to {}", beanName, bean.getClass().getName(),
 					stripeBeanClass.getSimpleName());

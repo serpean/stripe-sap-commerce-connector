@@ -146,6 +146,41 @@ public class StripeProcessActionsPostProcessorIntegrationTest extends Servicelay
 		}
 	}
 
+	@Test
+	public void tenantOrderProcessActionsRunStripeSteps() throws Exception
+	{
+		final ApplicationContext core = Registry.getCoreApplicationContext();
+		Assume.assumeTrue("no SAP order process in this tenant",
+				core.containsBean("checkOrderAction") && core.containsBean("takePaymentAction"));
+
+		final AbstractSimpleDecisionAction<?> takePayment = (AbstractSimpleDecisionAction<?>) core.getBean(
+				"takePaymentAction");
+		final OrderModel unauthorized = order("tenant-take-1", "pi_tenant_take");
+		assertEquals("a Stripe order without authorization is not captured", "NOK",
+				execute(takePayment, process(unauthorized)));
+		assertEquals(OrderStatus.PAYMENT_NOT_CAPTURED, unauthorized.getStatus());
+
+		final AbstractSimpleDecisionAction<?> checkOrder = (AbstractSimpleDecisionAction<?>) core.getBean(
+				"checkOrderAction");
+		final OrderModel pending = order("tenant-check-1", "pi_tenant_check");
+		try
+		{
+			execute(checkOrder, process(pending));
+			fail("a Stripe order with a pending payment waits");
+		}
+		catch (final RetryLaterException expected)
+		{
+			assertEquals(OrderStatus.PAYMENT_PENDING, pending.getStatus());
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static String execute(final AbstractSimpleDecisionAction<?> action, final OrderProcessModel process)
+			throws Exception
+	{
+		return ((AbstractSimpleDecisionAction<OrderProcessModel>) action).execute(process);
+	}
+
 	private OrderProcessModel process(final OrderModel order)
 	{
 		final OrderProcessModel process = modelService.create(OrderProcessModel.class);
