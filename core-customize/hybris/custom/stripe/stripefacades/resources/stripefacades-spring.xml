@@ -9,9 +9,7 @@
         <property name="stripeClient" ref="stripeClient"/>
         <property name="stripeWebhookService" ref="stripeWebhookService"/>
         <property name="cartService" ref="cartService"/>
-        <property name="baseStoreService" ref="baseStoreService"/>
-        <property name="userService" ref="userService"/>
-        <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
     </bean>
 
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>

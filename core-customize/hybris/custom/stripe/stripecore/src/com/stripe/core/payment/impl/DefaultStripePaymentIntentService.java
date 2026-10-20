@@ -1,0 +1,267 @@
+package com.stripe.core.payment.impl;
+
+import com.stripe.core.amount.StripeAmountConverter;
+import com.stripe.core.config.StripeCaptureMode;
+import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.dao.StripePaymentIntentRecordDao;
+import com.stripe.core.enums.StripePaymentIntentState;
+import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.model.StripePaymentIntentRecordModel;
+import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.model.PaymentIntent;
+import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.PaymentIntentUpdateParams;
+import de.hybris.platform.core.model.order.CartModel;
+import de.hybris.platform.servicelayer.model.ModelService;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Default {@link StripePaymentIntentService}.
+ */
+public class DefaultStripePaymentIntentService implements StripePaymentIntentService
+{
+	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripePaymentIntentService.class);
+
+	private static final Set<String> EDITABLE_STATUSES = Set.of("requires_payment_method", "requires_confirmation",
+			"requires_action");
+
+	private StripeGateway stripeGateway;
+	private StripeConfigurationService stripeConfigurationService;
+	private StripeAmountConverter stripeAmountConverter;
+	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
+	private ModelService modelService;
+
+	@Override
+	public StripeIntentData prepareForCart(final CartModel cart)
+	{
+		final String currencyIso = cart.getCurrency().getIsocode();
+		final long amount = stripeAmountConverter.toMinorUnits(cartTotal(cart), currencyIso);
+		final String existingId = existingPaymentIntentId(cart);
+
+		if (existingId == null)
+		{
+			return toData(createFor(cart, amount, currencyIso));
+		}
+
+		final PaymentIntent existing = stripeGateway.retrievePaymentIntent(existingId);
+		if (!EDITABLE_STATUSES.contains(existing.getStatus()))
+		{
+			releaseFunds(existingId, "cart " + cart.getCode() + " needs a new payment intent");
+			return toData(createFor(cart, amount, currencyIso));
+		}
+		if (amount == existing.getAmount() && currencyIso.equalsIgnoreCase(existing.getCurrency()))
+		{
+			return toData(existing);
+		}
+		return toData(update(cart, existing, amount, currencyIso));
+	}
+
+	@Override
+	public void releaseFunds(final String paymentIntentId, final String reason)
+	{
+		final PaymentIntent intent = stripeGateway.retrievePaymentIntent(paymentIntentId);
+		LOG.warn("Releasing funds of Stripe payment intent {} in status {}. Reason: {}", paymentIntentId, intent.getStatus(),
+				reason);
+
+		if ("succeeded".equals(intent.getStatus()))
+		{
+			final long received = intent.getAmountReceived() == null ? 0L : intent.getAmountReceived();
+			if (received > 0)
+			{
+				stripeGateway.createRefund(paymentIntentId, received, "release-" + paymentIntentId + "-refund");
+			}
+			updateRecordState(paymentIntentId, StripePaymentIntentState.REFUNDED);
+		}
+		else
+		{
+			if (!"canceled".equals(intent.getStatus()))
+			{
+				stripeGateway.cancelPaymentIntent(paymentIntentId, "release-" + paymentIntentId + "-cancel");
+			}
+			updateRecordState(paymentIntentId, StripePaymentIntentState.CANCELED);
+		}
+	}
+
+	protected PaymentIntent createFor(final CartModel cart, final long amount, final String currencyIso)
+	{
+		final int created = stripePaymentIntentRecordDao.countByCartCode(cart.getCode());
+		final String idempotencyKey = "cart-" + cart.getCode() + "-" + cart.getGuid() + "-pi-" + (created + 1);
+
+		final PaymentIntent intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso),
+				idempotencyKey);
+
+		final StripePaymentInfoModel info = modelService.create(StripePaymentInfoModel.class);
+		info.setCode(intent.getId());
+		info.setStripePaymentIntentId(intent.getId());
+		info.setUser(cart.getUser());
+		modelService.save(info);
+
+		final StripePaymentInfoModel previous = cart.getPaymentInfo() instanceof StripePaymentInfoModel
+				? (StripePaymentInfoModel) cart.getPaymentInfo() : null;
+		cart.setPaymentInfo(info);
+		modelService.save(cart);
+		if (previous != null)
+		{
+			modelService.remove(previous);
+		}
+
+		final StripePaymentIntentRecordModel record = modelService.create(StripePaymentIntentRecordModel.class);
+		record.setPaymentIntentId(intent.getId());
+		record.setCartCode(cart.getCode());
+		record.setBaseSiteUid(siteUid(cart));
+		record.setUserUid(userUid(cart));
+		record.setCurrencyIso(currencyIso);
+		record.setAmount(amount);
+		record.setState(StripePaymentIntentState.CREATED);
+		modelService.save(record);
+		return intent;
+	}
+
+	protected PaymentIntent update(final CartModel cart, final PaymentIntent existing, final long amount,
+			final String currencyIso)
+	{
+		final long changed = cart.getModifiedtime() == null ? 0L : cart.getModifiedtime().getTime();
+		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
+				+ changed;
+		final PaymentIntent updated = stripeGateway.updatePaymentIntent(existing.getId(),
+				PaymentIntentUpdateParams.builder().setAmount(amount).setCurrency(currencyIso.toLowerCase()).build(),
+				idempotencyKey);
+
+		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
+			record.setAmount(amount);
+			record.setCurrencyIso(currencyIso);
+			modelService.save(record);
+		});
+		return updated;
+	}
+
+	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso)
+	{
+		final boolean manual = stripeConfigurationService.getCaptureMode() == StripeCaptureMode.MANUAL;
+		final PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
+				.setAmount(amount)
+				.setCurrency(currencyIso.toLowerCase())
+				.setAutomaticPaymentMethods(
+						PaymentIntentCreateParams.AutomaticPaymentMethods.builder().setEnabled(true).build())
+				.setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.AUTOMATIC)
+				.putMetadata("cartCode", cart.getCode())
+				.putMetadata("baseSiteUid", siteUid(cart))
+				.putMetadata("userUid", userUid(cart))
+				.putMetadata("currencyIso", currencyIso);
+		if (manual)
+		{
+			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
+		}
+		final String suffix = stripeConfigurationService.getStatementDescriptorSuffix();
+		if (StringUtils.isNotBlank(suffix))
+		{
+			builder.setStatementDescriptorSuffix(suffix);
+		}
+		return builder.build();
+	}
+
+	protected PaymentIntentCreateParams.PaymentMethodOptions buildPaymentMethodOptions(final Set<String> manualMethods)
+	{
+		final PaymentIntentCreateParams.PaymentMethodOptions.Builder builder = PaymentIntentCreateParams.PaymentMethodOptions
+				.builder();
+		if (manualMethods.contains("card"))
+		{
+			builder.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Card.CaptureMethod.MANUAL).build());
+		}
+		if (manualMethods.contains("paypal"))
+		{
+			builder.setPaypal(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
+					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.CaptureMethod.MANUAL).build());
+		}
+		if (manualMethods.contains("klarna"))
+		{
+			builder.setKlarna(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.builder()
+					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
+		}
+		if (manualMethods.contains("affirm"))
+		{
+			builder.setAffirm(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.builder()
+					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.CaptureMethod.MANUAL).build());
+		}
+		if (manualMethods.contains("afterpay_clearpay"))
+		{
+			builder.setAfterpayClearpay(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.builder()
+					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.CaptureMethod.MANUAL)
+					.build());
+		}
+		return builder.build();
+	}
+
+	protected void updateRecordState(final String paymentIntentId, final StripePaymentIntentState state)
+	{
+		stripePaymentIntentRecordDao.findByPaymentIntentId(paymentIntentId).ifPresent(record -> {
+			record.setState(state);
+			modelService.save(record);
+		});
+	}
+
+	protected BigDecimal cartTotal(final CartModel cart)
+	{
+		final double total = cart.getTotalPrice() == null ? 0d : cart.getTotalPrice();
+		final double tax = Boolean.TRUE.equals(cart.getNet()) && cart.getTotalTax() != null ? cart.getTotalTax() : 0d;
+		return BigDecimal.valueOf(total).add(BigDecimal.valueOf(tax));
+	}
+
+	private String existingPaymentIntentId(final CartModel cart)
+	{
+		return Optional.ofNullable(cart.getPaymentInfo())
+				.filter(StripePaymentInfoModel.class::isInstance)
+				.map(info -> ((StripePaymentInfoModel) info).getStripePaymentIntentId())
+				.filter(StringUtils::isNotBlank)
+				.orElse(null);
+	}
+
+	private String siteUid(final CartModel cart)
+	{
+		return cart.getSite() == null ? "" : cart.getSite().getUid();
+	}
+
+	private String userUid(final CartModel cart)
+	{
+		return cart.getUser() == null ? "" : cart.getUser().getUid();
+	}
+
+	private StripeIntentData toData(final PaymentIntent intent)
+	{
+		return new StripeIntentData(intent.getId(), intent.getClientSecret(), intent.getStatus());
+	}
+
+	public void setStripeGateway(final StripeGateway stripeGateway)
+	{
+		this.stripeGateway = stripeGateway;
+	}
+
+	public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService)
+	{
+		this.stripeConfigurationService = stripeConfigurationService;
+	}
+
+	public void setStripeAmountConverter(final StripeAmountConverter stripeAmountConverter)
+	{
+		this.stripeAmountConverter = stripeAmountConverter;
+	}
+
+	public void setStripePaymentIntentRecordDao(final StripePaymentIntentRecordDao stripePaymentIntentRecordDao)
+	{
+		this.stripePaymentIntentRecordDao = stripePaymentIntentRecordDao;
+	}
+
+	public void setModelService(final ModelService modelService)
+	{
+		this.modelService = modelService;
+	}
+}

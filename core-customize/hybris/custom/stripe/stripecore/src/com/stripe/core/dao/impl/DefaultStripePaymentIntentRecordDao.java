@@ -15,6 +15,7 @@ public class DefaultStripePaymentIntentRecordDao implements StripePaymentIntentR
 {
 	private static final String BY_PAYMENT_INTENT_ID =
 			"SELECT {pk} FROM {StripePaymentIntentRecord} WHERE {paymentIntentId} = ?paymentIntentId";
+	private static final String BY_CART_CODE = "SELECT {pk} FROM {StripePaymentIntentRecord} WHERE {cartCode} = ?cartCode";
 	private static final String BY_ORDER = "SELECT {pk} FROM {StripePaymentIntentRecord} WHERE {order} = ?order";
 
 	private FlexibleSearchService flexibleSearchService;
@@ -29,6 +30,14 @@ public class DefaultStripePaymentIntentRecordDao implements StripePaymentIntentR
 	public Optional<StripePaymentIntentRecordModel> findByOrder(final OrderModel order)
 	{
 		return findOne(BY_ORDER, "order", order);
+	}
+
+	@Override
+	public int countByCartCode(final String cartCode)
+	{
+		final FlexibleSearchQuery searchQuery = new FlexibleSearchQuery(BY_CART_CODE);
+		searchQuery.addQueryParameter("cartCode", cartCode);
+		return flexibleSearchService.search(searchQuery).getTotalCount();
 	}
 
 	private Optional<StripePaymentIntentRecordModel> findOne(final String query, final String name, final Object value)

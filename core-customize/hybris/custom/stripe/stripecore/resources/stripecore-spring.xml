@@ -53,6 +53,15 @@
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
+    <alias name="defaultStripePaymentIntentService" alias="stripePaymentIntentService"/>
+    <bean id="defaultStripePaymentIntentService" class="com.stripe.core.payment.impl.DefaultStripePaymentIntentService">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
     <alias name="defaultStripeWebhookEventDao" alias="stripeWebhookEventDao"/>
     <bean id="defaultStripeWebhookEventDao" class="com.stripe.core.dao.impl.DefaultStripeWebhookEventDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>

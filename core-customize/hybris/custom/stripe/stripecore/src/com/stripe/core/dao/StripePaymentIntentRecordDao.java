@@ -13,4 +13,9 @@ public interface StripePaymentIntentRecordDao
 	Optional<StripePaymentIntentRecordModel> findByPaymentIntentId(String paymentIntentId);
 
 	Optional<StripePaymentIntentRecordModel> findByOrder(OrderModel order);
+
+	/**
+	 * Counts the records created for a cart code, whatever their state.
+	 */
+	int countByCartCode(String cartCode);
 }
