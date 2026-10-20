@@ -8,8 +8,6 @@
     <bean id="stripePaymentFacade" class="com.stripe.facades.impl.DefaultStripePaymentFacade">
         <property name="stripeClient" ref="stripeClient"/>
         <property name="stripeWebhookService" ref="stripeWebhookService"/>
-        <property name="cartService" ref="cartService"/>
-        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
     </bean>
 
     <alias name="defaultStripeCheckoutAuthorizer" alias="stripeCheckoutAuthorizer"/>
@@ -42,34 +40,20 @@
         <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
-    <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>
-    <bean id="defaultStripePaymentInfoPopulator"
-          class="com.stripe.facades.order.converters.populators.StripePaymentInfoPopulator"/>
-
-    <alias name="defaultStripePaymentInfoConverter" alias="stripePaymentInfoConverter"/>
-    <bean id="defaultStripePaymentInfoConverter" parent="abstractPopulatingConverter">
-        <property name="targetClass" value="de.hybris.platform.commercefacades.payment.data.GenericPaymentInfoData"/>
-        <property name="populators">
-            <list>
-                <ref bean="stripePaymentInfoPopulator"/>
-            </list>
-        </property>
-    </bean>
-
-    <alias name="defaultStripeOrderGenericPaymentInfoPopulator" alias="stripeOrderGenericPaymentInfoPopulator"/>
-    <bean id="defaultStripeOrderGenericPaymentInfoPopulator"
-          class="com.stripe.facades.order.converters.populators.StripeOrderPaymentInfoPopulator" parent="baseOrderPopulator">
-        <constructor-arg name="stripePaymentInfoConverter" ref="stripePaymentInfoConverter"/>
+    <alias name="defaultStripeOrderPaymentPopulator" alias="stripeOrderPaymentPopulator"/>
+    <bean id="defaultStripeOrderPaymentPopulator"
+          class="com.stripe.facades.order.converters.populators.StripeOrderPaymentPopulator">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
     </bean>
 
     <bean parent="modifyPopulatorList">
         <property name="list" ref="extendedCartConverter"/>
-        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+        <property name="add" ref="stripeOrderPaymentPopulator"/>
     </bean>
 
     <bean parent="modifyPopulatorList">
         <property name="list" ref="orderConverter"/>
-        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+        <property name="add" ref="stripeOrderPaymentPopulator"/>
     </bean>
 
 </beans>
