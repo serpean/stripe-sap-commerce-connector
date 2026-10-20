@@ -1,6 +1,7 @@
 package com.stripe.core.commands.impl;
 
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
@@ -13,13 +14,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Releases the money of a PaymentIntent. An authorized PaymentIntent is canceled. A captured PaymentIntent gets a full
- * refund of the amount received, so a void never leaves money charged without an order. The idempotency keys depend
- * only on the PaymentIntent, because a PaymentIntent is canceled or fully refunded only once.
+ * Releases the money of a PaymentIntent. An authorized PaymentIntent is canceled. A captured PaymentIntent gets a refund
+ * of the net captured amount (amount received minus earlier refunds), so a void never leaves money charged without an
+ * order; when nothing is left, the void is accepted without a call to Stripe. The cancel key depends only on the
+ * PaymentIntent; the refund key also holds the net amount, so a retry after a partial refund gets a new key.
  */
 public class StripeVoidCommand extends AbstractStripeCommand implements VoidCommand
 {
 	private static final Logger LOG = LoggerFactory.getLogger(StripeVoidCommand.class);
+
+	private StripePaymentIntentChecks stripePaymentIntentChecks;
 
 	@Override
 	public VoidResult perform(final VoidRequest request)
@@ -59,10 +63,21 @@ public class StripeVoidCommand extends AbstractStripeCommand implements VoidComm
 		}
 	}
 
+	public void setStripePaymentIntentChecks(final StripePaymentIntentChecks stripePaymentIntentChecks)
+	{
+		this.stripePaymentIntentChecks = stripePaymentIntentChecks;
+	}
+
 	private VoidResult refundAll(final PaymentIntent paymentIntent, final VoidResult result, final VoidRequest request)
 	{
-		final Refund refund = getStripeGateway().createRefund(paymentIntent.getId(), paymentIntent.getAmountReceived(),
-				"void-refund-" + paymentIntent.getId());
+		final long netCaptured = stripePaymentIntentChecks.netCaptured(paymentIntent);
+		if (netCaptured <= 0L)
+		{
+			LOG.info("Captured PaymentIntent [{}] is already fully refunded: nothing to void", paymentIntent.getId());
+			return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+		}
+		final Refund refund = getStripeGateway().createRefund(paymentIntent.getId(), netCaptured,
+				"void-refund-" + paymentIntent.getId() + "-" + netCaptured);
 		LOG.info("Voided captured PaymentIntent [{}] with refund [{}], status [{}]", paymentIntent.getId(), refund.getId(),
 				refund.getStatus());
 		return fillFromRefund(result, request, refund);

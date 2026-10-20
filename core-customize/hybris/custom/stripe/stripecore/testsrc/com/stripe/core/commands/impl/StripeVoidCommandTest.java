@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.VoidRequest;
@@ -33,6 +35,9 @@ public class StripeVoidCommandTest
 	{
 		gateway = mock(StripeGateway.class);
 		command = wire(new StripeVoidCommand(), gateway);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(command.getStripeAmountConverter());
+		command.setStripePaymentIntentChecks(checks);
 	}
 
 	@Test
@@ -57,14 +62,45 @@ public class StripeVoidCommandTest
 		final Refund refund = new Refund();
 		refund.setId("re_1");
 		refund.setStatus("succeeded");
-		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID)).thenReturn(refund);
+		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID + "-1999")).thenReturn(refund);
 
 		final VoidResult result = command.perform(request());
 
-		verify(gateway).createRefund(PI_ID, 1999L, "void-refund-" + PI_ID);
+		verify(gateway).createRefund(PI_ID, 1999L, "void-refund-" + PI_ID + "-1999");
 		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
 		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
 		assertEquals(PI_ID, result.getRequestId());
+	}
+
+	@Test
+	public void voidRefundsOnlyTheNetCapturedAmountAfterPartialRefund()
+	{
+		final PaymentIntent captured = intent("succeeded", 1999L, "eur");
+		captured.getLatestChargeObject().setAmountRefunded(500L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(captured);
+		final Refund refund = new Refund();
+		refund.setId("re_2");
+		refund.setStatus("succeeded");
+		when(gateway.createRefund(PI_ID, 1499L, "void-refund-" + PI_ID + "-1499")).thenReturn(refund);
+
+		final VoidResult result = command.perform(request());
+
+		verify(gateway).createRefund(PI_ID, 1499L, "void-refund-" + PI_ID + "-1499");
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+	}
+
+	@Test
+	public void voidOfFullyRefundedIntentIsAcceptedWithoutStripeCall()
+	{
+		final PaymentIntent captured = intent("succeeded", 1999L, "eur");
+		captured.getLatestChargeObject().setAmountRefunded(1999L);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(captured);
+
+		final VoidResult result = command.perform(request());
+
+		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+		assertEquals(TransactionStatusDetails.SUCCESFULL, result.getTransactionStatusDetails());
 	}
 
 	@Test
@@ -74,7 +110,7 @@ public class StripeVoidCommandTest
 		final Refund refund = new Refund();
 		refund.setId("re_1");
 		refund.setStatus("something_new");
-		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID)).thenReturn(refund);
+		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID + "-1999")).thenReturn(refund);
 
 		assertEquals(TransactionStatus.ERROR, command.perform(request()).getTransactionStatus());
 	}

@@ -1,5 +1,6 @@
 package com.stripe.core.order;
 
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -13,11 +14,16 @@ import static org.mockito.Mockito.when;
 
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.order.impl.DefaultStripePaymentAdjustmentService;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
+import de.hybris.platform.core.enums.OrderStatus;
+import de.hybris.platform.core.model.order.OrderEntryModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.order.payment.CreditCardPaymentInfoModel;
 import de.hybris.platform.order.CalculationService;
@@ -27,7 +33,12 @@ import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
+import de.hybris.platform.servicelayer.model.ModelService;
+import de.hybris.platform.servicelayer.time.TimeService;
+import de.hybris.platform.task.TaskModel;
+import de.hybris.platform.task.TaskService;
 import java.math.BigDecimal;
+import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Before;
@@ -39,7 +50,11 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 {
 	private static final String PI_ID = "pi_cancel";
 
+	private static final Date NOW = new Date(1_700_000_000_000L);
+
 	private CalculationService calculationService;
+	private TaskService taskService;
+	private TaskModel retryTask;
 	private PaymentService paymentService;
 	private StripeGateway stripeGateway;
 	private StripeAmountConverter amountConverter;
@@ -58,11 +73,27 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		when(amountConverter.fromMinorUnits(anyLong(), anyString())).thenAnswer(
 				invocation -> BigDecimal.valueOf((long) invocation.getArgument(0), 2));
 
+		taskService = mock(TaskService.class);
+		final ModelService modelService = mock(ModelService.class);
+		retryTask = mock(TaskModel.class);
+		when(modelService.create(TaskModel.class)).thenReturn(retryTask);
+		final TimeService timeService = mock(TimeService.class);
+		when(timeService.getCurrentTime()).thenReturn(NOW);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(amountConverter);
+
+		final DefaultStripePaymentAdjustmentService adjustmentService = new DefaultStripePaymentAdjustmentService();
+		adjustmentService.setPaymentService(paymentService);
+		adjustmentService.setStripeGateway(stripeGateway);
+		adjustmentService.setStripeAmountConverter(amountConverter);
+		adjustmentService.setStripePaymentIntentChecks(checks);
+		adjustmentService.setModelService(modelService);
+		adjustmentService.setTaskService(taskService);
+		adjustmentService.setTimeService(timeService);
+
 		strategy = new StripeOrderCancelPaymentServiceStrategy();
 		strategy.setCalculationService(calculationService);
-		strategy.setPaymentService(paymentService);
-		strategy.setStripeGateway(stripeGateway);
-		strategy.setStripeAmountConverter(amountConverter);
+		strategy.setStripePaymentAdjustmentService(adjustmentService);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -72,6 +103,9 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		order.setCode("order-cancel");
 		order.setCurrency(currency);
 		order.setPaymentInfo(paymentInfo);
+		final OrderEntryModel orderEntry = new OrderEntryModel();
+		orderEntry.setQuantity(2L);
+		order.setEntries(new ArrayList<>(List.of(orderEntry)));
 
 		authorization = new PaymentTransactionEntryModel();
 		authorization.setType(PaymentTransactionType.AUTHORIZATION);
@@ -195,6 +229,99 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	}
 
 	@Test
+	public void fullCancelWithDeliveryCostVoidsAuthorizedIntent() throws Exception
+	{
+		livePaymentIntent("requires_capture", 0L, null);
+		order.getEntries().get(0).setQuantity(0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(495L);
+		when(paymentService.cancel(authorization)).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(paymentService).cancel(authorization);
+		verify(paymentService, never()).refundFollowOn(any(), any());
+	}
+
+	@Test
+	public void fullCancelWithDeliveryCostRefundsEverythingCaptured() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 1500L);
+		order.setStatus(OrderStatus.CANCELLED);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(495L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(paymentService).refundFollowOn(transaction, new BigDecimal("85.00"));
+		verify(paymentService, never()).cancel(any());
+	}
+
+	@Test
+	public void piReadFailureHappensBeforeRecalculation() throws Exception
+	{
+		when(stripeGateway.retrievePaymentIntent(PI_ID)).thenThrow(new StripeGatewayException("down", null, true, false, null));
+
+		try
+		{
+			strategy.recalculateOrderAndModifyPayments(order);
+			fail("expected StripeGatewayException");
+		}
+		catch (final StripeGatewayException expected)
+		{
+			verifyNoInteractions(calculationService, paymentService, taskService);
+		}
+	}
+
+	@Test
+	public void rejectedRefundSchedulesAdjustmentRetry() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.REJECTED));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		assertRetryScheduled();
+	}
+
+	@Test
+	public void rejectedVoidSchedulesAdjustmentRetry() throws Exception
+	{
+		livePaymentIntent("requires_capture", 0L, null);
+		order.setStatus(OrderStatus.CANCELLED);
+		when(paymentService.cancel(authorization)).thenReturn(entry(TransactionStatus.ERROR));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		assertRetryScheduled();
+	}
+
+	@Test
+	public void gatewayFailureAfterRecalculationSchedulesRetry() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenThrow(new StripeGatewayException("down", null, true, false, null));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(calculationService).calculateTotals(order, true);
+		assertRetryScheduled();
+	}
+
+	@Test
+	public void acceptedAdjustmentSchedulesNoRetry() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verifyNoInteractions(taskService);
+	}
+
+	@Test
 	public void nonStripeOrderIsDelegated() throws Exception
 	{
 		order.setPaymentInfo(new CreditCardPaymentInfoModel());
@@ -247,6 +374,14 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		strategy.recalculateOrderAndModifyPayments(order, new OrderCancelRecordEntryModel());
 
 		verifyNoInteractions(calculationService, stripeGateway, paymentService);
+	}
+
+	private void assertRetryScheduled()
+	{
+		verify(taskService).scheduleTask(retryTask);
+		verify(retryTask).setRunnerBean("stripePaymentAdjustmentTaskRunner");
+		verify(retryTask).setContextItem(order);
+		verify(retryTask).setExecutionDate(new Date(NOW.getTime() + 30_000L));
 	}
 
 	private void livePaymentIntent(final String status, final Long amountReceived, final Long amountRefunded)

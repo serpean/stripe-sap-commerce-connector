@@ -162,18 +162,34 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
-    <!-- Cancel: SAP recalculates the order, then the Stripe payment is voided or partly refunded. -->
-    <alias name="stripeOrderCancelPaymentServiceStrategy" alias="orderCancelPaymentServiceStrategy"/>
-    <bean id="stripeOrderCancelPaymentServiceStrategy" class="com.stripe.core.order.StripeOrderCancelPaymentServiceStrategy"
-          parent="defaultOrderCancelPaymentServiceStrategy">
+    <!-- Cancel: SAP recalculates the order, then the Stripe payment is voided or partly refunded. A failed adjustment
+         is retried by a task. -->
+    <alias name="defaultStripePaymentAdjustmentService" alias="stripePaymentAdjustmentService"/>
+    <bean id="defaultStripePaymentAdjustmentService"
+          class="com.stripe.core.order.impl.DefaultStripePaymentAdjustmentService">
         <property name="paymentService" ref="paymentService"/>
         <property name="stripeGateway" ref="stripeGateway"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+        <property name="modelService" ref="modelService"/>
+        <property name="taskService" ref="taskService"/>
+        <property name="timeService" ref="timeService"/>
     </bean>
 
+    <bean id="stripePaymentAdjustmentTaskRunner" class="com.stripe.core.order.StripePaymentAdjustmentTaskRunner">
+        <property name="stripePaymentAdjustmentService" ref="stripePaymentAdjustmentService"/>
+    </bean>
+
+    <alias name="stripeOrderCancelPaymentServiceStrategy" alias="orderCancelPaymentServiceStrategy"/>
+    <bean id="stripeOrderCancelPaymentServiceStrategy" class="com.stripe.core.order.StripeOrderCancelPaymentServiceStrategy"
+          parent="defaultOrderCancelPaymentServiceStrategy">
+        <property name="stripePaymentAdjustmentService" ref="stripePaymentAdjustmentService"/>
+    </bean>
+
+    <!-- Refers to the Stripe strategy by id, so the Stripe logic stays when another extension takes the alias. -->
     <bean id="stripeOrderCancelPaymentServiceAdapter" class="com.stripe.core.order.StripeOrderCancelPaymentServiceAdapter"
           scope="prototype">
-        <property name="orderCancelPaymentServiceStrategy" ref="orderCancelPaymentServiceStrategy"/>
+        <property name="orderCancelPaymentServiceStrategy" ref="stripeOrderCancelPaymentServiceStrategy"/>
     </bean>
 
     <import resource="stripecore-commands-spring.xml"/>

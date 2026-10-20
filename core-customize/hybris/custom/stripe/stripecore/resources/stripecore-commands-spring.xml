@@ -25,7 +25,9 @@
           class="com.stripe.core.commands.impl.StripePartialCaptureCommand"/>
 
     <bean id="stripeVoidCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeVoidCommand"/>
+          class="com.stripe.core.commands.impl.StripeVoidCommand">
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+    </bean>
 
     <bean id="stripeRefundCommand" parent="abstractStripeCommand"
           class="com.stripe.core.commands.impl.StripeRefundCommand">

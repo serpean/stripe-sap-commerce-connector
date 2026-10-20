@@ -44,6 +44,18 @@ public class StripePaymentIntentChecks
 				&& charge != null && charge.getAmountRefunded() != null && charge.getAmountRefunded() == 0L;
 	}
 
+	/**
+	 * The money that Stripe still holds for a PaymentIntent, in minor units: the amount received minus the amount
+	 * refunded on the expanded latest charge. Without the charge, the amount received.
+	 */
+	public long netCaptured(final PaymentIntent paymentIntent)
+	{
+		final long received = paymentIntent.getAmountReceived() == null ? 0L : paymentIntent.getAmountReceived();
+		final Charge charge = paymentIntent.getLatestChargeObject();
+		final long refunded = charge == null || charge.getAmountRefunded() == null ? 0L : charge.getAmountRefunded();
+		return received - refunded;
+	}
+
 	public void setStripeAmountConverter(final StripeAmountConverter stripeAmountConverter)
 	{
 		this.stripeAmountConverter = stripeAmountConverter;
