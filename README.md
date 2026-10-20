@@ -1,22 +1,27 @@
 # Stripe Connector for SAP Commerce Cloud
 
-Stripe provides payment infrastructure for the internet. This Connector for SAP Commerce Cloud enables a seamless integration with Stripe's Payment Intents API, supporting secure card payments with built-in 3D Secure (SCA) compliance.
+Version 3.0.0.
+
+Stripe provides payment infrastructure for the internet. This connector adds Stripe payments to SAP Commerce Cloud through the Payment Intents API. It supports cards and other Stripe payment methods, 3D Secure (SCA), and the standard SAP checkout, order process, and cancel and refund flows.
 
 ## Release Compatibility
 
-This release is compatible with:
-- SAP Commerce Cloud 2211
+- SAP Commerce Cloud 2211 (tested with 2211.55)
 - SAP Commerce REST API (OCC)
 - Spartacus 2211.37
 - Java 17
-- Stripe Java SDK
+- Stripe API version `2025-09-30.clover`, with `stripe-java` 30.0.0. Maven downloads it.
+- `gson` 2.11.0. `stripe-java` needs it at run time. It is declared in `stripecore`, and it is the version the platform already uses.
 
 ## Features
 
-- **Card Payments**: Accept credit and debit card payments
-- **Payment Intents API**: Modern payment flow with built-in SCA/3DS support
-- **Webhooks**: Process Stripe events for payment confirmations and updates
-- **Headless Architecture**: OCC-first design for Spartacus storefronts
+- **Payment Intents API**: one PaymentIntent for each cart, with 3DS/SCA.
+- **Standard SAP flow**: the connector plugs into the SAP checkout facades, the order process, and order cancel. It does not replace them.
+- **Server decides**: the server reads the PaymentIntent from Stripe. It never trusts the browser.
+- **Webhooks**: a safety net that places the order when the browser does not come back.
+- **Capture**: manual (default) or automatic, and partial capture.
+- **After purchase**: capture, partial capture, cancel, and refund, with OMS or with the classic fulfilment process.
+- **Headless**: OCC endpoints and a Spartacus library.
 
 ## Project Structure
 
@@ -26,11 +31,10 @@ The repository holds two things. Only the connector is published.
 
 | Path | Content |
 |------|---------|
-| `core-customize/hybris/custom/stripe/stripecore` | Core services, Stripe API client, payment commands |
-| `core-customize/hybris/custom/stripe/stripefacades` | Facade layer with DTOs and converters |
-| `core-customize/hybris/custom/stripe/stripeocc` | OCC REST endpoints for payment operations |
-| `core-customize/hybris/custom/stripe/stripefulfilmentprocess` | Order process actions for payment authorization and capture |
-| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` |
+| `core-customize/hybris/custom/stripe/stripecore` | Item types, Stripe gateway, PaymentIntent service, authorization strategy, webhook processing, order process steps, cancel strategy |
+| `core-customize/hybris/custom/stripe/stripefacades` | Checkout facades (child beans), checkout authorizer, webhook facade, order payment populator |
+| `core-customize/hybris/custom/stripe/stripeocc` | OCC endpoints, error codes, place-order validator advice |
+| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 3.0.0) |
 
 ### Reference project (not published)
 
@@ -38,16 +42,17 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 
 | Path | Content |
 |------|---------|
-| `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe |
+| `core-customize/installer/recipes/b2c_occ_stripe` | Installer recipe. It uses the order management (OMS) extensions. |
 | `core-customize/scripts/fetch-spartacussampledata.sh` | Downloads the official SAP Spartacus sample data (`electronics-spa`), release `221121-x` of [SAP-samples/cloud-commerce-sample-setup](https://github.com/SAP-samples/cloud-commerce-sample-setup/releases/tag/sampledata), into `core-customize/hybris/custom/spartacus/spartacussampledata`. The extension is a dependency and is not stored in git. It contains sample data for SAP Open Payment Framework, which is imported only when that framework is installed. |
-| `core-customize/hybris/custom/reference/stripesampledata` | Sets `paymentProvider=Stripe` on the `electronics` BaseStore and creates the demo OAuth client `mobile_android` |
+| `core-customize/scripts/stripe-listen.sh` | Forwards Stripe webhook events to the local server with the Stripe CLI |
+| `core-customize/hybris/custom/reference/stripesampledata` | Sample data for the Stripe demo (see [stripesampledata](#stripesampledata)) |
 | `core-customize/manifest.json`, `js-storefront/manifest.json` | CCv2 manifests |
 | `js-storefront/stripestore/src` | Spartacus demo app |
 | `js-storefront/stripestore/e2e` | Playwright end-to-end tests |
 
 > **Warning:** `stripesampledata` creates the OAuth client `mobile_android` with the well-known secret `secret` and the `password` and `client_credentials` grants. It is for local demos and tests only. Never deploy the reference project to an environment that other people can reach.
 
-Breaking changes are listed in [docs/migration/cleanup.md](docs/migration/cleanup.md).
+Upgrade guides: [2.0.0 to 3.0.0](docs/migration/standard-connector.md) and [1.0.0 to 2.0.0](docs/migration/cleanup.md). The history is in [CHANGELOG.md](CHANGELOG.md).
 
 # Installation and Usage
 
@@ -69,12 +74,11 @@ Breaking changes are listed in [docs/migration/cleanup.md](docs/migration/cleanu
 <extension name="stripecore"/>
 <extension name="stripefacades"/>
 <extension name="stripeocc"/>
-<extension name="stripefulfilmentprocess"/>
 ```
 
 3. Set `paymentProvider=Stripe` on the BaseStore that uses Stripe.
 
-4. Build. The Stripe Java SDK is downloaded by Maven (`usemaven=true`).
+4. Build. Maven downloads the Stripe Java SDK and gson (`usemaven=true`).
 
 ```bash
 cd hybris/bin/platform
@@ -82,12 +86,14 @@ cd hybris/bin/platform
 ant clean all
 ```
 
-5. Start the server and update the system:
+5. Start the server and update the system (the update creates the new item types):
 
 ```bash
 ./hybrisserver.sh
 ant updatesystem
 ```
+
+6. In the Stripe Dashboard, add a webhook endpoint `https://<host>/occ/v2/<baseSiteUid>/payments/stripe/webhook`. Send at least these events: `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Put the signing secret in `stripe.webhook.secret`.
 
 ## Configuration
 
@@ -98,10 +104,24 @@ stripe.secret.key=sk_test_your_secret_key
 stripe.publishable.key=pk_test_your_public_key
 stripe.webhook.secret=whsec_your_webhook_secret
 stripe.capture.mode=manual
-stripe.statement.descriptor=MYSHOP
-stripe.descriptor.suffix=ECOM
-stripe.capture.manual.methods=card,paypal,klarna
 ```
+
+### All properties
+
+Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for example `stripe.capture.mode.electronics-spa=automatic`. The connector reads the site value first, then the global value. The site is the current base site.
+
+| Property | Default | Meaning |
+|----------|---------|---------|
+| `stripe.secret.key` | empty | Stripe secret key (`sk_...`) |
+| `stripe.publishable.key` | empty | Stripe publishable key (`pk_...`). The backend serves it to the storefront. |
+| `stripe.webhook.secret` | empty | Webhook signing secret (`whsec_...`) |
+| `stripe.capture.mode` | `manual` | `manual` or `automatic` |
+| `stripe.capture.manual.methods` | `card,paypal,klarna` | Payment methods that support manual capture, comma-separated. Other methods are captured at once. |
+| `stripe.statement.descriptor` | empty | Statement descriptor |
+| `stripe.descriptor.suffix` | empty | Statement descriptor suffix |
+| `stripe.webhook.graceperiod.seconds` | `300` | Wait before the webhook places an order. It counts from the time of the Stripe event. |
+| `stripe.payment.pending.timeout.seconds` | `86400` | A pending payment older than this cancels the order |
+| `stripe.payment.pending.retry.seconds` | `300` | Delay between checks of a pending payment |
 
 ## Installing on SAP Commerce Cloud
 
@@ -111,9 +131,118 @@ Follow the [SAP Commerce Cloud documentation](https://help.sap.com/docs/SAP_COMM
 2. Update your `manifest.json` to include the extensions
 3. Add the Stripe keys as environment properties in SAP Commerce Cloud Portal
 
+# How the payment works
+
+## Payment flow
+
+1. **Prepare.** The storefront calls `POST .../carts/{cartId}/payments/stripe/intent`. The connector creates one PaymentIntent for the cart, or updates it. It stores the PaymentIntent in its own record (`StripePaymentIntentRecord`) and on the cart payment info.
+2. **Sync before confirm.** The storefront calls the endpoint again just before it confirms the payment. The connector sets the PaymentIntent amount and currency to the current cart total. The amount is the total the customer pays: total price, plus tax for net stores.
+3. **Confirm.** Stripe.js confirms the payment in the browser (3DS if needed).
+4. **Place order.** The storefront calls the standard SAP place-order endpoint. The authorization strategy reads the PaymentIntent from Stripe and decides. It checks the status, the amount, and the currency. The browser result does not count.
+5. **Webhook safety net.** If the customer pays but the browser never calls place order, the webhook places the order on the server. It waits a grace period first (`stripe.webhook.graceperiod.seconds`). The wait counts from the time of the Stripe event, not from the creation of the PaymentIntent, so a slow payer does not race the server.
+
+Rules:
+
+- One PaymentIntent pays one order. A lock (`StripeOrderPlacementLock`) stops two orders for the same PaymentIntent. A lock older than 10 minutes with no order is stale and is removed.
+- If the cart changes, the PaymentIntent is updated. If it was cancelled, a new one is created. If it is in `processing` and the cart changed, the connector answers `STRIPE_PAYMENT_IN_PROGRESS`.
+- The connector refunds the money (or voids the authorization) when it cannot place an order for a paid PaymentIntent:
+  - the cart is missing;
+  - the amount does not match the cart;
+  - SAP rejects the authorization.
+- A PaymentIntent that was refunded is never accepted as a payment.
+
+## Capture timing
+
+| Mode | Behaviour |
+|------|-----------|
+| `manual` (default, the SAP default) | The payment is authorized at checkout. The order process captures it (`takePaymentAction`). |
+| `automatic` | Stripe captures at once. The order process finds the payment captured. |
+
+- Only the methods in `stripe.capture.manual.methods` use manual capture. In manual mode the PaymentIntent is created with automatic capture, and only these methods get `capture_method=manual`. Methods without manual capture (for example Bancontact) are always captured at once.
+- **A card authorization expires after 7 days at Stripe.** Ship and capture before that, or the money is released.
+
+## After purchase
+
+The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`).
+
+- **Capture.** `takePaymentAction` captures the current order total. If the order changed, the total is lower than the authorized amount, and Stripe releases the rest.
+- **Partial capture.** The same action captures a part of the authorized amount.
+- **Cancel.** The cancel strategy reads the live PaymentIntent, not only the SAP entries:
+  - authorized and the new total is 0: the authorization is voided;
+  - authorized and the new total is above 0: nothing happens now, and the capture takes the current total;
+  - captured: the connector refunds the difference between the net captured amount and the new total.
+- **Full cancel** (order cancelled, or every quantity 0) releases everything, including the delivery cost. A partial cancel keeps the delivery cost.
+- **Retries.** If Stripe fails or does not accept a refund or void, a retry task runs the same idempotent adjustment again with the webhook backoff (30 s, 2 min, 8 min, 30 min). After 5 attempts it stops and logs an ERROR.
+- **Return in the classic fulfilment process.** The return action of `yacceleratorfulfilmentprocess` is a SAP mock. **The customer must replace it with an action that calls `paymentService.refundFollowOn`.** The connector then refunds at Stripe. OMS returns already do this.
+
+## Webhooks
+
+- **Endpoint:** `POST /occ/v2/{baseSiteId}/payments/stripe/webhook`.
+- **Signature:** the connector checks the `Stripe-Signature` header with `stripe.webhook.secret`. A bad or missing signature gives 400. A signed payload without an id is also refused.
+- **Idempotent intake:** the event is stored once (`StripeWebhookEvent`, unique by Stripe event id). A repeated event does not run twice.
+- **Processing:** the intake saves the event and schedules a SAP `Task` in one transaction. The task runner (`stripeWebhookEventTaskRunner`) processes it.
+- **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Other events are ignored.
+- **Retries:** a failure that can pass is retried after 30 s, 2 min, 8 min, and 30 min. After 5 attempts the event is `FAILED` with `lastError`, and an ERROR is logged.
+- **Unreadable events** (the payload cannot be read) fail at once with no retry.
+- **States:** `RECEIVED`, `PROCESSED`, `IGNORED`, `FAILED`.
+
+## Pending payments
+
+Some methods confirm later (the PaymentIntent is `processing`). The order is created with the status `PAYMENT_PENDING`. The first action of the order process waits:
+
+- payment accepted: the process goes on;
+- payment failed, cancelled, or refunded: the order is cancelled;
+- still pending: the process checks again after `stripe.payment.pending.retry.seconds`;
+- still pending after `stripe.payment.pending.timeout.seconds`: the order is cancelled.
+
+The storefront shows the label `paymentPending` for this status (the connector adds it to `acceleratorStatusDisplayMap` when that bean exists).
+
+## OCC endpoints
+
+Base path: `/occ/v2/{baseSiteId}`.
+
+| Method and path | Use |
+|-----------------|-----|
+| `POST /users/{userId}/carts/{cartId}/payments/stripe/intent` | Creates or updates the PaymentIntent of the cart. Returns `StripeIntent`: `paymentIntentId`, `clientSecret`, `status`. Status 201. |
+| `GET /payments/stripe/config` | Returns `StripeConfig`: `publishableKey` of the base site. The key is public. |
+| `POST /payments/stripe/webhook` | Stripe webhook. Returns `{status}` (the receipt) with 200. |
+| SAP `POST /users/{userId}/orders?cartId=` | Places the order. The connector adds the Stripe checks. |
+
+Carts and orders (all order DTOs) have a new field `stripePaymentInfo`: `paymentMethodType`, `cardBrand`, `cardLast4`, `cardExpMonth`, `cardExpYear`, `paymentStatus` (`ACCEPTED`, `PENDING`, `FAILED`, empty before a result).
+
+### Error codes
+
+The response is an SAP error list. The error has `type` `StripePaymentError` and `reason` set to one of these codes. The message is generic. The detail goes to the log.
+
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `STRIPE_AMOUNT_MISMATCH` | 400 | The cart total changed. Check the cart and pay again. |
+| `STRIPE_PAYMENT_FAILED` | 400 | The payment was not completed (failed, cancelled, or needs action). |
+| `STRIPE_ALREADY_PLACED` | 400 | An order for this payment already exists or is in progress. |
+| `STRIPE_PAYMENT_IN_PROGRESS` | 400 | The payment is processing. Wait for the result. |
+| `STRIPE_UNAVAILABLE` | 503 | Stripe did not answer. Try again later. |
+
+## How the connector hooks into SAP
+
+The connector does not replace SAP classes with one alias. It adds to them.
+
+- **Authorization:** the alias `commercePaymentAuthorizationStrategy` points to `stripeCommercePaymentAuthorizationStrategy`. It handles Stripe carts and gives other carts to the SAP strategy.
+- **Checkout facades:** `StripeCheckoutFacade` and `StripeAcceleratorCheckoutFacade` are child beans of `defaultCheckoutFacade` and `defaultAcceleratorCheckoutFacade`. They take the aliases `checkoutFacade` and `acceleratorCheckoutFacade`. Both use the same `stripeCheckoutAuthorizer` and `stripePlaceOrderGuard`.
+- **Order process:** `StripeProcessActionsPostProcessor` finds the beans by name or alias and replaces each with a type-preserving CGLIB proxy. Other beans can still inject them by their class. The beans are:
+  - `checkOrderAction`: Stripe orders go to `stripeAwaitPaymentCheckOrderAction`;
+  - `takePaymentAction`: Stripe orders go to `stripeTakePaymentAction`;
+  - `OmsOrderCancelPaymentServiceAdapter`: Stripe orders go to `stripeOrderCancelPaymentServiceAdapter`.
+
+  Orders that do not use Stripe go to the original bean. A bean that does not exist is not changed. A final class is replaced by the Stripe bean, with a warning.
+- **Cancel strategy:** the alias `orderCancelPaymentServiceStrategy` points to `stripeOrderCancelPaymentServiceStrategy`.
+- **Place-order validator:** the SAP validator rejects a cart with no card data (`cart.paymentInfoNotSet`). `StripePlaceOrderCartValidator` is advice on a class proxy of that bean. It drops that one error for a cart with a Stripe PaymentIntent. All other checks stay.
+- **Item types:** `StripePaymentInfo`, `StripePaymentIntentRecord`, `StripeOrderPlacementLock`, `StripeWebhookEvent`, and the order status `PAYMENT_PENDING`.
+
 # Spartacus Frontend
 
-The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/`. Your app gives the library the Stripe publishable key through `StripePaymentConfig` (`stripePayment.publishableKey`).
+The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 3.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
+
+The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
 
 # Reference project
 
@@ -129,6 +258,8 @@ ln -s "$PWD/core-customize/hybris/custom" /path/to/platform/hybris/bin/custom
 # Gradle does not follow a symlinked recipe: copy it before every installer run
 rsync -a --delete core-customize/installer/recipes/b2c_occ_stripe/ /path/to/platform/installer/recipes/b2c_occ_stripe/
 ```
+
+The recipe installs the order management (OMS) extensions, so orders use the OMS order process (`order-process`).
 
 ## 2. Stripe keys
 
@@ -152,30 +283,80 @@ cd /path/to/platform/installer
 ./install.sh -r b2c_occ_stripe start
 ```
 
-## 4. Storefront
+## 4. Stripe CLI and webhooks
+
+Install the [Stripe CLI](https://docs.stripe.com/stripe-cli). In a second terminal:
+
+```bash
+core-customize/scripts/stripe-listen.sh
+```
+
+The script reads `STRIPE_SECRET_KEY` from the environment or from `.env`. It gives the key to the CLI in `STRIPE_API_KEY`, never on the command line, so `ps` does not show it. It prints `STRIPE_WEBHOOK_SECRET=whsec_...` first. Put that value in `.env` before you run `setup`, or set `stripe.webhook.secret` in `local.properties`. It forwards events to `https://localhost:9002/occ/v2/electronics-spa/payments/stripe/webhook`. Set `STRIPE_FORWARD_TO` to change the target.
+
+## 5. Storefront
 
 The `@spartacus/*` packages come from the SAP npm repository. Configure access in `js-storefront/stripestore/.npmrc` (git ignores it).
 
 ```bash
-set -a; . ./.env; set +a
 cd js-storefront/stripestore
 npm ci
 npm start
 ```
 
-The storefront gets the publishable key from the backend (`GET payments/stripe/config`), so the front end needs no key. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
+The storefront gets the publishable key from the backend, so the front end needs no key. It is at `http://localhost:4200/electronics-spa/en/EUR`.
 
-## 5. End-to-end tests
+## stripesampledata
 
-With the server and the storefront running:
+The extension is for the reference project only. It contains:
+
+- `store.impex`: `paymentProvider=Stripe` on the `electronics` BaseStore, the currency EUR added to the store, and `submitOrderProcessCode=order-process` (the OMS process).
+- `prices.impex`: EUR prices for the electronics products (same value as the USD price), so the EUR site can sell them. The reference site uses EUR.
+- `warehouses.impex`: OMS sourcing data: `Default_Formula`, `SourcingConfig` `Hybris_OMS_Config`, and the delivery modes of the warehouses. Without it OMS cannot source an order and suspends it.
+- `oauth-clients.impex`: the demo OAuth client `mobile_android` (secret `secret`). See the warning above.
+
+## 6. Tests
+
+### End-to-end battery (Playwright)
+
+Prerequisites:
+
+- the server is running, with Stripe test keys;
+- the storefront is running (`npm start`);
+- `core-customize/scripts/stripe-listen.sh` is running (the tests stop at once if it is not);
+- Chromium: `npx playwright install chromium`;
+- the HAC user `admin` with its password (`E2E_HAC_USER`, `E2E_HAC_PASSWORD`; default `admin` / `nimda`). The tests use the HAC for FlexibleSearch and for back-office steps (ship, cancel, return).
 
 ```bash
 cd js-storefront/stripestore
-npx playwright install chromium
 npm run e2e
 ```
 
+The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC: `stripe.webhook.graceperiod.seconds=20`, `stripe.payment.pending.retry.seconds=10`, `stripe.capture.mode=manual`. A server restart reads `local.properties` again.
+
+The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
+
 Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_PATH` (default `product/816324/DSC-T20-Cyber-shot-Silver`, a product in stock).
+
+### Unit and integration tests
+
+From `hybris/bin/platform`, after `. ./setantenv.sh` with Java 17:
+
+```bash
+ant all
+ant unittests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc -Dtestclasses.annotations=unittests
+ant yunitinit
+ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
+```
+
+Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
+
+# Known limitations
+
+- `PAYMENT_PENDING` cannot be tested end to end with a Stripe test account in Spain: no method stays in `processing`. Integration and unit tests cover the retry path.
+- There is no reconciliation job yet for webhook events in `FAILED` state, or for PaymentIntents that have no order (orphans). Look for them in the logs and in the `stripe_webhook_event` and `stripe_pi_record` tables.
+- A retry of a cancel adjustment can replay a Stripe failure that Stripe saved for the same idempotency key. Stripe keeps keys for 24 hours.
+- HSQLDB has no row locks. The locks on the PaymentIntent record and on the webhook event do nothing there. Use a real database (not HSQLDB) to test concurrency.
+- A card authorization expires after 7 days.
 
 # Support
 
