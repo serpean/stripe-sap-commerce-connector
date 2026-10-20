@@ -1,8 +1,7 @@
 package com.stripe.core.stripe;
 
 import com.stripe.Stripe;
-import com.stripe.core.config.DefaultStripeConfigurationService;
-import com.stripe.core.config.StripeConfigurationProperties;
+import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.exception.AuthenticationException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
@@ -21,9 +20,9 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -34,8 +33,7 @@ public class StripeClient {
     private static final long MAX_BACKOFF_MS = TimeUnit.SECONDS.toMillis(5);
     private static final int MAX_METADATA_LENGTH = 500;
 
-    private DefaultStripeConfigurationService stripeConfigurationService;
-    private StripeConfigurationProperties cachedProperties;
+    private StripeConfigurationService stripeConfigurationService;
 
     /**
      * Ensures the PaymentIntent exists and is consistent with the desired amount/metadata.
@@ -53,7 +51,6 @@ public class StripeClient {
                                                      final String currencyIso,
                                                      final String captureMode,
                                                      final Map<String, String> metadata) throws StripeException {
-        final StripeConfigurationProperties configuration = getConfiguration();
         final String resolvedCurrency = StringUtils.defaultIfBlank(currencyIso, "usd");
 
         final Map<String, String> metadataMap = sanitizeMetadata(metadata);
@@ -80,14 +77,16 @@ public class StripeClient {
                 );
 
         // Set payment_method_options with capture_method per payment type
-        final List<String> manualCaptureMethods = configuration.getManualCaptureMethods();
+        final Set<String> manualCaptureMethods = stripeConfigurationService.getManualCaptureMethods();
         createParams.setPaymentMethodOptions(buildPaymentMethodOptions(manualCaptureMethods));
 
-        if (StringUtils.isNotBlank(configuration.getStatementDescriptor())) {
-            createParams.setStatementDescriptor(configuration.getStatementDescriptor());
+        final String statementDescriptor = stripeConfigurationService.getStatementDescriptor();
+        if (StringUtils.isNotBlank(statementDescriptor)) {
+            createParams.setStatementDescriptor(statementDescriptor);
         }
-        if (StringUtils.isNotBlank(configuration.getDescriptorSuffix())) {
-            createParams.setStatementDescriptorSuffix(configuration.getDescriptorSuffix());
+        final String descriptorSuffix = stripeConfigurationService.getStatementDescriptorSuffix();
+        if (StringUtils.isNotBlank(descriptorSuffix)) {
+            createParams.setStatementDescriptorSuffix(descriptorSuffix);
         }
         metadataMap.forEach(createParams::putMetadata);
 
@@ -136,22 +135,11 @@ public class StripeClient {
     }
 
     public Event parseWebhook(final String payload, final String signatureHeader) throws StripeException {
-        final String webhookSecret = getConfiguration().getWebhookSecret();
+        final String webhookSecret = stripeConfigurationService.getWebhookSecret();
         if (StringUtils.isBlank(webhookSecret)) {
             throw new AuthenticationException("Missing stripe.webhook.secret", null, null, 0, null);
         }
         return Webhook.constructEvent(payload, signatureHeader, webhookSecret);
-    }
-
-    protected StripeConfigurationProperties getConfiguration() {
-        if (cachedProperties == null) {
-            cachedProperties = stripeConfigurationService.load();
-        }
-        return cachedProperties;
-    }
-
-    public StripeConfigurationProperties getCurrentConfiguration() {
-        return getConfiguration();
     }
 
     protected long toStripeAmount(final BigDecimal amount, final String currencyIso) {
@@ -175,7 +163,7 @@ public class StripeClient {
      * Methods in manualCaptureMethods list get manual capture, others get automatic.
      */
     protected PaymentIntentCreateParams.PaymentMethodOptions buildPaymentMethodOptions(
-            final List<String> manualCaptureMethods) {
+            final Set<String> manualCaptureMethods) {
         final PaymentIntentCreateParams.PaymentMethodOptions.Builder builder =
                 PaymentIntentCreateParams.PaymentMethodOptions.builder();
 
@@ -209,7 +197,7 @@ public class StripeClient {
     }
 
     protected RequestOptions buildRequestOptions(final String businessReference, final String operation) {
-        final String apiKey = getConfiguration().getSecretKey();
+        final String apiKey = stripeConfigurationService.getSecretKey();
         Stripe.apiKey = apiKey;
         final String idempotencyKey = generateIdempotencyKey(businessReference, operation);
         return RequestOptions.builder()
@@ -274,7 +262,7 @@ public class StripeClient {
         }
     }
 
-    public void setStripeConfigurationService(final DefaultStripeConfigurationService stripeConfigurationService) {
+    public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService) {
         this.stripeConfigurationService = stripeConfigurationService;
     }
 

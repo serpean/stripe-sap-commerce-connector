@@ -1,0 +1,157 @@
+package com.stripe.core.gateway.impl;
+
+import com.stripe.Stripe;
+import com.stripe.StripeClient;
+import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.exception.ApiConnectionException;
+import com.stripe.exception.RateLimitException;
+import com.stripe.exception.SignatureVerificationException;
+import com.stripe.exception.StripeException;
+import com.stripe.model.Event;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
+import com.stripe.net.RequestOptions;
+import com.stripe.net.Webhook;
+import com.stripe.param.PaymentIntentCancelParams;
+import com.stripe.param.PaymentIntentCaptureParams;
+import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.PaymentIntentRetrieveParams;
+import com.stripe.param.PaymentIntentUpdateParams;
+import com.stripe.param.RefundCreateParams;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class DefaultStripeGateway implements StripeGateway
+{
+	public static final String API_VERSION = Stripe.API_VERSION;
+
+	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeGateway.class);
+	private static final int MAX_NETWORK_RETRIES = 2;
+	private static final int HTTP_SERVER_ERROR = 500;
+
+	private StripeConfigurationService stripeConfigurationService;
+
+	@Override
+	public PaymentIntent createPaymentIntent(final PaymentIntentCreateParams params, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("create_payment_intent", () -> client.v1().paymentIntents().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public PaymentIntent updatePaymentIntent(final String id, final PaymentIntentUpdateParams params,
+			final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("update_payment_intent", () -> client.v1().paymentIntents().update(id, params, options(idempotencyKey)));
+	}
+
+	@Override
+	public PaymentIntent retrievePaymentIntent(final String id)
+	{
+		final StripeClient client = newClient();
+		final PaymentIntentRetrieveParams params = PaymentIntentRetrieveParams.builder()
+				.addExpand("payment_method")
+				.addExpand("latest_charge")
+				.build();
+		return call("retrieve_payment_intent", () -> client.v1().paymentIntents().retrieve(id, params));
+	}
+
+	@Override
+	public PaymentIntent cancelPaymentIntent(final String id, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("cancel_payment_intent", () -> client.v1().paymentIntents()
+				.cancel(id, PaymentIntentCancelParams.builder().build(), options(idempotencyKey)));
+	}
+
+	@Override
+	public PaymentIntent capturePaymentIntent(final String id, final long amountToCapture, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		final PaymentIntentCaptureParams params = PaymentIntentCaptureParams.builder()
+				.setAmountToCapture(amountToCapture)
+				.build();
+		return call("capture_payment_intent", () -> client.v1().paymentIntents().capture(id, params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Refund createRefund(final String paymentIntentId, final long amount, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		final RefundCreateParams params = RefundCreateParams.builder()
+				.setPaymentIntent(paymentIntentId)
+				.setAmount(amount)
+				.build();
+		return call("create_refund", () -> client.v1().refunds().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Event constructEvent(final String payload, final String signatureHeader)
+	{
+		final String webhookSecret = stripeConfigurationService.getWebhookSecret();
+		if (StringUtils.isBlank(webhookSecret))
+		{
+			throw new StripeGatewayException("Stripe webhook secret is not configured", "webhook_secret_missing", false, false,
+					null);
+		}
+		try
+		{
+			return Webhook.constructEvent(payload, signatureHeader, webhookSecret);
+		}
+		catch (final SignatureVerificationException e)
+		{
+			throw new StripeGatewayException("Stripe webhook signature is not valid", "signature_invalid", false, true, e);
+		}
+	}
+
+	protected StripeClient newClient()
+	{
+		final String secretKey = stripeConfigurationService.getSecretKey();
+		if (StringUtils.isBlank(secretKey))
+		{
+			throw new StripeGatewayException("Stripe secret key is not configured", "secret_key_missing", false, false, null);
+		}
+		return StripeClient.builder().setApiKey(secretKey).setMaxNetworkRetries(MAX_NETWORK_RETRIES).build();
+	}
+
+	protected RequestOptions options(final String idempotencyKey)
+	{
+		return RequestOptions.builder().setIdempotencyKey(idempotencyKey).build();
+	}
+
+	protected <T> T call(final String operation, final StripeCall<T> stripeCall)
+	{
+		try
+		{
+			return stripeCall.execute();
+		}
+		catch (final StripeException e)
+		{
+			LOG.warn("Stripe call {} failed: code={}, status={}, requestId={}", operation, e.getCode(), e.getStatusCode(),
+					e.getRequestId());
+			throw new StripeGatewayException("Stripe call " + operation + " failed", e.getCode(), isRetryable(e), false, e);
+		}
+	}
+
+	protected boolean isRetryable(final StripeException e)
+	{
+		final Integer status = e.getStatusCode();
+		return e instanceof ApiConnectionException || e instanceof RateLimitException
+				|| (status != null && status >= HTTP_SERVER_ERROR);
+	}
+
+	public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService)
+	{
+		this.stripeConfigurationService = stripeConfigurationService;
+	}
+
+	@FunctionalInterface
+	protected interface StripeCall<T>
+	{
+		T execute() throws StripeException;
+	}
+}

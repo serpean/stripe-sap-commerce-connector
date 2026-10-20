@@ -4,7 +4,7 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
-import com.stripe.core.config.StripeConfigurationProperties;
+import com.stripe.core.config.StripeConfigurationService;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.AbstractOrderModel;
 import de.hybris.platform.core.model.order.OrderModel;
@@ -33,6 +33,7 @@ public class StripePaymentProvider {
     private static final Logger LOG = LoggerFactory.getLogger(StripePaymentProvider.class);
 
     private StripeClient stripeClient;
+    private StripeConfigurationService stripeConfigurationService;
     private ModelService modelService;
 
 
@@ -65,12 +66,11 @@ public class StripePaymentProvider {
             return oAuthorizedEntry.get();
         }
         try {
-            final StripeConfigurationProperties configuration = stripeClient.getCurrentConfiguration();
             final Map<String, String> metadata = buildMetadata(order);
             final String currencyIso = order.getCurrency() != null ? order.getCurrency().getIsocode() : "USD";
             // TODO simplify logic removing transaction if payment fails
             final Optional<PaymentIntent> paymentIntent = stripeClient.getOrCreateIntent(resolvePaymentIntentId(order),
-                    order.getCode(), amount, currencyIso, configuration.getCaptureMode(), metadata);
+                    order.getCode(), amount, currencyIso, stripeConfigurationService.getCaptureMode().name().toLowerCase(Locale.ROOT), metadata);
             if (paymentIntent.isPresent()) {
                 final PaymentIntent intent = paymentIntent.get();
                 final PaymentTransactionEntryModel entry = createEntry(order, PaymentTransactionType.AUTHORIZATION, amount);
@@ -233,6 +233,10 @@ public class StripePaymentProvider {
         }
         final int digits = currency != null && currency.getDigits() != null ? currency.getDigits() : 2;
         return amount.setScale(digits, RoundingMode.HALF_UP);
+    }
+
+    public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService) {
+        this.stripeConfigurationService = stripeConfigurationService;
     }
 
     public void setStripeClient(final StripeClient stripeClient) {

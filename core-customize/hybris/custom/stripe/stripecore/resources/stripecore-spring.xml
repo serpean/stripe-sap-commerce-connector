@@ -3,8 +3,15 @@
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <bean id="stripeConfigurationService" class="com.stripe.core.config.DefaultStripeConfigurationService">
+    <alias name="defaultStripeConfigurationService" alias="stripeConfigurationService"/>
+    <bean id="defaultStripeConfigurationService" class="com.stripe.core.config.impl.DefaultStripeConfigurationService">
         <property name="configurationService" ref="configurationService"/>
+        <property name="baseSiteService" ref="baseSiteService"/>
+    </bean>
+
+    <alias name="defaultStripeGateway" alias="stripeGateway"/>
+    <bean id="defaultStripeGateway" class="com.stripe.core.gateway.impl.DefaultStripeGateway">
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
     </bean>
 
     <bean id="stripeClient" class="com.stripe.core.stripe.StripeClient">
@@ -13,6 +20,7 @@
 
     <bean id="stripePaymentProvider" class="com.stripe.core.stripe.StripePaymentProvider">
         <property name="stripeClient" ref="stripeClient"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="modelService" ref="modelService"/>
     </bean>
 
