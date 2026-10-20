@@ -20,6 +20,8 @@ import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
 import de.hybris.bootstrap.annotations.UnitTest;
@@ -47,10 +49,16 @@ import de.hybris.platform.servicelayer.search.SearchResult;
 import de.hybris.platform.servicelayer.search.impl.SearchResultImpl;
 import de.hybris.platform.site.BaseSiteService;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -105,6 +113,10 @@ public class DefaultStripeOrderPlacementServiceTest
 		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
 		paymentInfoUpdater.setModelService(modelService);
 		service.setStripePaymentInfoUpdater(paymentInfoUpdater);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(amountConverter);
+		service.setStripePaymentIntentChecks(checks);
+		service.setStripeOrderAuthorizationService(new DefaultStripeOrderAuthorizationService());
 
 		paymentIntent = new PaymentIntent();
 		paymentIntent.setId(PI_ID);
@@ -341,24 +353,136 @@ public class DefaultStripeOrderPlacementServiceTest
 	}
 
 	@Test
-	public void rejectedAuthorizationFailsAndReleasesLock() throws Exception
+	public void rejectedAuthorizationReleasesFundsAndKeepsLock() throws Exception
 	{
-		final PaymentTransactionEntryModel rejected = mock(PaymentTransactionEntryModel.class);
-		when(rejected.getTransactionStatus()).thenReturn(TransactionStatus.REJECTED.name());
-		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(rejected);
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
+
+		assertFalse(service.placeOrderFor(paymentIntent).isPresent());
+
+		verify(paymentIntentService).releaseFunds(PI_ID, "authorization-rejected");
+		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
+		verify(lockService, never()).release(anyString());
+		verify(modelService, never()).remove(cart);
+	}
+
+	@Test
+	public void errorAuthorizationIsRetried() throws Exception
+	{
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.ERROR));
 
 		try
 		{
 			service.placeOrderFor(paymentIntent);
-			fail("A rejected authorization must be thrown so the runner retries");
+			fail("An authorization in error must be thrown so the runner retries");
 		}
 		catch (final IllegalStateException expected)
 		{
 			// expected
 		}
 
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
 		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
 		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void missingAuthorizationEntryIsRetried() throws Exception
+	{
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(null);
+
+		try
+		{
+			service.placeOrderFor(paymentIntent);
+			fail("A missing authorization entry must be thrown so the runner retries");
+		}
+		catch (final IllegalStateException expected)
+		{
+			// expected
+		}
+
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void existingAuthorizationOfRefundedIntentIsNotReused() throws Exception
+	{
+		givenAcceptedAuthorizationOnCart();
+		paymentIntent.setStatus("succeeded");
+		paymentIntent.setAmountReceived(AMOUNT_MINOR);
+		paymentIntent.setLatestChargeObject(charge(500L));
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
+
+		assertFalse(service.placeOrderFor(paymentIntent).isPresent());
+
+		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
+		verify(paymentIntentService).releaseFunds(PI_ID, "authorization-rejected");
+		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void existingAuthorizationOfCapturedIntentWithAllMoneyIsReused() throws Exception
+	{
+		givenAcceptedAuthorizationOnCart();
+		paymentIntent.setStatus("succeeded");
+		paymentIntent.setAmountReceived(AMOUNT_MINOR);
+		paymentIntent.setLatestChargeObject(charge(0L));
+
+		assertSame(order, service.placeOrderFor(paymentIntent).get());
+
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void orderTotalMismatchAfterPlacementIsLogged()
+	{
+		when(order.getCurrency()).thenReturn(currency);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(AMOUNT_MINOR + 100);
+		final List<String> errors = new ArrayList<>();
+		final org.apache.logging.log4j.core.Logger logger = (org.apache.logging.log4j.core.Logger) LogManager
+				.getLogger(DefaultStripeOrderPlacementService.class);
+		final AbstractAppender appender = new AbstractAppender("placement-test", null, null, true, Property.EMPTY_ARRAY)
+		{
+			@Override
+			public void append(final LogEvent event)
+			{
+				if (Level.ERROR.equals(event.getLevel()))
+				{
+					errors.add(event.getMessage().getFormattedMessage());
+				}
+			}
+		};
+		appender.start();
+		logger.addAppender(appender);
+		try
+		{
+			assertSame(order, service.placeOrderFor(paymentIntent).get());
+		}
+		finally
+		{
+			logger.removeAppender(appender);
+			appender.stop();
+		}
+
+		assertEquals(1, errors.size());
+		assertTrue(errors.get(0).contains(PI_ID));
+		assertTrue(errors.get(0).contains("order-1"));
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		verify(recordService).linkOrder(PI_ID, order);
+	}
+
+	@Test
+	public void matchingOrderTotalLogsNoError()
+	{
+		when(order.getCurrency()).thenReturn(currency);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(AMOUNT_MINOR);
+
+		assertSame(order, service.placeOrderFor(paymentIntent).get());
+
+		verify(amountConverter).chargeAmountMinor(order);
 	}
 
 	@Test
@@ -376,12 +500,7 @@ public class DefaultStripeOrderPlacementServiceTest
 	@Test
 	public void existingAcceptedAuthorizationOfTheCartIsReused() throws Exception
 	{
-		final PaymentTransactionModel transaction = mock(PaymentTransactionModel.class);
-		when(transaction.getPaymentProvider()).thenReturn(StripeCoreConstants.STRIPE_PROVIDER);
-		when(transaction.getEntries()).thenReturn(List.of(acceptedEntry));
-		when(acceptedEntry.getType()).thenReturn(PaymentTransactionType.AUTHORIZATION);
-		when(acceptedEntry.getRequestId()).thenReturn(PI_ID);
-		when(cart.getPaymentTransactions()).thenReturn(List.of(transaction));
+		givenAcceptedAuthorizationOnCart();
 
 		assertSame(order, service.placeOrderFor(paymentIntent).get());
 
@@ -410,6 +529,31 @@ public class DefaultStripeOrderPlacementServiceTest
 		inOrder.verify(commerceCheckoutService).placeOrder(any(CommerceCheckoutParameter.class));
 		inOrder.verify(recordService).linkOrder(PI_ID, order);
 		inOrder.verify(modelService).remove(cart);
+	}
+
+	private void givenAcceptedAuthorizationOnCart()
+	{
+		final PaymentTransactionModel transaction = mock(PaymentTransactionModel.class);
+		when(transaction.getPaymentProvider()).thenReturn(StripeCoreConstants.STRIPE_PROVIDER);
+		when(transaction.getEntries()).thenReturn(List.of(acceptedEntry));
+		when(acceptedEntry.getType()).thenReturn(PaymentTransactionType.AUTHORIZATION);
+		when(acceptedEntry.getRequestId()).thenReturn(PI_ID);
+		when(cart.getPaymentTransactions()).thenReturn(List.of(transaction));
+	}
+
+	private static PaymentTransactionEntryModel entry(final TransactionStatus status)
+	{
+		final PaymentTransactionEntryModel entry = new PaymentTransactionEntryModel();
+		entry.setTransactionStatus(status.name());
+		return entry;
+	}
+
+	private static Charge charge(final long refunded)
+	{
+		final Charge charge = new Charge();
+		charge.setId("ch_1");
+		charge.setAmountRefunded(refunded);
+		return charge;
 	}
 
 	private static <T> SearchResult<T> result(final List<T> items)

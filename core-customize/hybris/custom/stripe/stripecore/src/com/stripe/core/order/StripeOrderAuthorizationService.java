@@ -1,6 +1,7 @@
 package com.stripe.core.order;
 
 import com.stripe.model.PaymentIntent;
+import de.hybris.platform.core.model.order.AbstractOrderModel;
 import de.hybris.platform.core.model.order.OrderModel;
 
 /**
@@ -10,9 +11,9 @@ import de.hybris.platform.core.model.order.OrderModel;
 public interface StripeOrderAuthorizationService
 {
 	/**
-	 * @return true when the order has an ACCEPTED AUTHORIZATION entry whose requestId is the PaymentIntent id
+	 * @return true when the cart or order has an ACCEPTED AUTHORIZATION entry whose requestId is the PaymentIntent id
 	 */
-	boolean hasAcceptedAuthorization(OrderModel order, String paymentIntentId);
+	boolean hasAcceptedAuthorization(AbstractOrderModel order, String paymentIntentId);
 
 	/**
 	 * Authorizes the Stripe charge amount of the order against the PaymentIntent, as the checkout does for a cart. Does

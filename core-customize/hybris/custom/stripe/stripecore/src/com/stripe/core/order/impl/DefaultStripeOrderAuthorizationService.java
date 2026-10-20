@@ -4,6 +4,7 @@ import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.model.PaymentIntent;
+import de.hybris.platform.core.model.order.AbstractOrderModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.payment.PaymentService;
 import de.hybris.platform.payment.dto.TransactionStatus;
@@ -34,7 +35,7 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 	private ModelService modelService;
 
 	@Override
-	public boolean hasAcceptedAuthorization(final OrderModel order, final String paymentIntentId)
+	public boolean hasAcceptedAuthorization(final AbstractOrderModel order, final String paymentIntentId)
 	{
 		final Collection<PaymentTransactionModel> transactions = order.getPaymentTransactions();
 		return transactions != null && transactions.stream()

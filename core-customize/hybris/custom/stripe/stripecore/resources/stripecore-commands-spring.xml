@@ -14,7 +14,9 @@
     </bean>
 
     <bean id="stripeAuthorizationCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeAuthorizationCommand"/>
+          class="com.stripe.core.commands.impl.StripeAuthorizationCommand">
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+    </bean>
 
     <bean id="stripeCaptureCommand" parent="abstractStripeCommand"
           class="com.stripe.core.commands.impl.StripeCaptureCommand"/>

@@ -23,6 +23,8 @@
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
         <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+        <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
     </bean>
 
     <alias name="defaultStripePlaceOrderGuard" alias="stripePlaceOrderGuard"/>

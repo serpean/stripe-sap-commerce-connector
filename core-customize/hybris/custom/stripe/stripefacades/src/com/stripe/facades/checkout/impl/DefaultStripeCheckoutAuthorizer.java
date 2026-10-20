@@ -6,8 +6,10 @@ import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
@@ -18,7 +20,6 @@ import de.hybris.platform.commerceservices.order.CommerceCheckoutService;
 import de.hybris.platform.commerceservices.service.data.CommerceCheckoutParameter;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.payment.dto.TransactionStatus;
-import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.util.EnumSet;
@@ -45,6 +46,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
 	private ModelService modelService;
 	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
+	private StripePaymentIntentChecks stripePaymentIntentChecks;
+	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 
 	@Override
 	public boolean authorize(final CartModel cart)
@@ -54,7 +57,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		final PaymentIntent intent = stripeGateway.retrievePaymentIntent(paymentIntentId);
 		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(intent.getStatus());
 
-		if (!matchesCart(intent, cart))
+		if (!stripePaymentIntentChecks.matchesAmount(cart, intent))
 		{
 			if (WITH_MONEY.contains(status))
 			{
@@ -94,7 +97,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		{
 			case AUTHORIZED:
 			case CAPTURED:
-				if (hasAcceptedAuthorization(cart, intent.getId()))
+				if (stripeOrderAuthorizationService.hasAcceptedAuthorization(cart, intent.getId())
+						&& stripePaymentIntentChecks.holdsAllMoney(intent))
 				{
 					LOG.info("Cart {} already has an accepted authorization of payment intent {}", cart.getCode(),
 							intent.getId());
@@ -110,7 +114,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 						? StripePaymentIntentState.CAPTURED : StripePaymentIntentState.AUTHORIZED);
 				return true;
 			case PROCESSING:
-				if (hasAcceptedAuthorization(cart, intent.getId()))
+				if (stripeOrderAuthorizationService.hasAcceptedAuthorization(cart, intent.getId()))
 				{
 					LOG.warn("Cart {} has an accepted authorization of payment intent {}, which is processing again",
 							cart.getCode(), intent.getId());
@@ -179,26 +183,6 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		throw new StripeCheckoutException(Reason.PAYMENT_NOT_FOUND, "Cart " + cart.getCode() + " has no payment intent");
 	}
 
-	/**
-	 * {@code true} when an earlier call authorized this PaymentIntent for the cart and the order placement then failed
-	 * and gave back the lock. The retry, which holds the lock again, reuses that authorization.
-	 */
-	private boolean hasAcceptedAuthorization(final CartModel cart, final String paymentIntentId)
-	{
-		return cart.getPaymentTransactions() != null && cart.getPaymentTransactions().stream()
-				.filter(transaction -> StripeCoreConstants.STRIPE_PROVIDER.equals(transaction.getPaymentProvider()))
-				.filter(transaction -> transaction.getEntries() != null)
-				.flatMap(transaction -> transaction.getEntries().stream())
-				.anyMatch(entry -> PaymentTransactionType.AUTHORIZATION.equals(entry.getType())
-						&& paymentIntentId.equals(entry.getRequestId()) && isAccepted(entry));
-	}
-
-	private boolean matchesCart(final PaymentIntent intent, final CartModel cart)
-	{
-		return intent.getAmount() != null && intent.getAmount() == stripeAmountConverter.chargeAmountMinor(cart)
-				&& cart.getCurrency().getIsocode().equalsIgnoreCase(intent.getCurrency());
-	}
-
 	private boolean isAccepted(final PaymentTransactionEntryModel entry)
 	{
 		return entry != null && TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus());
@@ -242,5 +226,15 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
 	{
 		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
+	}
+
+	public void setStripePaymentIntentChecks(final StripePaymentIntentChecks stripePaymentIntentChecks)
+	{
+		this.stripePaymentIntentChecks = stripePaymentIntentChecks;
+	}
+
+	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
+	{
+		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
 	}
 }

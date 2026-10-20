@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.SubscriptionAuthorizationRequest;
@@ -30,6 +31,9 @@ public class StripeAuthorizationCommandTest
 	{
 		gateway = mock(StripeGateway.class);
 		command = wire(new StripeAuthorizationCommand(), gateway);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(command.getStripeAmountConverter());
+		command.setStripePaymentIntentChecks(checks);
 	}
 
 	@Test

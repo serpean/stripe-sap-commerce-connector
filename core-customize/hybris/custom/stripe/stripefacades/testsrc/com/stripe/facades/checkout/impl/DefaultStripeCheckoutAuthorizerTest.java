@@ -21,9 +21,12 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
+import com.stripe.core.order.impl.DefaultStripeOrderAuthorizationService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.facades.checkout.StripeCheckoutException;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
 import de.hybris.bootstrap.annotations.UnitTest;
@@ -98,6 +101,10 @@ public class DefaultStripeCheckoutAuthorizerTest
 		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
 		paymentInfoUpdater.setModelService(mock(ModelService.class));
 		authorizer.setStripePaymentInfoUpdater(paymentInfoUpdater);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(converter);
+		authorizer.setStripePaymentIntentChecks(checks);
+		authorizer.setStripeOrderAuthorizationService(new DefaultStripeOrderAuthorizationService());
 	}
 
 	@Test
@@ -308,6 +315,35 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
+	public void existingAuthorizationOfRefundedIntentIsNotReused()
+	{
+		final PaymentIntent intent = givenIntent("succeeded", 1999L, "eur");
+		intent.setAmountReceived(1999L);
+		intent.setLatestChargeObject(charge(500L));
+		givenAcceptedAuthorization(PI_ID);
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
+
+		assertFalse(authorizer.authorize(cart));
+
+		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
+		verify(lockService).release(PI_ID);
+	}
+
+	@Test
+	public void existingAuthorizationOfCapturedIntentWithAllMoneyIsReused()
+	{
+		final PaymentIntent intent = givenIntent("succeeded", 1999L, "eur");
+		intent.setAmountReceived(1999L);
+		intent.setLatestChargeObject(charge(0L));
+		givenAcceptedAuthorization(PI_ID);
+
+		assertTrue(authorizer.authorize(cart));
+
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
 	public void cartWithoutPaymentIntentThrowsPaymentNotFound()
 	{
 		paymentInfo.setStripePaymentIntentId(null);
@@ -369,6 +405,14 @@ public class DefaultStripeCheckoutAuthorizerTest
 		transaction.setPaymentProvider("Stripe");
 		transaction.setEntries(List.of(entry));
 		cart.setPaymentTransactions(List.of(transaction));
+	}
+
+	private static Charge charge(final long refunded)
+	{
+		final Charge charge = new Charge();
+		charge.setId("ch_1");
+		charge.setAmountRefunded(refunded);
+		return charge;
 	}
 
 	private PaymentMethod paymentMethod(final String type, final String id)

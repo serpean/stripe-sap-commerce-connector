@@ -3,11 +3,13 @@ package com.stripe.core.order.impl;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
@@ -22,7 +24,6 @@ import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.order.InvalidCartException;
 import de.hybris.platform.payment.dto.TransactionStatus;
-import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.search.FlexibleSearchQuery;
@@ -46,15 +47,17 @@ import org.slf4j.LoggerFactory;
  * its code and site with a FlexibleSearch, because a cart service needs a session user or the user model, and the
  * webhook has neither. The cart must hold the PaymentIntent in its Stripe payment info.
  * <p>
- * When there is no cart for the PaymentIntent, or the amount or currency of the PaymentIntent is not the charge amount
- * of the cart, the funds are released and no order is placed. The lock stays: the decision for the PaymentIntent is
- * made. Any other failure after the lock is thrown, so the webhook runner tries again; the lock is given back only
- * when no live order exists for the PaymentIntent.
+ * When there is no cart for the PaymentIntent, the amount or currency of the PaymentIntent is not the charge amount of
+ * the cart, or the authorization is rejected, the funds are released and no order is placed. The lock stays: the
+ * decision for the PaymentIntent is made. Any other failure after the lock is thrown, so the webhook runner tries
+ * again; the lock is given back only when no live order exists for the PaymentIntent. After the placement, an order
+ * total that is not the amount of the PaymentIntent is logged as an error.
  */
 public class DefaultStripeOrderPlacementService implements StripeOrderPlacementService
 {
 	static final String CART_NOT_FOUND = "cart-not-found";
 	static final String AMOUNT_MISMATCH = "amount-mismatch";
+	static final String AUTHORIZATION_REJECTED = "authorization-rejected";
 
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeOrderPlacementService.class);
 
@@ -72,6 +75,8 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	private StripeAmountConverter stripeAmountConverter;
 	private ModelService modelService;
 	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
+	private StripePaymentIntentChecks stripePaymentIntentChecks;
+	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 
 	@Override
 	public Optional<OrderModel> placeOrderFor(final PaymentIntent paymentIntent)
@@ -117,7 +122,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 			return Optional.empty();
 		}
 		final CartModel cart = found.get();
-		if (!matchesCart(paymentIntent, cart))
+		if (!stripePaymentIntentChecks.matchesAmount(cart, paymentIntent))
 		{
 			LOG.warn("Payment intent {} has {} {} but cart {} must charge {} {}: releasing the funds", paymentIntentId,
 					paymentIntent.getAmount(), paymentIntent.getCurrency(), cart.getCode(),
@@ -128,15 +133,40 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		}
 
 		final OrderModel order = placeInCartContext(cart, paymentIntent, status);
+		if (order == null)
+		{
+			LOG.error("Authorization of payment intent {} for cart {} was rejected: releasing the funds", paymentIntentId,
+					cart.getCode());
+			stripePaymentIntentService.releaseFunds(paymentIntentId, AUTHORIZATION_REJECTED);
+			return Optional.empty();
+		}
 		stripePaymentIntentRecordService.linkOrder(paymentIntentId, order);
 		modelService.remove(cart);
 		LOG.info("Order {} placed from cart {} for payment intent {}", order.getCode(), cart.getCode(), paymentIntentId);
+		checkOrderTotal(order, paymentIntent);
 		return Optional.of(order);
+	}
+
+	/**
+	 * The order total must be the amount of the PaymentIntent. A difference is logged for the merchant; the order stays,
+	 * and the cancellation and refund process handles adjustments.
+	 */
+	protected void checkOrderTotal(final OrderModel order, final PaymentIntent paymentIntent)
+	{
+		if (!stripePaymentIntentChecks.matchesAmount(order, paymentIntent))
+		{
+			LOG.error("Order {} must charge {} {} but payment intent {} has {} {}", order.getCode(),
+					stripeAmountConverter.chargeAmountMinor(order),
+					order.getCurrency() == null ? null : order.getCurrency().getIsocode(), paymentIntent.getId(),
+					paymentIntent.getAmount(), paymentIntent.getCurrency());
+		}
 	}
 
 	/**
 	 * Copies the card display data to the payment info of the cart, authorizes and places the order, as the customer of
 	 * the cart. The copy comes first, so the payment info that the order clones has it.
+	 *
+	 * @return the placed order, or null when the authorization was rejected
 	 */
 	protected OrderModel placeInCartContext(final CartModel cart, final PaymentIntent paymentIntent,
 			final StripePaymentIntentStatus status)
@@ -152,8 +182,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		{
 			return impersonationService.<OrderModel, InvalidCartException> executeInContext(context, () -> {
 				stripePaymentInfoUpdater.copyPaymentMethod((StripePaymentInfoModel) cart.getPaymentInfo(), paymentIntent);
-				authorize(cart, paymentIntentId, status);
-				return placeOrder(cart);
+				return authorize(cart, paymentIntent, status) ? placeOrder(cart) : null;
 			});
 		}
 		catch (final InvalidCartException e)
@@ -165,20 +194,27 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 
 	/**
 	 * Authorizes a paid PaymentIntent as the checkout does. A processing payment gets no AUTHORIZATION entry: the order
-	 * waits for the payment.
+	 * waits for the payment. An ACCEPTED authorization already on the cart is used again only when the PaymentIntent
+	 * still holds all its money.
+	 *
+	 * @return false when the authorization was rejected (a final answer)
+	 * @throws IllegalStateException when there is no entry or the entry is not ACCEPTED or REJECTED (for example, Stripe
+	 *            was not reachable): a retry can help
 	 */
-	protected void authorize(final CartModel cart, final String paymentIntentId, final StripePaymentIntentStatus status)
+	protected boolean authorize(final CartModel cart, final PaymentIntent paymentIntent, final StripePaymentIntentStatus status)
 	{
+		final String paymentIntentId = paymentIntent.getId();
 		if (status == StripePaymentIntentStatus.PROCESSING)
 		{
 			LOG.info("Payment intent {} of cart {} is processing: the order is placed without authorization",
 					paymentIntentId, cart.getCode());
-			return;
+			return true;
 		}
-		if (hasAcceptedAuthorization(cart, paymentIntentId))
+		if (stripeOrderAuthorizationService.hasAcceptedAuthorization(cart, paymentIntentId)
+				&& stripePaymentIntentChecks.holdsAllMoney(paymentIntent))
 		{
 			LOG.info("Cart {} already has an accepted authorization of payment intent {}", cart.getCode(), paymentIntentId);
-			return;
+			return true;
 		}
 		final CommerceCheckoutParameter parameter = new CommerceCheckoutParameter();
 		parameter.setCart(cart);
@@ -186,11 +222,16 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		parameter.setAuthorizationAmount(stripeAmountConverter.chargeAmount(cart));
 		parameter.setPaymentProvider(StripeCoreConstants.STRIPE_PROVIDER);
 		final PaymentTransactionEntryModel entry = commerceCheckoutService.authorizePayment(parameter);
-		if (!isAccepted(entry))
+		if (entry != null && TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus()))
 		{
-			throw new IllegalStateException("Authorization of payment intent " + paymentIntentId + " for cart "
-					+ cart.getCode() + " was not accepted: " + (entry == null ? "no entry" : entry.getTransactionStatus()));
+			return true;
 		}
+		if (entry != null && TransactionStatus.REJECTED.name().equals(entry.getTransactionStatus()))
+		{
+			return false;
+		}
+		throw new IllegalStateException("Authorization of payment intent " + paymentIntentId + " for cart " + cart.getCode()
+				+ " did not finish: " + (entry == null ? "no entry" : entry.getTransactionStatus()));
 	}
 
 	protected OrderModel placeOrder(final CartModel cart) throws InvalidCartException
@@ -293,27 +334,6 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		return cart.getSite() == null ? null : cart.getSite().getDefaultLanguage();
 	}
 
-	private boolean matchesCart(final PaymentIntent paymentIntent, final CartModel cart)
-	{
-		return paymentIntent.getAmount() != null && paymentIntent.getAmount() == stripeAmountConverter.chargeAmountMinor(cart)
-				&& cart.getCurrency().getIsocode().equalsIgnoreCase(paymentIntent.getCurrency());
-	}
-
-	private boolean hasAcceptedAuthorization(final CartModel cart, final String paymentIntentId)
-	{
-		return cart.getPaymentTransactions() != null && cart.getPaymentTransactions().stream()
-				.filter(transaction -> StripeCoreConstants.STRIPE_PROVIDER.equals(transaction.getPaymentProvider()))
-				.filter(transaction -> transaction.getEntries() != null)
-				.flatMap(transaction -> transaction.getEntries().stream())
-				.anyMatch(entry -> PaymentTransactionType.AUTHORIZATION.equals(entry.getType())
-						&& paymentIntentId.equals(entry.getRequestId()) && isAccepted(entry));
-	}
-
-	private static boolean isAccepted(final PaymentTransactionEntryModel entry)
-	{
-		return entry != null && TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus());
-	}
-
 	public void setFlexibleSearchService(final FlexibleSearchService flexibleSearchService)
 	{
 		this.flexibleSearchService = flexibleSearchService;
@@ -362,5 +382,15 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
 	{
 		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
+	}
+
+	public void setStripePaymentIntentChecks(final StripePaymentIntentChecks stripePaymentIntentChecks)
+	{
+		this.stripePaymentIntentChecks = stripePaymentIntentChecks;
+	}
+
+	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
+	{
+		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
 	}
 }
