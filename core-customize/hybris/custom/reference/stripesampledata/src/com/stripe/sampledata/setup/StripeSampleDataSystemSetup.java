@@ -15,6 +15,8 @@ import de.hybris.platform.core.initialization.SystemSetup.Type;
 public class StripeSampleDataSystemSetup
 {
 	private static final String STORE_IMPEX = "/stripesampledata/import/sampledata/stores/electronics/store.impex";
+	private static final String PRICES_IMPEX = "/stripesampledata/import/sampledata/stores/electronics/prices.impex";
+	private static final String WAREHOUSES_IMPEX = "/stripesampledata/import/sampledata/stores/electronics/warehouses.impex";
 	private static final String OAUTH_CLIENTS_IMPEX = "/stripesampledata/import/common/oauth-clients.impex";
 
 	private SetupImpexService setupImpexService;
@@ -23,6 +25,8 @@ public class StripeSampleDataSystemSetup
 	public void importStripeSampleData()
 	{
 		setupImpexService.importImpexFile(STORE_IMPEX, true);
+		setupImpexService.importImpexFile(PRICES_IMPEX, true);
+		setupImpexService.importImpexFile(WAREHOUSES_IMPEX, true);
 		setupImpexService.importImpexFile(OAUTH_CLIENTS_IMPEX, true);
 	}
 
