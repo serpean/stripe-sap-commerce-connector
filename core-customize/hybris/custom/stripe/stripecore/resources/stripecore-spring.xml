@@ -66,6 +66,17 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
+    <alias name="defaultStripePaymentIntentRecordService" alias="stripePaymentIntentRecordService"/>
+    <bean id="defaultStripePaymentIntentRecordService"
+          class="com.stripe.core.payment.impl.DefaultStripePaymentIntentRecordService">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
     <alias name="defaultStripeOrderPlacementLockService" alias="stripeOrderPlacementLockService"/>
     <bean id="defaultStripeOrderPlacementLockService"
           class="com.stripe.core.order.impl.DefaultStripeOrderPlacementLockService">

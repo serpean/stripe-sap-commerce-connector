@@ -1,8 +1,8 @@
 package com.stripe.facades.order.impl;
 
 import com.stripe.core.model.StripePaymentInfoModel;
-import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
+import com.stripe.facades.order.StripePlaceOrderGuard;
 import de.hybris.platform.acceleratorfacades.order.impl.DefaultAcceleratorCheckoutFacade;
 import de.hybris.platform.commercefacades.order.data.OrderData;
 import de.hybris.platform.core.model.order.CartModel;
@@ -11,13 +11,13 @@ import org.apache.commons.lang3.StringUtils;
 
 /**
  * {@link DefaultAcceleratorCheckoutFacade} that authorizes a cart with a Stripe payment info through the
- * {@link StripeCheckoutAuthorizer}, and gives back the placement lock when the order is not placed. Other payment
- * infos use the standard SAP behavior.
+ * {@link StripeCheckoutAuthorizer}, and places its order through the {@link StripePlaceOrderGuard}. Other payment infos
+ * use the standard SAP behavior.
  */
 public class StripeAcceleratorCheckoutFacade extends DefaultAcceleratorCheckoutFacade
 {
 	private StripeCheckoutAuthorizer stripeCheckoutAuthorizer;
-	private StripeOrderPlacementLockService stripeOrderPlacementLockService;
+	private StripePlaceOrderGuard stripePlaceOrderGuard;
 
 	@Override
 	public boolean authorizePayment(final String securityCode)
@@ -31,8 +31,7 @@ public class StripeAcceleratorCheckoutFacade extends DefaultAcceleratorCheckoutF
 	}
 
 	/**
-	 * Places the order of a Stripe cart. When no order is placed, gives back the placement lock of the PaymentIntent, so
-	 * that the customer can try again at once.
+	 * Places the order of a Stripe cart through the {@link StripePlaceOrderGuard}.
 	 */
 	@Override
 	public OrderData placeOrder() throws InvalidCartException
@@ -42,20 +41,7 @@ public class StripeAcceleratorCheckoutFacade extends DefaultAcceleratorCheckoutF
 		{
 			return super.placeOrder();
 		}
-		boolean placed = false;
-		try
-		{
-			final OrderData order = super.placeOrder();
-			placed = order != null;
-			return order;
-		}
-		finally
-		{
-			if (!placed)
-			{
-				stripeOrderPlacementLockService.release(paymentIntentId);
-			}
-		}
+		return stripePlaceOrderGuard.placeOrder(paymentIntentId, super::placeOrder);
 	}
 
 	private String stripePaymentIntentId(final CartModel cart)
@@ -72,8 +58,8 @@ public class StripeAcceleratorCheckoutFacade extends DefaultAcceleratorCheckoutF
 		this.stripeCheckoutAuthorizer = stripeCheckoutAuthorizer;
 	}
 
-	public void setStripeOrderPlacementLockService(final StripeOrderPlacementLockService stripeOrderPlacementLockService)
+	public void setStripePlaceOrderGuard(final StripePlaceOrderGuard stripePlaceOrderGuard)
 	{
-		this.stripeOrderPlacementLockService = stripeOrderPlacementLockService;
+		this.stripePlaceOrderGuard = stripePlaceOrderGuard;
 	}
 }

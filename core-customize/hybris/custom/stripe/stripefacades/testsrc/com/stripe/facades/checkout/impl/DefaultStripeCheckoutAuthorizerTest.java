@@ -268,6 +268,19 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
+	public void processingIntentWithExistingEntryReturnsFalseAndReleasesLock()
+	{
+		givenIntent("processing", 1999L, "eur");
+		givenAcceptedAuthorization(PI_ID);
+
+		assertFalse(authorizer.authorize(cart));
+
+		verify(lockService).tryAcquire(PI_ID);
+		verify(lockService).release(PI_ID);
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
 	public void acceptedAuthorizationForOtherIntentDoesNotShortCircuit()
 	{
 		givenIntent("requires_capture", 1999L, "eur");

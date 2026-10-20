@@ -23,17 +23,23 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
+    <alias name="defaultStripePlaceOrderGuard" alias="stripePlaceOrderGuard"/>
+    <bean id="defaultStripePlaceOrderGuard" class="com.stripe.facades.order.StripePlaceOrderGuard">
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+    </bean>
+
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>
     <bean id="stripeCheckoutFacade" class="com.stripe.facades.order.impl.StripeCheckoutFacade" parent="defaultCheckoutFacade">
         <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
-        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
     <alias name="stripeAcceleratorCheckoutFacade" alias="acceleratorCheckoutFacade"/>
     <bean id="stripeAcceleratorCheckoutFacade" class="com.stripe.facades.order.impl.StripeAcceleratorCheckoutFacade"
           parent="defaultAcceleratorCheckoutFacade">
         <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
-        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
     <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>

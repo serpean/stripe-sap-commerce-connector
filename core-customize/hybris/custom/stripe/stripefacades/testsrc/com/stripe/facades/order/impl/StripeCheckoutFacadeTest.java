@@ -14,7 +14,9 @@ import static org.mockito.Mockito.when;
 
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
+import com.stripe.facades.order.StripePlaceOrderGuard;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.acceleratorservices.uiexperience.UiExperienceService;
 import de.hybris.platform.commercefacades.order.data.OrderData;
@@ -33,6 +35,7 @@ import de.hybris.platform.order.CartService;
 import de.hybris.platform.order.InvalidCartException;
 import de.hybris.platform.servicelayer.dto.converter.Converter;
 import de.hybris.platform.servicelayer.model.ModelService;
+import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -41,6 +44,7 @@ public class StripeCheckoutFacadeTest
 {
 	private StripeCheckoutAuthorizer authorizer;
 	private StripeOrderPlacementLockService lockService;
+	private StripePaymentIntentRecordService recordService;
 	private CommerceCheckoutService commerceCheckoutService;
 	private CheckoutCustomerStrategy checkoutCustomerStrategy;
 	private CartModel cart;
@@ -55,6 +59,10 @@ public class StripeCheckoutFacadeTest
 	{
 		authorizer = mock(StripeCheckoutAuthorizer.class);
 		lockService = mock(StripeOrderPlacementLockService.class);
+		recordService = mock(StripePaymentIntentRecordService.class);
+		final StripePlaceOrderGuard guard = new StripePlaceOrderGuard();
+		guard.setStripeOrderPlacementLockService(lockService);
+		guard.setStripePaymentIntentRecordService(recordService);
 		commerceCheckoutService = mock(CommerceCheckoutService.class);
 		checkoutCustomerStrategy = mock(CheckoutCustomerStrategy.class);
 		customer = new CustomerModel();
@@ -65,10 +73,10 @@ public class StripeCheckoutFacadeTest
 
 		checkoutFacade = new StripeCheckoutFacade();
 		checkoutFacade.setStripeCheckoutAuthorizer(authorizer);
-		checkoutFacade.setStripeOrderPlacementLockService(lockService);
+		checkoutFacade.setStripePlaceOrderGuard(guard);
 		acceleratorCheckoutFacade = new StripeAcceleratorCheckoutFacade();
 		acceleratorCheckoutFacade.setStripeCheckoutAuthorizer(authorizer);
-		acceleratorCheckoutFacade.setStripeOrderPlacementLockService(lockService);
+		acceleratorCheckoutFacade.setStripePlaceOrderGuard(guard);
 		final UiExperienceService uiExperienceService = mock(UiExperienceService.class);
 		when(uiExperienceService.getUiExperienceLevel()).thenReturn(UiExperienceLevel.DESKTOP);
 		acceleratorCheckoutFacade.setUiExperienceService(uiExperienceService);
@@ -128,7 +136,7 @@ public class StripeCheckoutFacadeTest
 	}
 
 	@Test
-	public void placeOrderFailureReleasesLock() throws InvalidCartException
+	public void placeOrderFailureWithoutOrderReleasesLock() throws InvalidCartException
 	{
 		givenStripeCart("pi_place");
 		when(commerceCheckoutService.placeOrder(any(CommerceCheckoutParameter.class)))
@@ -137,6 +145,35 @@ public class StripeCheckoutFacadeTest
 		assertThrows(InvalidCartException.class, () -> checkoutFacade.placeOrder());
 
 		verify(lockService).release("pi_place");
+		verify(recordService, never()).linkOrder(anyString(), any(OrderModel.class));
+	}
+
+	@Test
+	public void placeOrderFailureAfterOrderSavedKeepsLock() throws InvalidCartException
+	{
+		givenStripeCart("pi_place");
+		final OrderModel order = new OrderModel();
+		when(recordService.findLiveOrder("pi_place")).thenReturn(Optional.of(order));
+		when(commerceCheckoutService.placeOrder(any(CommerceCheckoutParameter.class)))
+				.thenThrow(new IllegalStateException("submit failed"));
+
+		assertThrows(IllegalStateException.class, () -> checkoutFacade.placeOrder());
+
+		verify(lockService, never()).release(anyString());
+		verify(recordService).linkOrder("pi_place", order);
+	}
+
+	@Test
+	public void placeOrderLookupFailureKeepsLock() throws InvalidCartException
+	{
+		givenStripeCart("pi_place");
+		when(recordService.findLiveOrder("pi_place")).thenThrow(new IllegalStateException("database down"));
+		when(commerceCheckoutService.placeOrder(any(CommerceCheckoutParameter.class)))
+				.thenThrow(new InvalidCartException("invalid"));
+
+		assertThrows(InvalidCartException.class, () -> checkoutFacade.placeOrder());
+
+		verify(lockService, never()).release(anyString());
 	}
 
 	@Test
@@ -151,18 +188,20 @@ public class StripeCheckoutFacadeTest
 	}
 
 	@Test
-	public void placeOrderSuccessKeepsLock() throws InvalidCartException
+	public void placeOrderSuccessLinksRecordToOrder() throws InvalidCartException
 	{
 		givenStripeCart("pi_place");
 		final OrderModel order = new OrderModel();
 		final CommerceOrderResult result = new CommerceOrderResult();
 		result.setOrder(order);
 		when(commerceCheckoutService.placeOrder(any(CommerceCheckoutParameter.class))).thenReturn(result);
+		when(recordService.findLiveOrder("pi_place")).thenReturn(Optional.of(order));
 		final OrderData orderData = new OrderData();
 		when(orderConverter.convert(order)).thenReturn(orderData);
 
 		assertSame(orderData, checkoutFacade.placeOrder());
 
+		verify(recordService).linkOrder("pi_place", order);
 		verify(lockService, never()).release(anyString());
 	}
 
