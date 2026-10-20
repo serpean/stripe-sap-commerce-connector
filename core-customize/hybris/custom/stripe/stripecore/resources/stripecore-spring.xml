@@ -89,8 +89,20 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
-    <!-- stripeOrderPlacementService (Task 11) and stripeOrderCancellationService (Task 12) are added as properties
-         of this bean by the tasks that define those beans. -->
+    <alias name="defaultStripeOrderPlacementService" alias="stripeOrderPlacementService"/>
+    <bean id="defaultStripeOrderPlacementService" class="com.stripe.core.order.impl.DefaultStripeOrderPlacementService">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="baseSiteService" ref="baseSiteService"/>
+        <property name="impersonationService" ref="impersonationService"/>
+        <property name="commerceCheckoutService" ref="commerceCheckoutService"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <!-- stripeOrderCancellationService (Task 12) is added as a property of this bean by the task that defines it. -->
     <alias name="defaultStripePaymentIntentEventHandler" alias="stripePaymentIntentEventHandler"/>
     <bean id="defaultStripePaymentIntentEventHandler"
           class="com.stripe.core.webhook.impl.DefaultStripePaymentIntentEventHandler">
@@ -100,6 +112,7 @@
         <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+        <property name="stripeOrderPlacementService" ref="stripeOrderPlacementService"/>
         <property name="modelService" ref="modelService"/>
         <property name="timeService" ref="timeService"/>
     </bean>
