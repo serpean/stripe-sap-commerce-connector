@@ -82,7 +82,7 @@ El pedido solo se crea cuando Stripe ha aceptado el pago, o cuando lo está proc
 
 ### 6.4 Sin duplicados
 
-- El id del PaymentIntent se guarda en el pedido con un **índice único en la base de datos** (*decisión del diseñador*: atributo nuevo en `AbstractOrder` o en `StripePaymentInfo`, al constructor le toca elegir dónde). Si la vuelta del cliente y el webhook intentan crear el pedido a la vez, solo uno lo consigue, incluso con varios nodos en CCv2. El otro detecta el pedido existente y no hace nada.
+- El id del PaymentIntent tiene un **índice único en la base de datos**, en un **tipo propio** del conector, no en `AbstractOrder` ni en `PaymentInfo`. Motivo (análisis de SAP 2211.55): cada cancelación y devolución clona el pedido para el historial (`DefaultOrderHistoryService.createHistorySnapshot`), y el clon violaría un índice único en el pedido. Si la vuelta del cliente y el webhook intentan crear el pedido a la vez, solo uno lo consigue, incluso con varios nodos en CCv2. El otro detecta el pedido existente y no hace nada.
 
 ### 6.5 Un PaymentIntent huérfano
 
@@ -92,7 +92,8 @@ El pedido solo se crea cuando Stripe ha aceptado el pago, o cuando lo está proc
 
 ### 7.1 Autorización
 
-- Se sobrescribe el alias `commercePaymentAuthorizationStrategy` (`commerceservices-spring.xml:564`) con una estrategia de Stripe. Así llega a OCC (`checkoutFacade`) y al Accelerator (`acceleratorCheckoutFacade`). `StripeCheckoutFacade` desaparece, salvo que la sección 7.2 demuestre que hace falta algo en el facade.
+- Se sobrescribe el alias `commercePaymentAuthorizationStrategy` (`commerceservices-spring.xml:564`) con una estrategia de Stripe. Así llega a OCC (`checkoutFacade`) y al Accelerator (`acceleratorCheckoutFacade`).
+- **Hecho comprobado:** el facade (`DefaultCheckoutFacade.java:528-529`) hace un cast a `CreditCardPaymentInfoModel` antes de llegar a la estrategia, y el validador de OCC `PlaceOrderCartValidator` (`:41`) rechaza el carrito si no hay datos de tarjeta. Por eso hacen falta un bean hijo de cada facade (`checkoutFacade` y `acceleratorCheckoutFacade`) que solo sobrescribe `authorizePayment` para pagos de Stripe, y un validador de OCC que acepta `StripePaymentInfo`. La lógica vive en un servicio compartido; los facades solo delegan.
 - La estrategia llama a `PaymentService.authorize`, y el framework crea la entrada AUTHORIZATION. El comando de Stripe solo **consulta** el PaymentIntent ya confirmado en el navegador y devuelve el resultado. No crea entradas a mano.
 - `AuthorizationCommand` frente a `SubscriptionAuthorizationCommand`: el constructor elige el que encaje mejor. La regla es que el id del PaymentIntent tiene que viajar en la petición y quedar en `requestId` de la entrada. Nota del análisis: `SubscriptionAuthorizationCommand` usa `subscriptionId`, lo que es un uso forzado del nombre.
 
@@ -110,7 +111,8 @@ El pedido solo se crea cuando Stripe ha aceptado el pago, o cuando lo está proc
 
 ### 7.3 Order process y pagos pendientes
 
-- **No se usa `REVIEW` para los pagos pendientes.** En SAP, `REVIEW` dispara la revisión de fraude. *Decisión del diseñador*: el estado de un pago pendiente tiene que ser uno que el order process trate como "esperar al PSP" sin crear tickets de fraude. El constructor elige el mecanismo estándar más pequeño. Ejemplo: una acción propia antes de `checkTransactionReviewStatus` que espera en un nodo `wait` con el evento `<pedido>_StripePaymentDecision` y un plazo máximo. Hay que documentar qué estado de `TransactionStatus` se usa y por qué.
+- **No se usa `REVIEW` para los pagos pendientes.** En SAP, `REVIEW` dispara la revisión de fraude. Un pago pendiente **no tiene entrada AUTHORIZATION**; el estado "en proceso" vive en el registro propio del PaymentIntent (6.4). La entrada AUTHORIZATION aceptada se crea cuando Stripe confirma el pago.
+- **Mecanismo de espera (decisión del diseñador tras el análisis de SAP):** añadir un nodo al proceso de OMS exige copiar el proceso completo en un `DynamicProcessDefinition`, que es justo lo que el diseño quiere evitar. En su lugar, el conector envuelve la primera acción del proceso (bean `checkOrderAction`, que existe en OMS y en el clásico) con un `BeanPostProcessor`. Para un pedido de Stripe sin autorización aceptada, el envoltorio lanza `RetryLaterException` y el proceso se reintenta al cabo de un tiempo configurable. Así el plazo es una propiedad, el mismo código sirve para OMS y para el clásico, y no depende del orden de carga de las extensiones.
 - El webhook, cuando el pago pendiente termina, añade la entrada correspondiente y dispara el evento con `BusinessProcessService.triggerEvent`.
 - Si el pago pendiente falla, o caduca el plazo (*decisión del diseñador*: configurable, por defecto 24 horas), el pedido se cancela con el camino estándar de cancelación.
 - **Pedido con pago "en proceso" (decisión del propietario):** se crea como pedido de verdad con estado de pago pendiente. El cliente lo ve como "pago pendiente" en la confirmación y en su cuenta. Si el banco lo rechaza, pasa a "cancelado: pago rechazado".
@@ -127,7 +129,8 @@ El pedido solo se crea cuando Stripe ha aceptado el pago, o cuando lo está proc
 ### 7.5 Captura, cancelación y devolución
 
 - Comandos del framework de pagos registrados para el proveedor `Stripe`: captura, captura parcial, void, devolución sobre un pago (follow-on refund). Ya existen capture, void y follow-on refund (`stripecore-commands-spring.xml:32-57`). Se añade la captura parcial y se revisa el mapeo de estados de cada uno. Hoy hay cuatro mapeos que no coinciden; tienen que quedar en uno.
-- **Cancelación:** con OMS, la cancelación antes de la captura llega a `VoidCommand`. La cancelación parcial se resuelve con el alias `orderCancelPaymentServiceStrategy` si hace falta (`basecommerce-spring.xml:537`).
+- **Cancelación (hecho comprobado):** OMS nunca llama a `PaymentService.cancel`. La cancelación llega al pago solo por el alias `orderCancelPaymentServiceStrategy` (`basecommerce-spring.xml:537`) y, después del sourcing, por el bean `OmsOrderCancelPaymentServiceAdapter` (`warehousing-spring.xml:728-730`), que hoy solo escribe en el log. El conector sobrescribe la estrategia y envuelve ese adaptador. La estrategia ajusta el pago al nuevo total del pedido: void si no queda nada por cobrar y no hay captura; reembolso de la diferencia si ya hay captura. En el clásico, `CancelWholeOrderAuthorizationAction` sí llama a `PaymentService.cancel`, que llega a `VoidCommand`.
+- **Captura con cancelación parcial previa:** la captura cobra el total actual del pedido, no el importe autorizado. Así nunca se cobra más que el pedido.
 - **Cancelación con el dinero ya cobrado (decisión del propietario):** en modo `automatic`, y con métodos que no admiten reserva (Bancontact), el PaymentIntent ya está `succeeded` al crear el pedido, y Stripe no permite anularlo. En ese caso la cancelación hace un **reembolso completo** y lo registra como entrada de devolución en la transacción del pedido. La cancelación nunca deja el dinero cobrado sin pedido activo.
 - **Devolución:** con OMS, `CaptureRefundAction` de `yacceleratorordermanagement` llama a `paymentService.refundFollowOn` y llega a Stripe. El conector no copia esa acción.
 - **Fulfilment clásico:** la acción de devolución de SAP es un mock. El conector no la sustituye. El README explica que el cliente tiene que cambiarla por una que llame a `refundFollowOn`.
