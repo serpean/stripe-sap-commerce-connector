@@ -48,5 +48,15 @@
         <property name="stripeClient" ref="stripeClient"/>
     </bean>
 
+    <alias name="defaultStripePaymentIntentRecordDao" alias="stripePaymentIntentRecordDao"/>
+    <bean id="defaultStripePaymentIntentRecordDao" class="com.stripe.core.dao.impl.DefaultStripePaymentIntentRecordDao">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
+    <alias name="defaultStripeWebhookEventDao" alias="stripeWebhookEventDao"/>
+    <bean id="defaultStripeWebhookEventDao" class="com.stripe.core.dao.impl.DefaultStripeWebhookEventDao">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
     <import resource="stripecore-commands-spring.xml"/>
 </beans>

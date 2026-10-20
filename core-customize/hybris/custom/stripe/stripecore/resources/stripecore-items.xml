@@ -3,9 +3,20 @@
        xsi:noNamespaceSchemaLocation="items.xsd">
 
     <enumtypes>
-        <enumtype code="StripeCaptureMode">
-            <value code="automatic"/>
-            <value code="manual"/>
+        <enumtype code="StripePaymentIntentState" dynamic="true">
+            <value code="CREATED"/>
+            <value code="PROCESSING"/>
+            <value code="AUTHORIZED"/>
+            <value code="CAPTURED"/>
+            <value code="FAILED"/>
+            <value code="CANCELED"/>
+            <value code="REFUNDED"/>
+        </enumtype>
+        <enumtype code="StripeWebhookEventState" dynamic="true">
+            <value code="RECEIVED"/>
+            <value code="PROCESSED"/>
+            <value code="IGNORED"/>
+            <value code="FAILED"/>
         </enumtype>
     </enumtypes>
 
@@ -13,27 +24,153 @@
         <typegroup name="PaymentInfo">
             <itemtype code="StripePaymentInfo" extends="PaymentInfo">
                 <description>
-                    Genric PaymentInfo for all Stripe-managed methods (card, PayPal, APMs, wallets).
-                    Avoids method-specific fields.
+                    Generic PaymentInfo for all Stripe-managed methods (card, PayPal, APMs, wallets).
                 </description>
                 <attributes>
                     <attribute qualifier="stripePaymentIntentId" type="java.lang.String">
                         <persistence type="property"/>
                         <modifiers optional="true" write="true" read="true" search="true"/>
                     </attribute>
+                    <attribute qualifier="paymentMethodType" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="paymentMethodId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="cardBrand" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="cardLast4" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="cardExpMonth" type="java.lang.Integer">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="cardExpYear" type="java.lang.Integer">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
                 </attributes>
             </itemtype>
         </typegroup>
 
-        <typegroup name="Payment">
-            <itemtype code="PaymentTransaction" autocreate="false" generate="false">
+        <typegroup name="StripeRecords">
+            <itemtype code="StripePaymentIntentRecord" extends="GenericItem" autocreate="true" generate="true">
+                <description>
+                    Own record of a Stripe PaymentIntent. Holds the unique PaymentIntent id outside the
+                    order, because SAP clones orders for history snapshots.
+                </description>
+                <deployment table="stripe_pi_record" typecode="29100"/>
                 <attributes>
-                    <attribute qualifier="stripeCaptureMode" type="StripeCaptureMode">
+                    <attribute qualifier="paymentIntentId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="false" initial="true"/>
+                    </attribute>
+                    <attribute qualifier="cartCode" type="java.lang.String">
                         <persistence type="property"/>
                         <modifiers optional="true"/>
-                        <description>automatic/manual</description>
+                    </attribute>
+                    <attribute qualifier="baseSiteUid" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="userUid" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="currencyIso" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="amount" type="java.lang.Long">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                        <description>Amount in minor units.</description>
+                    </attribute>
+                    <attribute qualifier="state" type="StripePaymentIntentState">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="order" type="Order">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
                     </attribute>
                 </attributes>
+                <indexes>
+                    <index name="piIdx" unique="true">
+                        <key attribute="paymentIntentId"/>
+                    </index>
+                </indexes>
+            </itemtype>
+
+            <itemtype code="StripeOrderPlacementLock" extends="GenericItem" autocreate="true" generate="true">
+                <description>
+                    Mutual exclusion for order creation of one PaymentIntent.
+                </description>
+                <deployment table="stripe_placement_lock" typecode="29101"/>
+                <attributes>
+                    <attribute qualifier="paymentIntentId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="false" initial="true"/>
+                    </attribute>
+                    <attribute qualifier="ownerNode" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                </attributes>
+                <indexes>
+                    <index name="lockIdx" unique="true">
+                        <key attribute="paymentIntentId"/>
+                    </index>
+                </indexes>
+            </itemtype>
+
+            <itemtype code="StripeWebhookEvent" extends="GenericItem" autocreate="true" generate="true">
+                <description>
+                    Stripe webhook event received, kept for deduplication and retries.
+                </description>
+                <deployment table="stripe_webhook_event" typecode="29102"/>
+                <attributes>
+                    <attribute qualifier="eventId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="false" initial="true"/>
+                    </attribute>
+                    <attribute qualifier="type" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="payload" type="java.lang.String">
+                        <persistence type="property">
+                            <columntype>
+                                <value>HYBRIS.LONG_STRING</value>
+                            </columntype>
+                        </persistence>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="state" type="StripeWebhookEventState">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="attempts" type="java.lang.Integer">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                        <defaultvalue>Integer.valueOf(0)</defaultvalue>
+                    </attribute>
+                    <attribute qualifier="lastError" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                </attributes>
+                <indexes>
+                    <index name="eventIdx" unique="true">
+                        <key attribute="eventId"/>
+                    </index>
+                </indexes>
             </itemtype>
         </typegroup>
     </itemtypes>
