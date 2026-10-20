@@ -49,6 +49,11 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
+    <alias name="defaultStripeTransactionLookup" alias="stripeTransactionLookup"/>
+    <bean id="defaultStripeTransactionLookup" class="com.stripe.core.payment.impl.DefaultStripeTransactionLookup">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
     <alias name="defaultStripeWebhookEventDao" alias="stripeWebhookEventDao"/>
     <bean id="defaultStripeWebhookEventDao" class="com.stripe.core.dao.impl.DefaultStripeWebhookEventDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>

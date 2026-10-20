@@ -26,7 +26,9 @@
           class="com.stripe.core.commands.impl.StripeVoidCommand"/>
 
     <bean id="stripeRefundCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeRefundCommand"/>
+          class="com.stripe.core.commands.impl.StripeRefundCommand">
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+    </bean>
 
     <bean id="stripeCommandFactory"
           class="de.hybris.platform.payment.commands.factory.impl.DefaultCommandFactoryImpl">

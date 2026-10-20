@@ -16,7 +16,8 @@ import java.util.Set;
 
 /**
  * Releases the money of a PaymentIntent. An authorized PaymentIntent is canceled. A captured PaymentIntent gets a full
- * refund of the amount received, so a void never leaves money charged without an order.
+ * refund of the amount received, so a void never leaves money charged without an order. The idempotency keys depend
+ * only on the PaymentIntent, because a PaymentIntent is canceled or fully refunded only once.
  */
 public class StripeVoidCommand extends AbstractStripeCommand implements VoidCommand
 {
@@ -27,7 +28,6 @@ public class StripeVoidCommand extends AbstractStripeCommand implements VoidComm
 	public VoidResult perform(final VoidRequest request)
 	{
 		final String paymentIntentId = requirePaymentIntentId(request.getRequestId());
-		final String key = idempotencyKey("void-", request);
 		final VoidResult result = new VoidResult();
 		result.setRequestId(paymentIntentId);
 		result.setRequestToken(paymentIntentId);
@@ -44,14 +44,14 @@ public class StripeVoidCommand extends AbstractStripeCommand implements VoidComm
 			}
 			if (hasStatus(paymentIntent, StripePaymentIntentStatus.AUTHORIZED))
 			{
-				final PaymentIntent canceled = getStripeGateway().cancelPaymentIntent(paymentIntentId, key);
+				final PaymentIntent canceled = getStripeGateway().cancelPaymentIntent(paymentIntentId, "void-" + paymentIntentId);
 				return hasStatus(canceled, StripePaymentIntentStatus.CANCELED)
 						? fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL)
 						: fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
 			}
 			if (hasStatus(paymentIntent, StripePaymentIntentStatus.CAPTURED))
 			{
-				return refundAll(paymentIntent, key, result, request);
+				return refundAll(paymentIntent, result, request);
 			}
 			LOG.warn("PaymentIntent [{}] cannot be voided: status [{}]", paymentIntentId, paymentIntent.getStatus());
 			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
@@ -62,10 +62,10 @@ public class StripeVoidCommand extends AbstractStripeCommand implements VoidComm
 		}
 	}
 
-	private VoidResult refundAll(final PaymentIntent paymentIntent, final String key, final VoidResult result,
-			final VoidRequest request)
+	private VoidResult refundAll(final PaymentIntent paymentIntent, final VoidResult result, final VoidRequest request)
 	{
-		final Refund refund = getStripeGateway().createRefund(paymentIntent.getId(), paymentIntent.getAmountReceived(), key);
+		final Refund refund = getStripeGateway().createRefund(paymentIntent.getId(), paymentIntent.getAmountReceived(),
+				"void-refund-" + paymentIntent.getId());
 		LOG.info("Voided captured PaymentIntent [{}] with refund [{}], status [{}]", paymentIntent.getId(), refund.getId(),
 				refund.getStatus());
 		if (FAILED_REFUND_STATUSES.contains(refund.getStatus()))

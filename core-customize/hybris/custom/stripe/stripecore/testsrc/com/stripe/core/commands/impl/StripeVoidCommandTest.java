@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -38,11 +39,11 @@ public class StripeVoidCommandTest
 	public void voidCancelsAuthorizedIntent()
 	{
 		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));
-		when(gateway.cancelPaymentIntent(PI_ID, "void-txn-1-CANCEL-1")).thenReturn(intent("canceled", 1999L, "eur"));
+		when(gateway.cancelPaymentIntent(PI_ID, "void-" + PI_ID)).thenReturn(intent("canceled", 1999L, "eur"));
 
 		final VoidResult result = command.perform(request());
 
-		verify(gateway).cancelPaymentIntent(PI_ID, "void-txn-1-CANCEL-1");
+		verify(gateway).cancelPaymentIntent(PI_ID, "void-" + PI_ID);
 		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
 		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
 		assertEquals(TransactionStatusDetails.SUCCESFULL, result.getTransactionStatusDetails());
@@ -56,18 +57,35 @@ public class StripeVoidCommandTest
 		final Refund refund = new Refund();
 		refund.setId("re_1");
 		refund.setStatus("succeeded");
-		when(gateway.createRefund(PI_ID, 1999L, "void-txn-1-CANCEL-1")).thenReturn(refund);
+		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID)).thenReturn(refund);
 
 		final VoidResult result = command.perform(request());
 
-		verify(gateway).createRefund(PI_ID, 1999L, "void-txn-1-CANCEL-1");
+		verify(gateway).createRefund(PI_ID, 1999L, "void-refund-" + PI_ID);
 		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
 		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
 		assertEquals(PI_ID, result.getRequestId());
 	}
 
+	@Test
+	public void voidKeyDependsOnlyOnPaymentIntent()
+	{
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));
+		when(gateway.cancelPaymentIntent(anyString(), anyString())).thenReturn(intent("canceled", 1999L, "eur"));
+
+		command.perform(request("txn-1-CANCEL-1"));
+		command.perform(request("txn-1-CANCEL-2"));
+
+		verify(gateway, times(2)).cancelPaymentIntent(PI_ID, "void-" + PI_ID);
+	}
+
 	private static VoidRequest request()
 	{
-		return new VoidRequest("txn-1-CANCEL-1", PI_ID, PI_ID, "Stripe");
+		return request("txn-1-CANCEL-1");
+	}
+
+	private static VoidRequest request(final String merchantTransactionCode)
+	{
+		return new VoidRequest(merchantTransactionCode, PI_ID, PI_ID, "Stripe");
 	}
 }
