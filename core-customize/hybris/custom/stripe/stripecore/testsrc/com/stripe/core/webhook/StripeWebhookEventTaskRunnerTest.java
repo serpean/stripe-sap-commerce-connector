@@ -323,6 +323,27 @@ public class StripeWebhookEventTaskRunnerTest
 	}
 
 	@Test
+	public void eventLockFailureIsRetried()
+	{
+		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
+		doThrow(new IllegalStateException("lock wait timeout")).when(modelService).lock(any(PK.class));
+
+		try
+		{
+			runner.run(taskService, task);
+			fail("expected RetryLaterException");
+		}
+		catch (final RetryLaterException e)
+		{
+			assertEquals(Duration.ofSeconds(30).toMillis(), e.getDelay());
+			assertTrue(e.isRollBack());
+		}
+		assertEquals(StripeWebhookEventState.RECEIVED, event.getState());
+		verify(modelService, never()).save(event);
+		verifyNoInteractions(recordDao, gateway);
+	}
+
+	@Test
 	public void databaseWithoutRowLocksStillProcessesEvent()
 	{
 		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");

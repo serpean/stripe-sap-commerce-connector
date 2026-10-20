@@ -30,7 +30,8 @@ import org.slf4j.LoggerFactory;
  * Processes a stored Stripe webhook event (the context item of the task) and marks it PROCESSED, IGNORED or FAILED.
  * <p>
  * The task engine runs {@link #run} in one database transaction. The runner locks the event row first, so two tasks of
- * one event never run at the same time, and it skips an event that is no longer RECEIVED.
+ * one event never run at the same time, and it skips an event that is no longer RECEIVED. A failed lock (for example
+ * a lock wait timeout) is a temporary error like the others.
  * <p>
  * Failures: the attempt number comes from the engine ({@code task.retry}, which survives a rollback). A temporary
  * error rolls back all the work of the attempt and gives a {@link RetryLaterException} after 30 s, 2 min, 8 min and
@@ -67,17 +68,16 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 			return;
 		}
 		final StripeWebhookEventModel event = found.get();
-		StripeRowLocks.lockAndRefresh(modelService, event);
-		if (!StripeWebhookEventState.RECEIVED.equals(event.getState()))
-		{
-			LOG.info("Stripe webhook {} ({}) is already {}: nothing to do", event.getEventId(), event.getType(),
-					event.getState());
-			return;
-		}
-
 		final StripeWebhookOutcome outcome;
 		try
 		{
+			StripeRowLocks.lockAndRefresh(modelService, event);
+			if (!StripeWebhookEventState.RECEIVED.equals(event.getState()))
+			{
+				LOG.info("Stripe webhook {} ({}) is already {}: nothing to do", event.getEventId(), event.getType(),
+						event.getState());
+				return;
+			}
 			outcome = dispatch(event);
 		}
 		catch (final RetryLaterException gracePeriod)
