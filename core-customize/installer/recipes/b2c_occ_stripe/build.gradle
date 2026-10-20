@@ -221,7 +221,6 @@ def pl = platform {
         extName 'stripecore'
         extName 'stripefacades'
         extName 'stripeocc'
-        extName 'stripefulfilmentprocess'
 
         /* Reference project only: enables Stripe on the electronics store */
         extName 'stripesampledata'

@@ -19,17 +19,6 @@
         <property name="commonI18NService" ref="commonI18NService"/>
     </bean>
 
-    <bean id="stripeClient" class="com.stripe.core.stripe.StripeClient">
-        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
-        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
-    </bean>
-
-    <bean id="stripePaymentProvider" class="com.stripe.core.stripe.StripePaymentProvider">
-        <property name="stripeClient" ref="stripeClient"/>
-        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
-        <property name="modelService" ref="modelService"/>
-    </bean>
-
     <alias name="defaultStripePaymentIntentRecordDao" alias="stripePaymentIntentRecordDao"/>
     <bean id="defaultStripePaymentIntentRecordDao" class="com.stripe.core.dao.impl.DefaultStripePaymentIntentRecordDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
@@ -115,7 +104,16 @@
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
     </bean>
 
-    <!-- stripeOrderCancellationService (Task 12) is added as a property of this bean by the task that defines it. -->
+    <alias name="defaultStripeOrderCancellationService" alias="stripeOrderCancellationService"/>
+    <bean id="defaultStripeOrderCancellationService"
+          class="com.stripe.core.order.impl.DefaultStripeOrderCancellationService">
+        <property name="orderCancelService" ref="orderCancelService"/>
+        <property name="userService" ref="userService"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+    </bean>
+
     <alias name="defaultStripePaymentIntentEventHandler" alias="stripePaymentIntentEventHandler"/>
     <bean id="defaultStripePaymentIntentEventHandler"
           class="com.stripe.core.webhook.impl.DefaultStripePaymentIntentEventHandler">
@@ -126,6 +124,7 @@
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
         <property name="stripeOrderPlacementService" ref="stripeOrderPlacementService"/>
+        <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
         <property name="modelService" ref="modelService"/>
         <property name="timeService" ref="timeService"/>
     </bean>
@@ -141,6 +140,25 @@
         <property name="timeService" ref="timeService"/>
         <property name="stripePaymentIntentEventHandler" ref="stripePaymentIntentEventHandler"/>
         <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
+    </bean>
+
+    <!-- Order process: wraps the SAP beans checkOrderAction and takePaymentAction by name, whichever extension
+         defines them, and adds PAYMENT_PENDING to acceleratorStatusDisplayMap when that bean exists. -->
+    <bean id="stripeProcessActionsPostProcessor" class="com.stripe.core.process.StripeProcessActionsPostProcessor"/>
+
+    <bean id="stripeAwaitPaymentCheckOrderAction" class="com.stripe.core.process.StripeAwaitPaymentCheckOrderAction"
+          parent="abstractAction" scope="prototype">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+        <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="timeService" ref="timeService"/>
+    </bean>
+
+    <bean id="stripeTakePaymentAction" class="com.stripe.core.process.StripeTakePaymentAction"
+          parent="abstractAction" scope="prototype">
+        <property name="paymentService" ref="paymentService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
     <import resource="stripecore-commands-spring.xml"/>

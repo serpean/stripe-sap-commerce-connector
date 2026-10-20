@@ -3,6 +3,9 @@
        xsi:noNamespaceSchemaLocation="items.xsd">
 
     <enumtypes>
+        <enumtype code="OrderStatus" autocreate="false" generate="true" dynamic="true">
+            <value code="PAYMENT_PENDING"/>
+        </enumtype>
         <enumtype code="StripePaymentIntentState" dynamic="true">
             <value code="CREATED"/>
             <value code="PROCESSING"/>
