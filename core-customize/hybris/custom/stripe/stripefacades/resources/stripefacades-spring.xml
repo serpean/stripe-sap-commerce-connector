@@ -26,12 +26,14 @@
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>
     <bean id="stripeCheckoutFacade" class="com.stripe.facades.order.impl.StripeCheckoutFacade" parent="defaultCheckoutFacade">
         <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
     </bean>
 
     <alias name="stripeAcceleratorCheckoutFacade" alias="acceleratorCheckoutFacade"/>
     <bean id="stripeAcceleratorCheckoutFacade" class="com.stripe.facades.order.impl.StripeAcceleratorCheckoutFacade"
           parent="defaultAcceleratorCheckoutFacade">
         <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
     </bean>
 
     <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>

@@ -36,8 +36,10 @@ import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -227,15 +229,41 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
-	public void retryAfterFailedPlacementReusesExistingAuthorization()
+	public void doubleClickIsRejectedWhileFirstPlacementHoldsLock()
 	{
 		givenIntent("requires_capture", 1999L, "eur");
-		givenAcceptedAuthorization(PI_ID);
+		givenRealLockAndAuthorization();
+
+		assertTrue(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.ALREADY_PLACED);
+
+		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void retryAfterFailedPlacementReacquiresLockWithoutNewAuthorization()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		final InMemoryLock lock = givenRealLockAndAuthorization();
+		assertTrue(authorizer.authorize(cart));
+		lock.release(PI_ID);
 
 		assertTrue(authorizer.authorize(cart));
 
-		verify(lockService, never()).tryAcquire(anyString());
-		verify(lockService, never()).release(anyString());
+		assertTrue(lock.held.contains(PI_ID));
+		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void retryWithCanceledIntentDoesNotReuseAuthorization()
+	{
+		givenIntent("canceled", 1999L, "eur");
+		givenAcceptedAuthorization(PI_ID);
+
+		assertFalse(authorizer.authorize(cart));
+
+		verify(lockService).tryAcquire(PI_ID);
+		verify(lockService).release(PI_ID);
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
 	}
 
@@ -304,6 +332,17 @@ public class DefaultStripeCheckoutAuthorizerTest
 		return intent;
 	}
 
+	private InMemoryLock givenRealLockAndAuthorization()
+	{
+		final InMemoryLock lock = new InMemoryLock();
+		authorizer.setStripeOrderPlacementLockService(lock);
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenAnswer(invocation -> {
+			givenAcceptedAuthorization(PI_ID);
+			return cart.getPaymentTransactions().get(0).getEntries().get(0);
+		});
+		return lock;
+	}
+
 	private void givenAcceptedAuthorization(final String requestId)
 	{
 		final PaymentTransactionEntryModel entry = entry(TransactionStatus.ACCEPTED);
@@ -340,6 +379,23 @@ public class DefaultStripeCheckoutAuthorizerTest
 		catch (final StripeCheckoutException e)
 		{
 			assertEquals(reason, e.getReason());
+		}
+	}
+
+	private static class InMemoryLock implements StripeOrderPlacementLockService
+	{
+		private final Set<String> held = new HashSet<>();
+
+		@Override
+		public boolean tryAcquire(final String paymentIntentId)
+		{
+			return held.add(paymentIntentId);
+		}
+
+		@Override
+		public void release(final String paymentIntentId)
+		{
+			held.remove(paymentIntentId);
 		}
 	}
 }

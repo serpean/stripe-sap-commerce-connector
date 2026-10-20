@@ -65,12 +65,6 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 			return false;
 		}
 
-		if (hasAcceptedAuthorization(cart, paymentIntentId))
-		{
-			LOG.info("Cart {} already has an accepted authorization of payment intent {}", cart.getCode(), paymentIntentId);
-			return true;
-		}
-
 		if (!stripeOrderPlacementLockService.tryAcquire(paymentIntentId))
 		{
 			throw new StripeCheckoutException(Reason.ALREADY_PLACED,
@@ -99,6 +93,12 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		{
 			case AUTHORIZED:
 			case CAPTURED:
+				if (hasAcceptedAuthorization(cart, intent.getId()))
+				{
+					LOG.info("Cart {} already has an accepted authorization of payment intent {}", cart.getCode(),
+							intent.getId());
+					return true;
+				}
 				copyPaymentMethod(intent, paymentInfo);
 				if (!isAccepted(commerceCheckoutService.authorizePayment(createParameter(cart))))
 				{
@@ -109,6 +109,12 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 						? StripePaymentIntentState.CAPTURED : StripePaymentIntentState.AUTHORIZED);
 				return true;
 			case PROCESSING:
+				if (hasAcceptedAuthorization(cart, intent.getId()))
+				{
+					LOG.warn("Cart {} has an accepted authorization of payment intent {}, which is processing again",
+							cart.getCode(), intent.getId());
+					return false;
+				}
 				copyPaymentMethod(intent, paymentInfo);
 				updateRecordState(intent.getId(), StripePaymentIntentState.PROCESSING);
 				return true;
@@ -193,8 +199,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	}
 
 	/**
-	 * {@code true} when an earlier call authorized this PaymentIntent for the cart and the order placement then failed.
-	 * The lock of that call is still held, so the retry reuses the authorization.
+	 * {@code true} when an earlier call authorized this PaymentIntent for the cart and the order placement then failed
+	 * and gave back the lock. The retry, which holds the lock again, reuses that authorization.
 	 */
 	private boolean hasAcceptedAuthorization(final CartModel cart, final String paymentIntentId)
 	{
