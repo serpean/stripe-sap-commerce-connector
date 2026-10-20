@@ -1,6 +1,7 @@
 package com.stripe.core.stripe;
 
 import com.stripe.Stripe;
+import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.exception.AuthenticationException;
 import com.stripe.exception.StripeException;
@@ -18,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +34,7 @@ public class StripeClient {
     private static final int MAX_METADATA_LENGTH = 500;
 
     private StripeConfigurationService stripeConfigurationService;
+    private StripeAmountConverter stripeAmountConverter;
 
     /**
      * Ensures the PaymentIntent exists and is consistent with the desired amount/metadata.
@@ -67,7 +68,7 @@ public class StripeClient {
 
         // Create a new PI
         final PaymentIntentCreateParams.Builder createParams = PaymentIntentCreateParams.builder()
-                .setAmount(toStripeAmount(amount, resolvedCurrency))
+                .setAmount(stripeAmountConverter.toMinorUnits(amount, resolvedCurrency))
                 .setCurrency(StringUtils.lowerCase(resolvedCurrency))
                 .setAutomaticPaymentMethods(
                         PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
@@ -102,7 +103,7 @@ public class StripeClient {
                 intentId, "intent-retrieve");
         final PaymentIntentCaptureParams.Builder builder = PaymentIntentCaptureParams.builder();
         if (amount != null) {
-            builder.setAmountToCapture(toStripeAmount(amount, paymentIntent.getCurrency()));
+            builder.setAmountToCapture(stripeAmountConverter.toMinorUnits(amount, paymentIntent.getCurrency()));
         }
         return executeWithRetry(() -> paymentIntent.capture(builder.build(), options),
                 intentId, "intent-capture");
@@ -124,7 +125,7 @@ public class StripeClient {
                 .setPaymentIntent(paymentIntentId);
         final String refundOperationSuffix;
         if (amount != null) {
-            builder.setAmount(toStripeAmount(amount, paymentIntent.getCurrency()));
+            builder.setAmount(stripeAmountConverter.toMinorUnits(amount, paymentIntent.getCurrency()));
             refundOperationSuffix = "intent-refund-" + amount.stripTrailingZeros().toPlainString();
         } else {
             refundOperationSuffix = "intent-refund-full";
@@ -140,16 +141,6 @@ public class StripeClient {
             throw new AuthenticationException("Missing stripe.webhook.secret", null, null, 0, null);
         }
         return Webhook.constructEvent(payload, signatureHeader, webhookSecret);
-    }
-
-    protected long toStripeAmount(final BigDecimal amount, final String currencyIso) {
-        if (amount == null) {
-            return 0L;
-        }
-        final int fractionDigits = CurrencyUtils.resolveFractionDigits(currencyIso);
-        return amount.setScale(fractionDigits, RoundingMode.HALF_UP)
-                .movePointRight(fractionDigits)
-                .longValueExact();
     }
 
     protected PaymentIntentCreateParams.CaptureMethod resolveCaptureMethod(final String captureMode) {
@@ -260,6 +251,10 @@ public class StripeClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    public void setStripeAmountConverter(final StripeAmountConverter stripeAmountConverter) {
+        this.stripeAmountConverter = stripeAmountConverter;
     }
 
     public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService) {

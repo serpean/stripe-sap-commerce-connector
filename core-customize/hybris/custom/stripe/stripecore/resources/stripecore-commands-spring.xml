@@ -10,7 +10,6 @@
     <!-- Abstract Command Base -->
     <bean id="abstractStripeCommand" abstract="true"
           class="com.stripe.core.commands.impl.AbstractStripeCommand">
-        <property name="stripeRequestFactory" ref="stripeRequestFactory"/>
         <property name="stripePaymentIntegrationService" ref="stripePaymentIntegrationService"/>
         <property name="stripePaymentTransactionService" ref="stripePaymentTransactionService"/>
         <property name="timeService" ref="timeService"/>

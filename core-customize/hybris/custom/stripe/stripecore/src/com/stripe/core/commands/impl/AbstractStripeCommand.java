@@ -1,6 +1,5 @@
 package com.stripe.core.commands.impl;
 
-import com.stripe.core.payment.request.StripeRequestFactory;
 import com.stripe.core.payment.services.StripePaymentIntegrationService;
 import com.stripe.core.payment.services.StripePaymentTransactionService;
 import com.stripe.exception.CardException;
@@ -13,8 +12,6 @@ import de.hybris.platform.servicelayer.time.TimeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
-
 /**
  * Abstract base class for Stripe payment commands.
  * Provides common functionality for error handling and status mapping.
@@ -23,7 +20,6 @@ public abstract class AbstractStripeCommand {
 
     private static final Logger LOG = LoggerFactory.getLogger(AbstractStripeCommand.class);
 
-    protected StripeRequestFactory stripeRequestFactory;
     protected StripePaymentIntegrationService stripePaymentIntegrationService;
     protected StripePaymentTransactionService stripePaymentTransactionService;
     protected TimeService timeService;
@@ -120,21 +116,6 @@ public abstract class AbstractStripeCommand {
     }
 
     /**
-     * Converts an amount to Stripe's smallest currency unit.
-     *
-     * @param amount   the amount in major currency units
-     * @param currency the currency model
-     * @return the amount in smallest currency units
-     */
-    protected Long convertToStripeAmount(final BigDecimal amount,
-                                         final de.hybris.platform.core.model.c2l.CurrencyModel currency) {
-        if (amount == null || currency == null) {
-            return null;
-        }
-        return stripeRequestFactory.convertToStripeAmount(amount, currency.getIsocode());
-    }
-
-    /**
      * Creates an error result with the given status details.
      * Subclasses must implement this to return the appropriate result type.
      *
@@ -144,10 +125,6 @@ public abstract class AbstractStripeCommand {
     protected abstract AbstractResult createErrorResult(TransactionStatusDetails statusDetails);
 
     // Setters for Spring injection
-
-    public void setStripeRequestFactory(final StripeRequestFactory stripeRequestFactory) {
-        this.stripeRequestFactory = stripeRequestFactory;
-    }
 
     public void setStripePaymentIntegrationService(final StripePaymentIntegrationService stripePaymentIntegrationService) {
         this.stripePaymentIntegrationService = stripePaymentIntegrationService;

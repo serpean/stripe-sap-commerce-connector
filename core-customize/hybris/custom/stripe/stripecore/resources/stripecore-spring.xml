@@ -14,8 +14,14 @@
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
     </bean>
 
+    <alias name="defaultStripeAmountConverter" alias="stripeAmountConverter"/>
+    <bean id="defaultStripeAmountConverter" class="com.stripe.core.amount.impl.DefaultStripeAmountConverter">
+        <property name="commonI18NService" ref="commonI18NService"/>
+    </bean>
+
     <bean id="stripeClient" class="com.stripe.core.stripe.StripeClient">
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
     <bean id="stripePaymentProvider" class="com.stripe.core.stripe.StripePaymentProvider">
@@ -34,12 +40,6 @@
           class="com.stripe.core.payment.services.impl.DefaultStripePaymentTransactionService">
         <property name="modelService" ref="modelService"/>
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
-    </bean>
-
-    <alias name="defaultStripeRequestFactory" alias="stripeRequestFactory"/>
-    <bean id="defaultStripeRequestFactory"
-          class="com.stripe.core.payment.request.impl.DefaultStripeRequestFactory">
-        <property name="commonI18NService" ref="commonI18NService"/>
     </bean>
 
     <alias name="defaultStripePaymentIntegrationService" alias="stripePaymentIntegrationService"/>

@@ -6,7 +6,6 @@ import com.stripe.exception.StripeException;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -49,12 +48,6 @@ public class StripeClientTest {
     }
 
     @Test
-    public void shouldConvertAmountUsingCurrencyDigits() {
-        final long amount = stripeClient.publicToStripeAmount(new BigDecimal("12.34"), "USD");
-        assertEquals(1234L, amount);
-    }
-
-    @Test
     public void shouldGenerateIdempotencyKeyWithReference() {
         final String key = stripeClient.publicGenerateIdempotencyKey("order123", "intent-create");
         assertTrue(key.startsWith("order123-intent-create"));
@@ -68,10 +61,6 @@ public class StripeClientTest {
 
         public boolean publicShouldRetry(final StripeException exception) {
             return shouldRetry(exception);
-        }
-
-        public long publicToStripeAmount(final BigDecimal amount, final String currency) {
-            return toStripeAmount(amount, currency);
         }
 
         public String publicGenerateIdempotencyKey(final String reference, final String operation) {
