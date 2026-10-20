@@ -12,6 +12,7 @@ import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.core.webhook.StripePaymentIntentEventHandler;
+import com.stripe.core.webhook.StripeRowLocks;
 import com.stripe.core.webhook.StripeWebhookException;
 import com.stripe.core.webhook.StripeWebhookOutcome;
 import com.stripe.model.PaymentIntent;
@@ -34,11 +35,13 @@ import org.slf4j.LoggerFactory;
  * the state in the event, so a late or repeated event does no harm.
  * <ul>
  * <li>Confirmation events (succeeded, amount_capturable_updated, processing): authorizes the pending order, or, when
- * there is no order after the grace period, places it from the server. When the order was cancelled before the
- * payment succeeded, the funds are released.</li>
+ * there is no order after the grace period, places it from the server. When the funds were already released, it does
+ * nothing. When the order was cancelled before the payment succeeded, or the authorization of the order is rejected
+ * (for example, the amounts differ), the order is cancelled and the funds are released.</li>
  * <li>Failure events (payment_failed, canceled): cancels the pending order.</li>
  * </ul>
- * An event for a PaymentIntent without a record (not created by this shop) is ignored.
+ * An event for a PaymentIntent without a record (not created by this shop) is ignored. The record row is locked first,
+ * so two events of one PaymentIntent are handled one after the other.
  * <p>
  * {@link StripeOrderPlacementService} and {@link StripeOrderCancellationService} are optional properties: when one is
  * not configured, an event that needs it fails with a clear error.
@@ -71,7 +74,8 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	private TimeService timeService;
 
 	@Override
-	public StripeWebhookOutcome handle(final String eventType, final PaymentIntent paymentIntent) throws RetryLaterException
+	public StripeWebhookOutcome handle(final String eventType, final PaymentIntent paymentIntent, final Instant eventCreated)
+			throws RetryLaterException
 	{
 		final boolean confirmation = CONFIRMATION_EVENTS.contains(eventType);
 		if (!confirmation && !FAILURE_EVENTS.contains(eventType))
@@ -87,16 +91,24 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 					eventType);
 			return StripeWebhookOutcome.IGNORED;
 		}
-		return confirmation ? onConfirmation(record.get()) : onFailure(eventType, record.get());
+		StripeRowLocks.lockAndRefresh(modelService, record.get());
+		return confirmation ? onConfirmation(record.get(), eventCreated) : onFailure(eventType, record.get());
 	}
 
-	private StripeWebhookOutcome onConfirmation(final StripePaymentIntentRecordModel record) throws RetryLaterException
+	private StripeWebhookOutcome onConfirmation(final StripePaymentIntentRecordModel record, final Instant eventCreated)
+			throws RetryLaterException
 	{
 		final String paymentIntentId = record.getPaymentIntentId();
+		if (FUNDS_RELEASED.contains(record.getState()))
+		{
+			LOG.info("Funds of payment intent {} were released (record state {}): no order is placed or authorized",
+					paymentIntentId, record.getState());
+			return StripeWebhookOutcome.PROCESSED;
+		}
 		final Optional<OrderModel> order = orderOf(record);
 		if (order.isEmpty())
 		{
-			waitForCustomer(record);
+			waitForCustomer(record, eventCreated);
 			final PaymentIntent live = stripeGateway.retrievePaymentIntent(paymentIntentId);
 			final StripePaymentIntentStatus status = statusOf(live);
 			if (!ALIVE.contains(status))
@@ -110,7 +122,8 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 
 		final PaymentIntent live = stripeGateway.retrievePaymentIntent(paymentIntentId);
 		final StripePaymentIntentStatus status = statusOf(live);
-		if (PAID.contains(status) && OrderStatus.CANCELLED.equals(order.get().getStatus()))
+		if (PAID.contains(status) && OrderStatus.CANCELLED.equals(order.get().getStatus())
+				&& !stripeOrderAuthorizationService.hasAcceptedAuthorization(order.get(), paymentIntentId))
 		{
 			LOG.warn("Payment intent {} is paid but its order {} is cancelled: releasing the funds", paymentIntentId,
 					order.get().getCode());
@@ -119,8 +132,11 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 		}
 		if (PAID.contains(status) && !stripeOrderAuthorizationService.authorizePendingOrder(order.get(), live))
 		{
-			throw new StripeWebhookException("Authorization of order " + order.get().getCode() + " by payment intent "
-					+ paymentIntentId + " was rejected", false);
+			LOG.error("Authorization of order {} by payment intent {} was rejected: cancelling the order and releasing the funds",
+					order.get().getCode(), paymentIntentId);
+			requireCancellationService().cancelForFailedPayment(order.get());
+			stripePaymentIntentService.releaseFunds(paymentIntentId, "authorization-rejected");
+			return StripeWebhookOutcome.PROCESSED;
 		}
 		updateState(record, status);
 		LOG.info("Payment intent {} of order {} has status {}", paymentIntentId, order.get().getCode(), status);
@@ -167,16 +183,23 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	}
 
 	/**
-	 * Gives the customer the grace period to come back and place the order.
+	 * Gives the customer the grace period to come back and place the order. It starts at the later of the record
+	 * creation and the event creation, so a payment made long after the checkout started still gets the full period.
 	 */
-	private void waitForCustomer(final StripePaymentIntentRecordModel record) throws RetryLaterException
+	private void waitForCustomer(final StripePaymentIntentRecordModel record, final Instant eventCreated)
+			throws RetryLaterException
 	{
-		if (record.getCreationtime() == null)
+		Instant start = record.getCreationtime() == null ? null : record.getCreationtime().toInstant();
+		if (eventCreated != null && (start == null || eventCreated.isAfter(start)))
+		{
+			start = eventCreated;
+		}
+		if (start == null)
 		{
 			return;
 		}
 		final Instant now = timeService.getCurrentTime().toInstant();
-		final Instant deadline = record.getCreationtime().toInstant().plus(stripeConfigurationService.getWebhookGracePeriod());
+		final Instant deadline = start.plus(stripeConfigurationService.getWebhookGracePeriod());
 		if (now.isBefore(deadline))
 		{
 			final Duration wait = Duration.between(now, deadline);

@@ -3,13 +3,17 @@ package com.stripe.core.webhook;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -28,14 +32,17 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
+import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripeTransactionLookup;
 import com.stripe.core.webhook.impl.DefaultStripePaymentIntentEventHandler;
 import com.stripe.core.webhook.impl.DefaultStripeRefundEventHandler;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.core.PK;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
+import de.hybris.platform.servicelayer.exceptions.SystemException;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.time.TimeService;
 import de.hybris.platform.task.RetryLaterException;
@@ -61,6 +68,7 @@ public class StripeWebhookEventTaskRunnerTest
 	private StripePaymentIntentRecordDao recordDao;
 	private StripePaymentIntentRecordService recordService;
 	private StripeGateway gateway;
+	private StripePaymentIntentService paymentIntentService;
 	private StripeOrderAuthorizationService authorizationService;
 	private StripeOrderPlacementService placementService;
 	private StripeOrderCancellationService cancellationService;
@@ -68,7 +76,9 @@ public class StripeWebhookEventTaskRunnerTest
 	private TaskService taskService;
 	private StripeWebhookEventTaskRunner runner;
 	private StripeWebhookEventModel event;
+	private Instant eventCreated = NOW.minus(Duration.ofHours(2));
 	private TaskModel task;
+	private TimeService timeService;
 
 	@Before
 	public void setUp()
@@ -77,6 +87,7 @@ public class StripeWebhookEventTaskRunnerTest
 		recordDao = mock(StripePaymentIntentRecordDao.class);
 		recordService = mock(StripePaymentIntentRecordService.class);
 		gateway = mock(StripeGateway.class);
+		paymentIntentService = mock(StripePaymentIntentService.class);
 		authorizationService = mock(StripeOrderAuthorizationService.class);
 		placementService = mock(StripeOrderPlacementService.class);
 		cancellationService = mock(StripeOrderCancellationService.class);
@@ -84,7 +95,7 @@ public class StripeWebhookEventTaskRunnerTest
 		taskService = mock(TaskService.class);
 		final StripeConfigurationService configurationService = mock(StripeConfigurationService.class);
 		when(configurationService.getWebhookGracePeriod()).thenReturn(GRACE);
-		final TimeService timeService = mock(TimeService.class);
+		timeService = mock(TimeService.class);
 		when(timeService.getCurrentTime()).thenReturn(Date.from(NOW));
 		when(recordService.findLiveOrder(anyString())).thenReturn(Optional.empty());
 
@@ -92,6 +103,7 @@ public class StripeWebhookEventTaskRunnerTest
 		paymentIntentHandler.setStripePaymentIntentRecordDao(recordDao);
 		paymentIntentHandler.setStripePaymentIntentRecordService(recordService);
 		paymentIntentHandler.setStripeGateway(gateway);
+		paymentIntentHandler.setStripePaymentIntentService(paymentIntentService);
 		paymentIntentHandler.setStripeConfigurationService(configurationService);
 		paymentIntentHandler.setStripeOrderAuthorizationService(authorizationService);
 		paymentIntentHandler.setStripeOrderPlacementService(placementService);
@@ -105,10 +117,12 @@ public class StripeWebhookEventTaskRunnerTest
 
 		runner = new StripeWebhookEventTaskRunner();
 		runner.setModelService(modelService);
+		runner.setTimeService(timeService);
 		runner.setStripePaymentIntentEventHandler(paymentIntentHandler);
 		runner.setStripeRefundEventHandler(refundHandler);
 
-		event = new StripeWebhookEventModel();
+		event = spy(new StripeWebhookEventModel());
+		doReturn(PK.fromLong(7L)).when(event).getPk();
 		event.setEventId("evt_1");
 		event.setState(StripeWebhookEventState.RECEIVED);
 		event.setAttempts(0);
@@ -152,21 +166,32 @@ public class StripeWebhookEventTaskRunnerTest
 	{
 		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
 		givenRecord(null, Duration.ofSeconds(60));
+		final TaskModel next = givenNewTask();
 
-		try
-		{
-			runner.run(taskService, task);
-			fail("expected RetryLaterException");
-		}
-		catch (final RetryLaterException e)
-		{
-			assertEquals(Duration.ofSeconds(240).toMillis(), e.getDelay());
-			assertEquals(RetryLaterException.Method.LINEAR, e.getMethod());
-		}
+		runner.run(taskService, task);
+
+		verify(next).setRunnerBean("stripeWebhookEventTaskRunner");
+		verify(next).setContextItem(event);
+		verify(next).setExecutionDate(Date.from(NOW.plusSeconds(240)));
+		verify(taskService).scheduleTask(next);
 		assertEquals(StripeWebhookEventState.RECEIVED, event.getState());
 		assertEquals(Integer.valueOf(0), event.getAttempts());
 		verify(modelService, never()).save(event);
 		verifyNoInteractions(placementService, gateway);
+	}
+
+	@Test
+	public void recentEventExtendsGracePeriodOfOldRecord()
+	{
+		eventCreated = NOW.minusSeconds(60);
+		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
+		givenRecord(null, Duration.ofHours(1));
+		final TaskModel next = givenNewTask();
+
+		runner.run(taskService, task);
+
+		verify(next).setExecutionDate(Date.from(NOW.plusSeconds(240)));
+		verifyNoInteractions(placementService);
 	}
 
 	@Test
@@ -224,13 +249,13 @@ public class StripeWebhookEventTaskRunnerTest
 	{
 		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
 		givenRecord(new OrderModel(), Duration.ofHours(1));
-		when(gateway.retrievePaymentIntent(PI_ID))
-				.thenThrow(new StripeGatewayException("Stripe is not reachable", "api_connection_error", true, false, null));
+		when(gateway.retrievePaymentIntent(PI_ID)).thenThrow(retryableError());
 
 		final long[] expected = { Duration.ofSeconds(30).toMillis(), Duration.ofMinutes(2).toMillis(),
 				Duration.ofMinutes(8).toMillis(), Duration.ofMinutes(30).toMillis() };
-		for (int attempt = 1; attempt <= expected.length; attempt++)
+		for (int retry = 0; retry < expected.length; retry++)
 		{
+			when(task.getRetry()).thenReturn(retry);
 			try
 			{
 				runner.run(taskService, task);
@@ -238,14 +263,13 @@ public class StripeWebhookEventTaskRunnerTest
 			}
 			catch (final RetryLaterException e)
 			{
-				assertEquals(expected[attempt - 1], e.getDelay());
+				assertEquals(expected[retry], e.getDelay());
 				assertEquals(RetryLaterException.Method.LINEAR, e.getMethod());
-				assertFalse(e.isRollBack());
+				assertTrue(e.isRollBack());
 			}
-			assertEquals(Integer.valueOf(attempt), event.getAttempts());
-			assertEquals(StripeWebhookEventState.RECEIVED, event.getState());
-			assertTrue(event.getLastError().contains("Stripe is not reachable"));
 		}
+		assertEquals(StripeWebhookEventState.RECEIVED, event.getState());
+		verify(modelService, never()).save(event);
 	}
 
 	@Test
@@ -253,11 +277,14 @@ public class StripeWebhookEventTaskRunnerTest
 	{
 		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
 		givenRecord(new OrderModel(), Duration.ofHours(1));
-		event.setAttempts(4);
-		when(gateway.retrievePaymentIntent(PI_ID))
-				.thenThrow(new StripeGatewayException("Stripe is not reachable", "api_connection_error", true, false, null));
+		when(task.getRetry()).thenReturn(4);
+		final StripeGatewayException error = retryableError();
+		when(gateway.retrievePaymentIntent(PI_ID)).thenThrow(error);
 
-		runner.run(taskService, task);
+		assertSame(error, runFailing());
+		verify(modelService, never()).save(event);
+
+		runner.handleError(taskService, task, new SystemException(error));
 
 		assertEquals(StripeWebhookEventState.FAILED, event.getState());
 		assertEquals(Integer.valueOf(5), event.getAttempts());
@@ -273,7 +300,8 @@ public class StripeWebhookEventTaskRunnerTest
 		when(gateway.retrievePaymentIntent(PI_ID))
 				.thenThrow(new StripeGatewayException("No such payment_intent", "resource_missing", false, false, null));
 
-		runner.run(taskService, task);
+		final RuntimeException error = runFailing();
+		runner.handleError(taskService, task, new SystemException(error));
 
 		assertEquals(StripeWebhookEventState.FAILED, event.getState());
 		assertEquals(Integer.valueOf(1), event.getAttempts());
@@ -288,10 +316,24 @@ public class StripeWebhookEventTaskRunnerTest
 		runner.run(taskService, task);
 
 		final InOrder order = inOrder(modelService);
-		order.verify(modelService).lock(event);
+		order.verify(modelService).lock(PK.fromLong(7L));
 		order.verify(modelService).refresh(event);
 		verify(modelService, never()).save(any());
 		verifyNoInteractions(recordDao, gateway);
+	}
+
+	@Test
+	public void databaseWithoutRowLocksStillProcessesEvent()
+	{
+		givenPaymentIntentEvent("payment_intent.succeeded", "succeeded");
+		when(recordDao.findByPaymentIntentId(PI_ID)).thenReturn(Optional.empty());
+		doThrow(new UnsupportedOperationException("HSQLDB doesn't support explicit row locking")).when(modelService)
+				.lock(any(PK.class));
+
+		runner.run(taskService, task);
+
+		verify(modelService).refresh(event);
+		assertEquals(StripeWebhookEventState.IGNORED, event.getState());
 	}
 
 	@Test
@@ -324,7 +366,8 @@ public class StripeWebhookEventTaskRunnerTest
 		event.setType("payment_intent.succeeded");
 		event.setPayload("{\"id\":\"evt_1\",\"data\":{\"object\":\"secret-like-text\"");
 
-		runner.run(taskService, task);
+		final RuntimeException error = runFailing();
+		runner.handleError(taskService, task, new SystemException(error));
 
 		assertEquals(StripeWebhookEventState.FAILED, event.getState());
 		assertFalse(event.getLastError().contains("secret-like-text"));
@@ -333,11 +376,14 @@ public class StripeWebhookEventTaskRunnerTest
 	@Test
 	public void handleErrorMarksReceivedEventFailed()
 	{
-		runner.handleError(taskService, task, new IllegalStateException("commit failed"));
+		when(task.getRetry()).thenReturn(2);
+
+		runner.handleError(taskService, task, new SystemException(new IllegalStateException("commit failed")));
 
 		assertEquals(StripeWebhookEventState.FAILED, event.getState());
-		assertEquals(Integer.valueOf(1), event.getAttempts());
+		assertEquals(Integer.valueOf(3), event.getAttempts());
 		assertTrue(event.getLastError().contains("commit failed"));
+		verify(modelService).refresh(event);
 		verify(modelService).save(event);
 	}
 
@@ -350,6 +396,36 @@ public class StripeWebhookEventTaskRunnerTest
 
 		verifyNoInteractions(modelService, recordDao);
 		assertNull(event.getLastError());
+	}
+
+	private RuntimeException runFailing()
+	{
+		try
+		{
+			runner.run(taskService, task);
+		}
+		catch (final RetryLaterException e)
+		{
+			fail("expected a failure without retry, got RetryLaterException");
+		}
+		catch (final RuntimeException e)
+		{
+			return e;
+		}
+		fail("expected a failure");
+		return null;
+	}
+
+	private static StripeGatewayException retryableError()
+	{
+		return new StripeGatewayException("Stripe is not reachable", "api_connection_error", true, false, null);
+	}
+
+	private TaskModel givenNewTask()
+	{
+		final TaskModel next = mock(TaskModel.class);
+		when(modelService.create(TaskModel.class)).thenReturn(next);
+		return next;
 	}
 
 	private void givenPaymentIntentEvent(final String type, final String status)
@@ -377,6 +453,7 @@ public class StripeWebhookEventTaskRunnerTest
 		json.addProperty("object", "event");
 		json.addProperty("api_version", apiVersion);
 		json.addProperty("type", type);
+		json.addProperty("created", eventCreated.getEpochSecond());
 		json.add("data", data);
 		event.setType(type);
 		event.setPayload(json.toString());

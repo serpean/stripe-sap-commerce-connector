@@ -1,12 +1,15 @@
 package com.stripe.core.webhook.impl;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -25,16 +28,19 @@ import com.stripe.core.webhook.StripeWebhookException;
 import com.stripe.core.webhook.StripeWebhookOutcome;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.core.PK;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.time.TimeService;
+import de.hybris.platform.task.RetryLaterException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.InOrder;
 
 @UnitTest
 public class DefaultStripePaymentIntentEventHandlerTest
@@ -42,6 +48,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 	private static final String PI_ID = "pi_456";
 	private static final String SUCCEEDED = "payment_intent.succeeded";
 	private static final String FAILED = "payment_intent.payment_failed";
+	private static final PK RECORD_PK = PK.fromLong(42L);
 	private static final Instant NOW = Instant.parse("2026-10-20T10:00:00Z");
 
 	private StripePaymentIntentRecordDao recordDao;
@@ -54,6 +61,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 	private ModelService modelService;
 	private DefaultStripePaymentIntentEventHandler handler;
 	private PaymentIntent eventObject;
+	private Instant eventCreated;
 
 	@Before
 	public void setUp()
@@ -86,6 +94,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 
 		eventObject = new PaymentIntent();
 		eventObject.setId(PI_ID);
+		eventCreated = NOW.minus(Duration.ofHours(1));
 	}
 
 	@Test
@@ -97,7 +106,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		final PaymentIntent live = givenLive("requires_capture");
 		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(true);
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
 
 		verify(recordService).linkOrder(PI_ID, order);
 		verify(authorizationService).authorizePendingOrder(order, live);
@@ -114,7 +123,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		givenRecord(order, StripePaymentIntentState.PROCESSING, Duration.ofDays(2));
 		givenLive("succeeded");
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
 
 		verify(paymentIntentService).releaseFunds(PI_ID, "order order-2 is cancelled");
 		verify(authorizationService, never()).authorizePendingOrder(any(), any());
@@ -127,14 +136,14 @@ public class DefaultStripePaymentIntentEventHandlerTest
 				Duration.ofHours(1));
 		givenLive("processing");
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.processing", eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.processing", eventObject, eventCreated));
 
 		verify(authorizationService, never()).authorizePendingOrder(any(), any());
 		assertEquals(StripePaymentIntentState.PROCESSING, record.getState());
 	}
 
 	@Test
-	public void rejectedAuthorizationFailsWithoutRetry()
+	public void rejectedAuthorizationCancelsOrderAndReleasesFunds()
 	{
 		final OrderModel order = new OrderModel();
 		order.setCode("order-1");
@@ -142,16 +151,74 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		final PaymentIntent live = givenLive("succeeded");
 		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(false);
 
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
+
+		verify(cancellationService).cancelForFailedPayment(order);
+		verify(paymentIntentService).releaseFunds(PI_ID, "authorization-rejected");
+	}
+
+	@Test
+	public void recentEventOfOldRecordWaitsForGracePeriod()
+	{
+		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
+
 		try
 		{
-			handler.handle(SUCCEEDED, eventObject);
-			fail("expected StripeWebhookException");
+			handler.handle(SUCCEEDED, eventObject, NOW.minusSeconds(60));
+			fail("expected RetryLaterException");
 		}
-		catch (final StripeWebhookException e)
+		catch (final RetryLaterException e)
 		{
-			assertFalse(e.isRetryable());
-			assertTrue(e.getMessage().contains("order-1"));
+			assertEquals(Duration.ofSeconds(240).toMillis(), e.getDelay());
 		}
+		verifyNoInteractions(placementService, gateway);
+	}
+
+	@Test
+	public void oldEventOfOldRecordPlacesOrder()
+	{
+		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
+		final PaymentIntent live = givenLive("succeeded");
+		when(placementService.placeOrderFor(live)).thenReturn(Optional.of(new OrderModel()));
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, NOW.minusSeconds(400)));
+
+		verify(placementService).placeOrderFor(live);
+	}
+
+	@Test
+	public void releasedFundsStopOrderPlacement()
+	{
+		givenRecord(null, StripePaymentIntentState.REFUNDED, Duration.ofHours(1));
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
+
+		verifyNoInteractions(placementService, gateway);
+	}
+
+	@Test
+	public void releasedFundsStopAuthorizationOfPendingOrder()
+	{
+		givenRecord(new OrderModel(), StripePaymentIntentState.CANCELED, Duration.ofHours(1));
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
+
+		verifyNoInteractions(authorizationService, gateway, paymentIntentService);
+	}
+
+	@Test
+	public void recordIsLockedBeforeAnyDecision()
+	{
+		final StripePaymentIntentRecordModel record = givenRecord(new OrderModel(), StripePaymentIntentState.PROCESSING,
+				Duration.ofHours(1));
+		givenLive("processing");
+
+		handler.handle("payment_intent.processing", eventObject, eventCreated);
+
+		final InOrder order = inOrder(modelService, gateway);
+		order.verify(modelService).lock(RECORD_PK);
+		order.verify(modelService).refresh(record);
+		order.verify(gateway).retrievePaymentIntent(PI_ID);
 	}
 
 	@Test
@@ -163,14 +230,14 @@ public class DefaultStripePaymentIntentEventHandlerTest
 
 		try
 		{
-			handler.handle(SUCCEEDED, eventObject);
+			handler.handle(SUCCEEDED, eventObject, eventCreated);
 			fail("expected StripeWebhookException");
 		}
 		catch (final StripeWebhookException e)
 		{
 			assertTrue(e.isRetryable());
 		}
-		verify(modelService).refresh(record);
+		verify(modelService, times(2)).refresh(record);
 	}
 
 	@Test
@@ -183,7 +250,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 			return Optional.empty();
 		});
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
 	}
 
 	@Test
@@ -192,7 +259,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		final StripePaymentIntentRecordModel record = givenRecord(null, StripePaymentIntentState.PROCESSING, Duration.ofHours(1));
 		givenLive("requires_payment_method");
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.processing", eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.processing", eventObject, eventCreated));
 
 		verifyNoInteractions(placementService);
 		assertEquals(StripePaymentIntentState.FAILED, record.getState());
@@ -205,7 +272,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
 		givenLive("succeeded");
 
-		handler.handle(SUCCEEDED, eventObject);
+		handler.handle(SUCCEEDED, eventObject, eventCreated);
 	}
 
 	@Test
@@ -215,7 +282,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		final StripePaymentIntentRecordModel record = givenRecord(order, StripePaymentIntentState.CAPTURED, Duration.ofHours(1));
 		givenLive("succeeded");
 
-		assertEquals(StripeWebhookOutcome.IGNORED, handler.handle(FAILED, eventObject));
+		assertEquals(StripeWebhookOutcome.IGNORED, handler.handle(FAILED, eventObject, eventCreated));
 
 		verifyNoInteractions(cancellationService);
 		assertEquals(StripePaymentIntentState.CAPTURED, record.getState());
@@ -227,7 +294,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		final StripePaymentIntentRecordModel record = givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofSeconds(5));
 		givenLive("canceled");
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.canceled", eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.canceled", eventObject, eventCreated));
 
 		assertEquals(StripePaymentIntentState.CANCELED, record.getState());
 		verify(modelService).save(record);
@@ -242,29 +309,31 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		givenLive("canceled");
 		when(authorizationService.hasAcceptedAuthorization(order, PI_ID)).thenReturn(true);
 
-		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.canceled", eventObject));
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.canceled", eventObject, eventCreated));
 
 		verifyNoInteractions(cancellationService);
 	}
 
 	@Test
-	public void refundedRecordKeepsItsState()
+	public void paymentOfCancelledOrderWithAcceptedAuthorizationDoesNotReleaseFunds()
 	{
-		final StripePaymentIntentRecordModel record = givenRecord(new OrderModel(), StripePaymentIntentState.REFUNDED,
-				Duration.ofHours(1));
-		final PaymentIntent live = givenLive("succeeded");
-		when(authorizationService.authorizePendingOrder(any(), any())).thenReturn(true);
+		final OrderModel order = new OrderModel();
+		order.setStatus(OrderStatus.CANCELLED);
+		givenRecord(order, StripePaymentIntentState.AUTHORIZED, Duration.ofHours(1));
+		final PaymentIntent live = givenLive("requires_capture");
+		when(authorizationService.hasAcceptedAuthorization(order, PI_ID)).thenReturn(true);
+		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(true);
 
-		handler.handle(SUCCEEDED, eventObject);
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
 
-		verify(authorizationService).authorizePendingOrder(record.getOrder(), live);
-		assertEquals(StripePaymentIntentState.REFUNDED, record.getState());
+		verifyNoInteractions(paymentIntentService);
 	}
 
 	private StripePaymentIntentRecordModel givenRecord(final OrderModel order, final StripePaymentIntentState state,
 			final Duration age)
 	{
-		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		final StripePaymentIntentRecordModel record = spy(new StripePaymentIntentRecordModel());
+		doReturn(RECORD_PK).when(record).getPk();
 		record.setPaymentIntentId(PI_ID);
 		record.setOrder(order);
 		record.setState(state);

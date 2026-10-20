@@ -112,6 +112,7 @@
 
     <bean id="stripeWebhookEventTaskRunner" class="com.stripe.core.webhook.StripeWebhookEventTaskRunner">
         <property name="modelService" ref="modelService"/>
+        <property name="timeService" ref="timeService"/>
         <property name="stripePaymentIntentEventHandler" ref="stripePaymentIntentEventHandler"/>
         <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
     </bean>
