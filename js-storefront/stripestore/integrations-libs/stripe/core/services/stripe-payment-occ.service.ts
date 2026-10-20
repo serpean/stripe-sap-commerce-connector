@@ -9,7 +9,10 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, combineLatest, switchMap } from 'rxjs';
 import { OccEndpointsService, UserIdService } from '@spartacus/core';
 import { ActiveCartFacade } from '@spartacus/cart/base/root';
-import { StripeIntentResponse } from 'sap-commerce-stripe-payment/root';
+import {
+  StripeConfigResponse,
+  StripeIntentResponse,
+} from 'sap-commerce-stripe-payment/root';
 
 @Injectable({ providedIn: 'root' })
 export class StripePaymentOccService {
@@ -27,6 +30,11 @@ export class StripePaymentOccService {
       });
       return this.http.post<StripeIntentResponse>(url, {});
     });
+  }
+
+  getConfig(): Observable<StripeConfigResponse> {
+    const url = this.occEndpoints.buildUrl('stripeConfig');
+    return this.http.get<StripeConfigResponse>(url);
   }
 
   protected withCartContext<T>(

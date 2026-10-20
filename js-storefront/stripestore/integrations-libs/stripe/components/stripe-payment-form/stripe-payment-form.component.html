@@ -1,7 +1,7 @@
 <ng-container *ngIf="useStripeFlow; else defaultPaymentFlow">
   <div class="stripe-payment-review">
     <section class="stripe-payment-review__form">
-      <form class="stripe-payment-card" [formGroup]="form" (ngSubmit)="submit()">
+      <form class="stripe-payment-card" (submit)="$event.preventDefault(); submit()">
         <h3>{{ 'stripePayment.title' | cxTranslate }}</h3>
 
         <div
@@ -9,17 +9,6 @@
           class="payment-element"
           aria-label="Payment details"
         ></div>
-
-        <label class="form-check">
-          <input
-            type="checkbox"
-            class="form-check-input"
-            formControlName="savePaymentMethod"
-          />
-          <span class="form-check-label">
-            {{ 'stripePayment.saveForLater' | cxTranslate }}
-          </span>
-        </label>
 
         <div class="form-actions">
           <button class="btn btn-primary" type="submit" [disabled]="isLoading">

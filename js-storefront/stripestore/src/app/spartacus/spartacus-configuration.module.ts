@@ -31,6 +31,17 @@ import {defaultCmsContentProviders, layoutConfig, mediaConfig} from "@spartacus/
         fallbackLang: 'en'
       },
     }),
+    provideConfig(<I18nConfig>{
+      i18n: {
+        resources: {
+          en: {
+            orderDetails: {
+              statusDisplay_paymentPending: 'Payment pending',
+            },
+          },
+        },
+      },
+    }),
     provideConfig(<FeaturesConfig>{
       features: {
         level: '2211.37'

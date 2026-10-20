@@ -6,3 +6,4 @@
 
 export * from './stripe-payment.service';
 export * from './stripe-payment-occ.service';
+export * from './stripe-payment-error';

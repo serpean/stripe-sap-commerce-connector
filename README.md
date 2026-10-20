@@ -163,7 +163,7 @@ npm ci
 npm start
 ```
 
-`npm start` writes the publishable key from `STRIPE_PUBLISHABLE_KEY` into a git-ignored file. Use the npm scripts (`npm start`, `npm run build`, `npm run watch`, `npm test`), not `ng` directly: on a fresh clone the file does not exist until a script creates it. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
+The storefront gets the publishable key from the backend (`GET payments/stripe/config`), so the front end needs no key. The storefront is at `http://localhost:4200/electronics-spa/en/USD`.
 
 ## 5. End-to-end tests
 
