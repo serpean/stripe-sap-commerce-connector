@@ -11,6 +11,7 @@ import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
@@ -85,10 +86,14 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 
 		if ("succeeded".equals(intent.getStatus()))
 		{
-			final long received = intent.getAmountReceived() == null ? 0L : intent.getAmountReceived();
-			if (received > 0)
+			final long remaining = remainingCapturedAmount(intent);
+			if (remaining > 0)
 			{
-				stripeGateway.createRefund(paymentIntentId, received, "release-" + paymentIntentId + "-refund");
+				stripeGateway.createRefund(paymentIntentId, remaining, "release-" + paymentIntentId + "-refund-" + remaining);
+			}
+			else
+			{
+				LOG.info("Payment intent {} has no captured money left to refund", paymentIntentId);
 			}
 			updateRecordState(paymentIntentId, StripePaymentIntentState.REFUNDED);
 		}
@@ -100,6 +105,27 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 			}
 			updateRecordState(paymentIntentId, StripePaymentIntentState.CANCELED);
 		}
+	}
+
+	/**
+	 * The captured money that is not refunded yet: amount received minus the amount refunded on the latest charge. The
+	 * gateway retrieve expands latest_charge. When the charge details are still missing, the full amount received is
+	 * used: Stripe refuses a refund larger than what remains, so this never refunds too much. The amount is part of the
+	 * idempotency key, so a retry of the same release uses the same key, and a release after a partial refund gets a
+	 * new one.
+	 */
+	protected long remainingCapturedAmount(final PaymentIntent intent)
+	{
+		final long received = intent.getAmountReceived() == null ? 0L : intent.getAmountReceived();
+		final Charge charge = intent.getLatestChargeObject();
+		if (charge == null)
+		{
+			LOG.warn("Payment intent {} has no charge details: the full received amount {} is refunded", intent.getId(),
+					received);
+			return received;
+		}
+		final long refunded = charge.getAmountRefunded() == null ? 0L : charge.getAmountRefunded();
+		return Math.max(0L, received - refunded);
 	}
 
 	protected PaymentIntent createFor(final CartModel cart, final long amount, final String currencyIso)

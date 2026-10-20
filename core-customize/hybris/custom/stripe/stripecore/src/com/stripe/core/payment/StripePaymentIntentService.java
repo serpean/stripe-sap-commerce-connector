@@ -14,7 +14,8 @@ public interface StripePaymentIntentService
 	StripeIntentData prepareForCart(CartModel cart);
 
 	/**
-	 * Gives the money of a PaymentIntent back to the customer: cancel when authorized, refund when captured.
+	 * Gives the money of a PaymentIntent back to the customer: cancel when authorized, refund the captured amount that is
+	 * not refunded yet when captured (no Stripe call when nothing is left).
 	 */
 	void releaseFunds(String paymentIntentId, String reason);
 }

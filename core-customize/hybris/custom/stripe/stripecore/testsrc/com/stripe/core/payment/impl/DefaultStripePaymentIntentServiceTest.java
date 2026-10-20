@@ -24,6 +24,7 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripePaymentInProgressException;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
@@ -251,17 +252,66 @@ public class DefaultStripePaymentIntentServiceTest
 	@Test
 	public void releaseFundsRefundsSucceededIntent()
 	{
-		final PaymentIntent succeeded = intent("pi_1", "succeeded", 1000);
-		succeeded.setAmountReceived(1000L);
-		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(succeeded);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(captured(1000L, 0L));
 		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
 		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
 
 		service.releaseFunds("pi_1", "test");
 
-		verify(gateway).createRefund("pi_1", 1000L, "release-pi_1-refund");
+		verify(gateway).createRefund("pi_1", 1000L, "release-pi_1-refund-1000");
 		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
 		assertEquals(StripePaymentIntentState.REFUNDED, record.getState());
+	}
+
+	@Test
+	public void releaseFundsRefundsOnlyRemainingAmount()
+	{
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(captured(1000L, 400L));
+		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(gateway).createRefund("pi_1", 600L, "release-pi_1-refund-600");
+		assertEquals(StripePaymentIntentState.REFUNDED, record.getState());
+	}
+
+	@Test
+	public void releaseFundsOfFullyRefundedIntentDoesNotCallStripe()
+	{
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(captured(1000L, 1000L));
+		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		assertEquals(StripePaymentIntentState.REFUNDED, record.getState());
+	}
+
+	@Test
+	public void releaseFundsWithoutChargeDetailsRefundsTheReceivedAmount()
+	{
+		final PaymentIntent withoutCharge = intent("pi_1", "succeeded", 1000);
+		withoutCharge.setAmountReceived(1000L);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(withoutCharge);
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(gateway).createRefund("pi_1", 1000L, "release-pi_1-refund-1000");
+	}
+
+	private PaymentIntent captured(final long received, final long refunded)
+	{
+		final PaymentIntent intent = intent("pi_1", "succeeded", received);
+		intent.setAmountReceived(received);
+		final Charge charge = new Charge();
+		charge.setId("ch_1");
+		charge.setAmountRefunded(refunded);
+		intent.setLatestChargeObject(charge);
+		return intent;
 	}
 
 	@Test
