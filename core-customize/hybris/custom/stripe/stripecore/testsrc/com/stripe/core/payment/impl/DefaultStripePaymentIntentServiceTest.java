@@ -23,6 +23,7 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
@@ -58,8 +59,8 @@ public class DefaultStripePaymentIntentServiceTest
 		recordDao = mock(StripePaymentIntentRecordDao.class);
 		modelService = mock(ModelService.class);
 		final StripeAmountConverter converter = mock(StripeAmountConverter.class);
-		when(converter.toMinorUnits(any(BigDecimal.class), anyString()))
-				.thenAnswer(i -> ((BigDecimal) i.getArgument(0)).movePointRight(2).longValueExact());
+		when(converter.chargeAmountMinor(any(CartModel.class)))
+				.thenAnswer(i -> BigDecimal.valueOf(((CartModel) i.getArgument(0)).getTotalPrice()).movePointRight(2).longValueExact());
 
 		when(config.getCaptureMode()).thenReturn(StripeCaptureMode.MANUAL);
 		when(config.getManualCaptureMethods()).thenReturn(Set.of("card", "paypal"));
@@ -275,5 +276,71 @@ public class DefaultStripePaymentIntentServiceTest
 		verify(gateway).cancelPaymentIntent("pi_1", "release-pi_1-cancel");
 		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
 		assertEquals(StripePaymentIntentState.CANCELED, record.getState());
+	}
+
+	@Test
+	public void unchangedCartKeepsConfirmedIntent()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_capture", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+	}
+
+	@Test
+	public void canceledIntentIsReplaced()
+	{
+		cartHasIntent("pi_old");
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(intent("pi_old", "canceled", 1200));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_new", "requires_payment_method", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_new", data.getPaymentIntentId());
+		assertEquals("pi_new", ((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+	}
+
+	@Test
+	public void processingIntentWithChangedCartThrows()
+	{
+		cartHasIntent("pi_1");
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+		final de.hybris.platform.core.model.order.payment.PaymentInfoModel info = cart.getPaymentInfo();
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "processing", 1000));
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("Expected StripePaymentInProgressException");
+		}
+		catch (final StripePaymentInProgressException e)
+		{
+			assertTrue(info == cart.getPaymentInfo());
+		}
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(modelService, never()).save(any(StripePaymentIntentRecordModel.class));
+	}
+
+	@Test
+	public void missingRecordIsCreated()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_capture", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<StripePaymentIntentRecordModel> captor = ArgumentCaptor
+				.forClass(StripePaymentIntentRecordModel.class);
+		verify(modelService).save(captor.capture());
+		assertEquals("pi_1", captor.getValue().getPaymentIntentId());
+		assertEquals(StripePaymentIntentState.AUTHORIZED, captor.getValue().getState());
+		assertEquals(Long.valueOf(1200), captor.getValue().getAmount());
 	}
 }

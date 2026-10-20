@@ -2,6 +2,7 @@ package com.stripe.core.amount.impl;
 
 import com.stripe.core.amount.StripeAmountConverter;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
+import de.hybris.platform.core.model.order.AbstractOrderModel;
 import de.hybris.platform.servicelayer.exceptions.UnknownIdentifierException;
 import de.hybris.platform.servicelayer.i18n.CommonI18NService;
 import java.math.BigDecimal;
@@ -31,6 +32,31 @@ public class DefaultStripeAmountConverter implements StripeAmountConverter
 	public BigDecimal fromMinorUnits(final long amount, final String currencyIso)
 	{
 		return BigDecimal.valueOf(amount, resolveDigits(currencyIso));
+	}
+
+	@Override
+	public BigDecimal chargeAmount(final AbstractOrderModel order)
+	{
+		if (order.getTotalPrice() == null)
+		{
+			throw new IllegalArgumentException("Order " + order.getCode() + " has no total price");
+		}
+		final BigDecimal total = BigDecimal.valueOf(order.getTotalPrice());
+		if (Boolean.TRUE.equals(order.getNet()) && order.getTotalTax() != null)
+		{
+			return total.add(BigDecimal.valueOf(order.getTotalTax()));
+		}
+		return total;
+	}
+
+	@Override
+	public long chargeAmountMinor(final AbstractOrderModel order)
+	{
+		if (order.getCurrency() == null)
+		{
+			throw new IllegalArgumentException("Order " + order.getCode() + " has no currency");
+		}
+		return toMinorUnits(chargeAmount(order), order.getCurrency().getIsocode());
 	}
 
 	protected int resolveDigits(final String currencyIso)

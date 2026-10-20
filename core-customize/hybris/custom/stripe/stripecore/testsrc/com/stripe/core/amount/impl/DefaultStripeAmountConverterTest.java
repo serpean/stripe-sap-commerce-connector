@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
+import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.exceptions.UnknownIdentifierException;
 import de.hybris.platform.servicelayer.i18n.CommonI18NService;
 import java.math.BigDecimal;
@@ -82,5 +83,47 @@ public class DefaultStripeAmountConverterTest
 	{
 		when(commonI18NService.getCurrency("XXQ")).thenThrow(new UnknownIdentifierException("none"));
 		converter.toMinorUnits(BigDecimal.ONE, "XXQ");
+	}
+
+	private CartModel cart(final Double total, final Double tax, final boolean net)
+	{
+		final CurrencyModel currency = new CurrencyModel();
+		currency.setIsocode("EUR");
+		final CartModel cart = new CartModel();
+		cart.setCode("c1");
+		cart.setCurrency(currency);
+		cart.setTotalPrice(total);
+		cart.setTotalTax(tax);
+		cart.setNet(Boolean.valueOf(net));
+		return cart;
+	}
+
+	@Test
+	public void netCartAddsTax()
+	{
+		sapCurrency("EUR", Integer.valueOf(2));
+		final CartModel cart = cart(100.0, 21.0, true);
+		assertEquals(0, new BigDecimal("121.0").compareTo(converter.chargeAmount(cart)));
+		assertEquals(12100L, converter.chargeAmountMinor(cart));
+	}
+
+	@Test
+	public void grossCartIgnoresTax()
+	{
+		sapCurrency("EUR", Integer.valueOf(2));
+		assertEquals(0, new BigDecimal("100.0").compareTo(converter.chargeAmount(cart(100.0, 21.0, false))));
+	}
+
+	@Test
+	public void nullTaxOnNetCartCountsAsZero()
+	{
+		sapCurrency("EUR", Integer.valueOf(2));
+		assertEquals(0, new BigDecimal("100.0").compareTo(converter.chargeAmount(cart(100.0, null, true))));
+	}
+
+	@Test(expected = IllegalArgumentException.class)
+	public void nullTotalPriceFailsFast()
+	{
+		converter.chargeAmount(cart(null, 21.0, true));
 	}
 }

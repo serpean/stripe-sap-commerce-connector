@@ -9,6 +9,7 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
@@ -19,7 +20,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.Set;
 
@@ -43,7 +43,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public StripeIntentData prepareForCart(final CartModel cart)
 	{
 		final String currencyIso = cart.getCurrency().getIsocode();
-		final long amount = stripeAmountConverter.toMinorUnits(cartTotal(cart), currencyIso);
+		final long amount = stripeAmountConverter.chargeAmountMinor(cart);
 		final String existingId = existingPaymentIntentId(cart);
 
 		if (existingId == null)
@@ -52,16 +52,28 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		}
 
 		final PaymentIntent existing = stripeGateway.retrievePaymentIntent(existingId);
-		if (!EDITABLE_STATUSES.contains(existing.getStatus()))
+		ensureRecord(existing, cart);
+		if ("canceled".equals(existing.getStatus()))
 		{
-			releaseFunds(existingId, "cart " + cart.getCode() + " needs a new payment intent");
+			releaseFunds(existingId, "cart " + cart.getCode() + " had a canceled payment intent");
 			return toData(createFor(cart, amount, currencyIso));
 		}
-		if (amount == existing.getAmount() && currencyIso.equalsIgnoreCase(existing.getCurrency()))
+
+		final boolean changed = amount != existing.getAmount() || !currencyIso.equalsIgnoreCase(existing.getCurrency());
+		if (!changed)
 		{
 			return toData(existing);
 		}
-		return toData(update(cart, existing, amount, currencyIso));
+		if (EDITABLE_STATUSES.contains(existing.getStatus()))
+		{
+			return toData(update(cart, existing, amount, currencyIso));
+		}
+		if ("processing".equals(existing.getStatus()))
+		{
+			throw new StripePaymentInProgressException(existingId);
+		}
+		releaseFunds(existingId, "cart " + cart.getCode() + " changed after the payment intent was confirmed");
+		return toData(createFor(cart, amount, currencyIso));
 	}
 
 	@Override
@@ -98,6 +110,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final PaymentIntent intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso),
 				idempotencyKey);
 
+		saveRecord(intent, cart, amount, currencyIso, StripePaymentIntentState.CREATED);
+
 		final StripePaymentInfoModel info = modelService.create(StripePaymentInfoModel.class);
 		info.setCode(intent.getId());
 		info.setStripePaymentIntentId(intent.getId());
@@ -112,7 +126,20 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		{
 			modelService.remove(previous);
 		}
+		return intent;
+	}
 
+	protected void ensureRecord(final PaymentIntent intent, final CartModel cart)
+	{
+		if (stripePaymentIntentRecordDao.findByPaymentIntentId(intent.getId()).isEmpty())
+		{
+			saveRecord(intent, cart, intent.getAmount(), intent.getCurrency().toUpperCase(), stateOf(intent.getStatus()));
+		}
+	}
+
+	protected void saveRecord(final PaymentIntent intent, final CartModel cart, final long amount, final String currencyIso,
+			final StripePaymentIntentState state)
+	{
 		final StripePaymentIntentRecordModel record = modelService.create(StripePaymentIntentRecordModel.class);
 		record.setPaymentIntentId(intent.getId());
 		record.setCartCode(cart.getCode());
@@ -120,9 +147,25 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		record.setUserUid(userUid(cart));
 		record.setCurrencyIso(currencyIso);
 		record.setAmount(amount);
-		record.setState(StripePaymentIntentState.CREATED);
+		record.setState(state);
 		modelService.save(record);
-		return intent;
+	}
+
+	private StripePaymentIntentState stateOf(final String stripeStatus)
+	{
+		switch (stripeStatus)
+		{
+			case "requires_capture":
+				return StripePaymentIntentState.AUTHORIZED;
+			case "succeeded":
+				return StripePaymentIntentState.CAPTURED;
+			case "processing":
+				return StripePaymentIntentState.PROCESSING;
+			case "canceled":
+				return StripePaymentIntentState.CANCELED;
+			default:
+				return StripePaymentIntentState.CREATED;
+		}
 	}
 
 	protected PaymentIntent update(final CartModel cart, final PaymentIntent existing, final long amount,
@@ -207,13 +250,6 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 			record.setState(state);
 			modelService.save(record);
 		});
-	}
-
-	protected BigDecimal cartTotal(final CartModel cart)
-	{
-		final double total = cart.getTotalPrice() == null ? 0d : cart.getTotalPrice();
-		final double tax = Boolean.TRUE.equals(cart.getNet()) && cart.getTotalTax() != null ? cart.getTotalTax() : 0d;
-		return BigDecimal.valueOf(total).add(BigDecimal.valueOf(tax));
 	}
 
 	private String existingPaymentIntentId(final CartModel cart)
