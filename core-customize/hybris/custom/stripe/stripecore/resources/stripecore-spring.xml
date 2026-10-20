@@ -142,9 +142,10 @@
         <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
     </bean>
 
-    <!-- Order process: wraps the SAP beans checkOrderAction and takePaymentAction by name, whichever extension
-         defines them, wraps OmsOrderCancelPaymentServiceAdapter when order management is installed, and adds
-         PAYMENT_PENDING to acceleratorStatusDisplayMap when that bean exists. -->
+    <!-- Order process: replaces the SAP beans checkOrderAction and takePaymentAction (by name, whichever extension
+         defines them) and OmsOrderCancelPaymentServiceAdapter (order management) by class proxies of themselves that
+         send Stripe orders to the Stripe beans below, and adds PAYMENT_PENDING to acceleratorStatusDisplayMap when
+         that bean exists. -->
     <bean id="stripeProcessActionsPostProcessor" class="com.stripe.core.process.StripeProcessActionsPostProcessor"/>
 
     <bean id="stripeAwaitPaymentCheckOrderAction" class="com.stripe.core.process.StripeAwaitPaymentCheckOrderAction"

@@ -9,8 +9,6 @@ def pl = platform {
         // Demo only
         property 'log4j2.logger.auditableActionsHandler.name', 'de.hybris.platform.audit.actions.impl.Slf4jAuditableActionHandler'
         property 'log4j2.logger.auditableActionsHandler.level', 'OFF'
-        // Reference server runs the master tenant only: the junit tenant and its *_junit web apps do not start with OMS
-        property 'installed.tenants', ''
         // Stripe configuration
         // Keys come from the environment and are never stored in git
         property 'stripe.secret.key', System.getenv('STRIPE_SECRET_KEY') ?: ''

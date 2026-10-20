@@ -3,14 +3,20 @@ package com.stripe.core.process;
 import com.stripe.core.order.StripeOrderCancelPaymentServiceAdapter;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.ordercancel.OrderCancelPaymentServiceAdapter;
+import de.hybris.platform.orderprocessing.model.OrderProcessModel;
 import de.hybris.platform.processengine.action.AbstractSimpleDecisionAction;
+import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aop.Advisor;
+import org.springframework.aop.framework.Advised;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.config.BeanPostProcessor;
@@ -19,14 +25,16 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
  * Adds the Stripe steps to the order process of SAP, whichever extension defines it (order management, the classic
  * fulfilment process or a copy of it). It works on bean names and their aliases, not classes:
  * <ul>
- * <li>{@code checkOrderAction} is wrapped by {@link StripeAwaitPaymentCheckOrderAction};</li>
- * <li>{@code takePaymentAction} is wrapped by {@link StripeTakePaymentAction};</li>
- * <li>{@code OmsOrderCancelPaymentServiceAdapter} (order management) is wrapped by
+ * <li>{@code checkOrderAction}: Stripe orders go to {@link StripeAwaitPaymentCheckOrderAction};</li>
+ * <li>{@code takePaymentAction}: Stripe orders go to {@link StripeTakePaymentAction};</li>
+ * <li>{@code OmsOrderCancelPaymentServiceAdapter} (order management): Stripe orders go to
  * {@link StripeOrderCancelPaymentServiceAdapter}, so a cancel of a Stripe order reaches the cancel payment strategy;</li>
  * <li>{@code acceleratorStatusDisplayMap} gets the display value of {@code PAYMENT_PENDING}.</li>
  * </ul>
- * A bean that does not exist is not changed. The wrappers are prototype beans, created with the original bean as
- * constructor argument.
+ * The SAP bean is replaced by a class proxy of itself ({@link StripeOrderRoutingInterceptor}), so the bean keeps its
+ * type and other beans can still inject it by its class. When the class of the bean cannot be proxied (for example, a
+ * final class), the Stripe bean replaces it and a warning is logged. A bean that does not exist is not changed. The
+ * Stripe beans are prototype beans, created with the original bean as constructor argument: other orders go to it.
  */
 public class StripeProcessActionsPostProcessor implements BeanPostProcessor, BeanFactoryAware
 {
@@ -49,18 +57,20 @@ public class StripeProcessActionsPostProcessor implements BeanPostProcessor, Bea
 		final Set<String> names = namesOf(beanName);
 		if (names.contains(CHECK_ORDER_ACTION))
 		{
-			return wrap(bean, beanName, AWAIT_PAYMENT_WRAPPER, StripeAwaitPaymentCheckOrderAction.class,
-					AbstractSimpleDecisionAction.class);
+			return addStripeStep(bean, beanName, AWAIT_PAYMENT_WRAPPER, StripeAwaitPaymentCheckOrderAction.class,
+					AbstractSimpleDecisionAction.class, StripeProcessActionsPostProcessor::actionInterceptor);
 		}
 		if (names.contains(TAKE_PAYMENT_ACTION))
 		{
-			return wrap(bean, beanName, TAKE_PAYMENT_WRAPPER, StripeTakePaymentAction.class,
-					AbstractSimpleDecisionAction.class);
+			return addStripeStep(bean, beanName, TAKE_PAYMENT_WRAPPER, StripeTakePaymentAction.class,
+					AbstractSimpleDecisionAction.class, StripeProcessActionsPostProcessor::actionInterceptor);
 		}
 		if (names.contains(OMS_CANCEL_PAYMENT_ADAPTER))
 		{
-			return wrap(bean, beanName, CANCEL_PAYMENT_ADAPTER_WRAPPER, StripeOrderCancelPaymentServiceAdapter.class,
-					OrderCancelPaymentServiceAdapter.class);
+			return addStripeStep(bean, beanName, CANCEL_PAYMENT_ADAPTER_WRAPPER,
+					StripeOrderCancelPaymentServiceAdapter.class, OrderCancelPaymentServiceAdapter.class,
+					stripeBean -> StripeOrderRoutingInterceptor
+							.forCancelPaymentAdapter((OrderCancelPaymentServiceAdapter) stripeBean));
 		}
 		if (names.contains(STATUS_DISPLAY_MAP) && bean instanceof Map<?, ?> map)
 		{
@@ -85,10 +95,11 @@ public class StripeProcessActionsPostProcessor implements BeanPostProcessor, Bea
 		return names;
 	}
 
-	private Object wrap(final Object bean, final String beanName, final String wrapperName, final Class<?> wrapperClass,
-			final Class<?> requiredType)
+	private Object addStripeStep(final Object bean, final String beanName, final String stripeBeanName,
+			final Class<?> stripeBeanClass, final Class<?> requiredType,
+			final Function<Object, StripeOrderRoutingInterceptor> interceptorFactory)
 	{
-		if (wrapperClass.isInstance(bean))
+		if (stripeBeanClass.isInstance(bean) || hasStripeInterceptor(bean))
 		{
 			return bean;
 		}
@@ -98,8 +109,46 @@ public class StripeProcessActionsPostProcessor implements BeanPostProcessor, Bea
 					requiredType.getSimpleName());
 			return bean;
 		}
-		LOG.info("Wrapping bean {} ({}) with {}", beanName, bean.getClass().getName(), wrapperClass.getSimpleName());
-		return beanFactory.getBean(wrapperName, bean);
+		final Object stripeBean = beanFactory.getBean(stripeBeanName, bean);
+		if (Modifier.isFinal(bean.getClass().getModifiers()))
+		{
+			return replacedBy(stripeBean, bean, beanName, "the class is final");
+		}
+		try
+		{
+			final ProxyFactory proxyFactory = new ProxyFactory(bean);
+			proxyFactory.setProxyTargetClass(true);
+			proxyFactory.addAdvice(interceptorFactory.apply(stripeBean));
+			final Object proxy = proxyFactory.getProxy();
+			LOG.info("Bean {} ({}) sends Stripe orders to {}", beanName, bean.getClass().getName(),
+					stripeBeanClass.getSimpleName());
+			return proxy;
+		}
+		catch (final RuntimeException e)
+		{
+			return replacedBy(stripeBean, bean, beanName, e.getMessage());
+		}
+	}
+
+	private static Object replacedBy(final Object stripeBean, final Object bean, final String beanName,
+			final String reason)
+	{
+		LOG.warn("Bean {} ({}) cannot be proxied ({}): it is replaced by {}, so it loses its type", beanName,
+				bean.getClass().getName(), reason, stripeBean.getClass().getSimpleName());
+		return stripeBean;
+	}
+
+	private static boolean hasStripeInterceptor(final Object bean)
+	{
+		return bean instanceof Advised advised && Arrays.stream(advised.getAdvisors())
+				.map(Advisor::getAdvice)
+				.anyMatch(StripeOrderRoutingInterceptor.class::isInstance);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static StripeOrderRoutingInterceptor actionInterceptor(final Object stripeAction)
+	{
+		return StripeOrderRoutingInterceptor.forAction((AbstractSimpleDecisionAction<OrderProcessModel>) stripeAction);
 	}
 
 	private static Map<Object, Object> withPaymentPending(final Map<?, ?> displayMap)
