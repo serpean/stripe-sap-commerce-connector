@@ -83,14 +83,20 @@ export class StripePaymentService {
     currentClientSecret?: string,
   ): Observable<StripePaymentResult> {
     return this.ensureIntent().pipe(
-      mergeMap((intent) => {
+      mergeMap((intent): Observable<StripePaymentResult> => {
         const changed =
           !!intent.clientSecret && intent.clientSecret !== currentClientSecret;
-        return changed
-          ? from(elements.fetchUpdates()).pipe(map(() => intent))
-          : of(intent);
-      }),
-      mergeMap(() => this.confirm(stripe, elements)),
+        if (!changed) {
+          return this.confirm(stripe, elements);
+        }
+        return from(elements.fetchUpdates()).pipe(
+          mergeMap((update) =>
+            update.error
+              ? of<StripePaymentResult>({ error: 'stripePayment.genericError' })
+              : this.confirm(stripe, elements)
+          )
+        );
+      })
     );
   }
 

@@ -1,19 +1,35 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { NO_ERRORS_SCHEMA } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { NO_ERRORS_SCHEMA, Pipe, PipeTransform } from '@angular/core';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
 import { CheckoutFlowOrchestratorService } from '@spartacus/checkout/base/components';
 import {
   GlobalMessageService,
   GlobalMessageType,
-  I18nTestingModule,
   RoutingService,
+  TranslationService,
 } from '@spartacus/core';
 import { Stripe } from '@stripe/stripe-js';
 import { Order } from '@spartacus/order/root';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, mergeMap, of, throwError, timer } from 'rxjs';
 import { StripePaymentService } from 'sap-commerce-stripe-payment/core';
 import { StripePaymentFormComponent } from './stripe-payment-form.component';
+
+@Pipe({ name: 'cxTranslate', standalone: false })
+class StubTranslatePipe implements PipeTransform {
+  transform(value: unknown): string {
+    return String(value);
+  }
+}
+
+function failLater(error: unknown): Observable<never> {
+  return timer(0).pipe(mergeMap(() => throwError(() => error)));
+}
 
 function stripeError(reason: string): HttpErrorResponse {
   return new HttpErrorResponse({
@@ -33,7 +49,8 @@ describe('StripePaymentFormComponent', () => {
 
   function setup(
     queryParams: Record<string, string> = {},
-    placeOrderResult: Observable<unknown> = of({})
+    placeOrderResult: Observable<unknown> = of({}),
+    stripe$: Observable<Stripe | null> | undefined = undefined
   ): void {
     paymentElement = {
       mount: jasmine.createSpy('mount'),
@@ -48,7 +65,7 @@ describe('StripePaymentFormComponent', () => {
       'confirmPayment',
       'placeOrder',
     ]);
-    stripeService.getStripe.and.returnValue(of(fakeStripe));
+    stripeService.getStripe.and.returnValue(stripe$ ?? of(fakeStripe));
     stripeService.ensureIntent.and.returnValue(
       of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
     );
@@ -57,11 +74,11 @@ describe('StripePaymentFormComponent', () => {
     globalMessage = jasmine.createSpyObj('GlobalMessageService', ['add']);
 
     TestBed.configureTestingModule({
-      imports: [I18nTestingModule],
-      declarations: [StripePaymentFormComponent],
+      declarations: [StripePaymentFormComponent, StubTranslatePipe],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         { provide: StripePaymentService, useValue: stripeService },
+        { provide: TranslationService, useValue: { translate: () => of('ok') } },
         { provide: RoutingService, useValue: routingService },
         { provide: GlobalMessageService, useValue: globalMessage },
         {
@@ -172,6 +189,44 @@ describe('StripePaymentFormComponent', () => {
     });
   });
 
+  describe('failures and re-entry', () => {
+    it('shows unableToInitialize when the Stripe config request fails', fakeAsync(() => {
+      setup(
+        {},
+        of({}),
+        failLater(new HttpErrorResponse({ status: 500 }))
+      );
+      tick();
+
+      expect(component.error).toBe('stripePayment.unableToInitialize');
+      expect(component.isLoading).toBeFalse();
+    }));
+
+    it('ignores a second submit while the first one is running', () => {
+      setup();
+      stripeService.confirmPayment.and.returnValue(new Subject<any>());
+
+      component.submit();
+      component.submit();
+
+      expect(stripeService.confirmPayment).toHaveBeenCalledTimes(1);
+    });
+
+    it('blocks new confirmations while the payment is pending', () => {
+      setup();
+      stripeService.confirmPayment.and.returnValue(of({ intent: {} }));
+      stripeService.placeOrder.and.returnValue(
+        throwError(() => stripeError('STRIPE_PAYMENT_IN_PROGRESS'))
+      );
+
+      component.submit();
+      component.submit();
+
+      expect(stripeService.confirmPayment).toHaveBeenCalledTimes(1);
+      expect(component.paymentPending).toBeTrue();
+    });
+  });
+
   describe('after a redirect return', () => {
     it('places order after redirect return without reading client status', () => {
       setup({
@@ -187,14 +242,31 @@ describe('StripePaymentFormComponent', () => {
       expect(stripeService.ensureIntent).not.toHaveBeenCalled();
     });
 
-    it('shows the server decision when the payment failed', () => {
+    it('shows the server decision when the payment failed', fakeAsync(() => {
       setup(
         { payment_intent: 'pi_1', redirect_status: 'failed' },
-        throwError(() => stripeError('STRIPE_PAYMENT_FAILED'))
+        failLater(stripeError('STRIPE_PAYMENT_FAILED'))
       );
+      tick();
 
       expect(component.error).toBe('stripePayment.paymentFailed');
       expect(routingService.go).not.toHaveBeenCalled();
-    });
+    }));
+
+    ['STRIPE_PAYMENT_FAILED', 'STRIPE_AMOUNT_MISMATCH', 'STRIPE_UNAVAILABLE'].forEach(
+      (reason) =>
+        it(`mounts the Payment Element again after redirect return fails with ${reason}`, fakeAsync(() => {
+          setup(
+            { payment_intent: 'pi_1', redirect_status: 'succeeded' },
+            failLater(stripeError(reason))
+          );
+          expect(paymentElement.mount).not.toHaveBeenCalled();
+          tick();
+
+          expect(stripeService.ensureIntent).toHaveBeenCalledTimes(1);
+          expect(paymentElement.mount).toHaveBeenCalledTimes(1);
+          expect(component.error).toBeDefined();
+        }))
+    );
   });
 });

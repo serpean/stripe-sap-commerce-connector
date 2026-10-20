@@ -44,6 +44,7 @@ export class StripePaymentFormComponent
   @ViewChild('paymentElement') paymentElementRef?: ElementRef<HTMLDivElement>;
 
   isLoading = false;
+  paymentPending = false;
   error?: string;
 
   protected stripe?: Stripe | null;
@@ -121,13 +122,19 @@ export class StripePaymentFormComponent
     }
     this.stripeSetup = true;
     this.subscription.add(
-      this.stripeService.getStripe().subscribe((stripe) => {
-        this.stripe = stripe;
-        if (!stripe) {
-          this.error = 'stripePayment.missingPublishableKey';
-        } else if (this.clientSecret) {
-          this.initializeElements(this.clientSecret);
-        }
+      this.stripeService.getStripe().subscribe({
+        next: (stripe) => {
+          this.stripe = stripe;
+          if (!stripe) {
+            this.error = 'stripePayment.missingPublishableKey';
+          } else if (this.clientSecret) {
+            this.initializeElements(this.clientSecret);
+          }
+        },
+        error: () => {
+          this.isLoading = false;
+          this.error = 'stripePayment.unableToInitialize';
+        },
       })
     );
   }
@@ -146,7 +153,6 @@ export class StripePaymentFormComponent
     if (!this.useStripeFlow) {
       return;
     }
-    this.error = undefined;
     this.subscription.add(
       this.stripeService.ensureIntent().subscribe({
         next: (intent) => {
@@ -164,7 +170,7 @@ export class StripePaymentFormComponent
   }
 
   submit(): void {
-    if (!this.useStripeFlow) {
+    if (!this.useStripeFlow || this.isLoading || this.paymentPending) {
       return;
     }
     if (!this.stripe || !this.elements || !this.clientSecret) {
@@ -229,6 +235,7 @@ export class StripePaymentFormComponent
           error: (err) => {
             this.isLoading = false;
             this.placingOrder = false;
+            this.recoverFromRedirectFailure(err);
             this.handleError(err, 'stripePayment.genericError');
           },
         })
@@ -239,6 +246,24 @@ export class StripePaymentFormComponent
   protected handleRedirectReturn(): void {
     this.clearUrlParams();
     this.placeOrderAfterPayment();
+  }
+
+  /**
+   * After a failed redirect return the Payment Element is not mounted yet.
+   * Mount it again so the customer can retry.
+   */
+  protected recoverFromRedirectFailure(err: unknown): void {
+    if (!this.isReturningFromRedirect) {
+      return;
+    }
+    const reason = getStripeErrorReason(err);
+    if (reason === 'STRIPE_PAYMENT_IN_PROGRESS' || reason === 'STRIPE_ALREADY_PLACED') {
+      return;
+    }
+    this.isReturningFromRedirect = false;
+    if (reason !== 'STRIPE_AMOUNT_MISMATCH') {
+      this.ensureIntent();
+    }
   }
 
   protected handleError(
@@ -257,6 +282,7 @@ export class StripePaymentFormComponent
         this.error = 'stripePayment.paymentFailed';
         break;
       case 'STRIPE_PAYMENT_IN_PROGRESS':
+        this.paymentPending = true;
         this.error = 'stripePayment.paymentPending';
         break;
       case 'STRIPE_ALREADY_PLACED':

@@ -140,5 +140,19 @@ describe('StripePaymentService', () => {
         done();
       });
     });
+
+    it('does not confirm and reports genericError when fetchUpdates fails', (done) => {
+      occService.ensureIntent.and.returnValue(
+        of({ paymentIntentId: 'pi_2', clientSecret: 'cs_2' })
+      );
+      elements.fetchUpdates.and.resolveTo({ error: { message: 'boom' } } as any);
+      const service = createService();
+
+      service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
+        expect(stripe.confirmPayment).not.toHaveBeenCalled();
+        expect(result.error).toBe('stripePayment.genericError');
+        done();
+      });
+    });
   });
 });
