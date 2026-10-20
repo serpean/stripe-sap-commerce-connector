@@ -143,7 +143,8 @@
     </bean>
 
     <!-- Order process: wraps the SAP beans checkOrderAction and takePaymentAction by name, whichever extension
-         defines them, and adds PAYMENT_PENDING to acceleratorStatusDisplayMap when that bean exists. -->
+         defines them, wraps OmsOrderCancelPaymentServiceAdapter when order management is installed, and adds
+         PAYMENT_PENDING to acceleratorStatusDisplayMap when that bean exists. -->
     <bean id="stripeProcessActionsPostProcessor" class="com.stripe.core.process.StripeProcessActionsPostProcessor"/>
 
     <bean id="stripeAwaitPaymentCheckOrderAction" class="com.stripe.core.process.StripeAwaitPaymentCheckOrderAction"
@@ -159,6 +160,20 @@
           parent="abstractAction" scope="prototype">
         <property name="paymentService" ref="paymentService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+    </bean>
+
+    <!-- Cancel: SAP recalculates the order, then the Stripe payment is voided or partly refunded. -->
+    <alias name="stripeOrderCancelPaymentServiceStrategy" alias="orderCancelPaymentServiceStrategy"/>
+    <bean id="stripeOrderCancelPaymentServiceStrategy" class="com.stripe.core.order.StripeOrderCancelPaymentServiceStrategy"
+          parent="defaultOrderCancelPaymentServiceStrategy">
+        <property name="paymentService" ref="paymentService"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+    </bean>
+
+    <bean id="stripeOrderCancelPaymentServiceAdapter" class="com.stripe.core.order.StripeOrderCancelPaymentServiceAdapter"
+          scope="prototype">
+        <property name="orderCancelPaymentServiceStrategy" ref="orderCancelPaymentServiceStrategy"/>
     </bean>
 
     <import resource="stripecore-commands-spring.xml"/>

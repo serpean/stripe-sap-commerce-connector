@@ -9,7 +9,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.stripe.core.order.StripeOrderCancelPaymentServiceAdapter;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.ordercancel.OrderCancelPaymentServiceAdapter;
 import de.hybris.platform.orderprocessing.model.OrderProcessModel;
 import de.hybris.platform.processengine.action.AbstractSimpleDecisionAction;
 import java.util.LinkedHashMap;
@@ -81,6 +83,26 @@ public class StripeProcessActionsPostProcessorTest
 		final Object bean = new Object();
 
 		assertSame(bean, postProcessor.postProcessAfterInitialization(bean, "checkOrderAction"));
+		verify(beanFactory, never()).getBean(anyString(), (Object) any());
+	}
+
+	@Test
+	public void omsCancelPaymentAdapterIsWrapped()
+	{
+		final OrderCancelPaymentServiceAdapter omsAdapter = mock(OrderCancelPaymentServiceAdapter.class);
+		final StripeOrderCancelPaymentServiceAdapter wrapper = new StripeOrderCancelPaymentServiceAdapter(omsAdapter);
+		when(beanFactory.getBean("stripeOrderCancelPaymentServiceAdapter", omsAdapter)).thenReturn(wrapper);
+
+		assertSame(wrapper, postProcessor.postProcessAfterInitialization(omsAdapter, "OmsOrderCancelPaymentServiceAdapter"));
+		assertSame(wrapper, postProcessor.postProcessAfterInitialization(wrapper, "OmsOrderCancelPaymentServiceAdapter"));
+	}
+
+	@Test
+	public void omsCancelPaymentAdapterOfOtherTypeIsKept()
+	{
+		final Object bean = new Object();
+
+		assertSame(bean, postProcessor.postProcessAfterInitialization(bean, "OmsOrderCancelPaymentServiceAdapter"));
 		verify(beanFactory, never()).getBean(anyString(), (Object) any());
 	}
 
