@@ -31,9 +31,12 @@ import de.hybris.platform.commerceservices.service.data.CommerceCheckoutParamete
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.payment.dto.TransactionStatus;
+import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
+import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
@@ -224,6 +227,42 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
+	public void retryAfterFailedPlacementReusesExistingAuthorization()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		givenAcceptedAuthorization(PI_ID);
+
+		assertTrue(authorizer.authorize(cart));
+
+		verify(lockService, never()).tryAcquire(anyString());
+		verify(lockService, never()).release(anyString());
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void acceptedAuthorizationForOtherIntentDoesNotShortCircuit()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		givenAcceptedAuthorization("pi_other");
+
+		assertTrue(authorizer.authorize(cart));
+
+		verify(lockService).tryAcquire(PI_ID);
+		verify(commerceCheckoutService).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void existingAuthorizationDoesNotSkipAmountCheck()
+	{
+		givenIntent("requires_capture", 1500L, "eur");
+		givenAcceptedAuthorization(PI_ID);
+
+		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
+
+		verify(lockService, never()).tryAcquire(anyString());
+	}
+
+	@Test
 	public void cartWithoutPaymentIntentThrowsPaymentNotFound()
 	{
 		paymentInfo.setStripePaymentIntentId(null);
@@ -263,6 +302,17 @@ public class DefaultStripeCheckoutAuthorizerTest
 		intent.setCurrency(currency);
 		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent);
 		return intent;
+	}
+
+	private void givenAcceptedAuthorization(final String requestId)
+	{
+		final PaymentTransactionEntryModel entry = entry(TransactionStatus.ACCEPTED);
+		entry.setType(PaymentTransactionType.AUTHORIZATION);
+		entry.setRequestId(requestId);
+		final PaymentTransactionModel transaction = new PaymentTransactionModel();
+		transaction.setPaymentProvider("Stripe");
+		transaction.setEntries(List.of(entry));
+		cart.setPaymentTransactions(List.of(transaction));
 	}
 
 	private PaymentMethod paymentMethod(final String type, final String id)

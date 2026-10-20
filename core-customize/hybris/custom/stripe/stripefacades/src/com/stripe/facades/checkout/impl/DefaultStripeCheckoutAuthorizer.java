@@ -18,6 +18,7 @@ import de.hybris.platform.commerceservices.order.CommerceCheckoutService;
 import de.hybris.platform.commerceservices.service.data.CommerceCheckoutParameter;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.payment.dto.TransactionStatus;
+import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.util.EnumSet;
@@ -62,6 +63,12 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 			}
 			LOG.info("Payment intent {} in status {} does not match cart {}", paymentIntentId, status, cart.getCode());
 			return false;
+		}
+
+		if (hasAcceptedAuthorization(cart, paymentIntentId))
+		{
+			LOG.info("Cart {} already has an accepted authorization of payment intent {}", cart.getCode(), paymentIntentId);
+			return true;
 		}
 
 		if (!stripeOrderPlacementLockService.tryAcquire(paymentIntentId))
@@ -183,6 +190,20 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 			}
 		}
 		throw new StripeCheckoutException(Reason.PAYMENT_NOT_FOUND, "Cart " + cart.getCode() + " has no payment intent");
+	}
+
+	/**
+	 * {@code true} when an earlier call authorized this PaymentIntent for the cart and the order placement then failed.
+	 * The lock of that call is still held, so the retry reuses the authorization.
+	 */
+	private boolean hasAcceptedAuthorization(final CartModel cart, final String paymentIntentId)
+	{
+		return cart.getPaymentTransactions() != null && cart.getPaymentTransactions().stream()
+				.filter(transaction -> StripeCoreConstants.STRIPE_PROVIDER.equals(transaction.getPaymentProvider()))
+				.filter(transaction -> transaction.getEntries() != null)
+				.flatMap(transaction -> transaction.getEntries().stream())
+				.anyMatch(entry -> PaymentTransactionType.AUTHORIZATION.equals(entry.getType())
+						&& paymentIntentId.equals(entry.getRequestId()) && isAccepted(entry));
 	}
 
 	private boolean matchesCart(final PaymentIntent intent, final CartModel cart)
