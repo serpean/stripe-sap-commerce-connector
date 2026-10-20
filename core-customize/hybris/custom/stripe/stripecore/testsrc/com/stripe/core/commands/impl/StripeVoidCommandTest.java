@@ -68,6 +68,18 @@ public class StripeVoidCommandTest
 	}
 
 	@Test
+	public void voidOfCapturedIntentWithUnknownRefundStatusMapsToError()
+	{
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("succeeded", 1999L, "eur"));
+		final Refund refund = new Refund();
+		refund.setId("re_1");
+		refund.setStatus("something_new");
+		when(gateway.createRefund(PI_ID, 1999L, "void-refund-" + PI_ID)).thenReturn(refund);
+
+		assertEquals(TransactionStatus.ERROR, command.perform(request()).getTransactionStatus());
+	}
+
+	@Test
 	public void voidKeyDependsOnlyOnPaymentIntent()
 	{
 		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));

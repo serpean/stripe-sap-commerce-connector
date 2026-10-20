@@ -5,6 +5,7 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
 import de.hybris.platform.payment.commands.request.AbstractRequest;
 import de.hybris.platform.payment.commands.result.AbstractResult;
 import de.hybris.platform.payment.dto.TransactionStatus;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Base of the Stripe payment commands. The requestId of the results is the PaymentIntent id, so later requests of the
@@ -25,6 +27,8 @@ import java.util.Optional;
 public abstract class AbstractStripeCommand
 {
 	private static final Logger LOG = LoggerFactory.getLogger(AbstractStripeCommand.class);
+	private static final Set<String> ACCEPTED_REFUND_STATUSES = Set.of("succeeded", "pending", "requires_action");
+	private static final Set<String> REJECTED_REFUND_STATUSES = Set.of("failed", "canceled");
 
 	private StripeGateway stripeGateway;
 	private StripeAmountConverter stripeAmountConverter;
@@ -89,6 +93,25 @@ public abstract class AbstractStripeCommand
 				exception.getStripeCode(), exception.isRetryable());
 		return fill(result, request, TransactionStatus.ERROR, exception.isRetryable()
 				? TransactionStatusDetails.COMMUNICATION_PROBLEM : TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+	}
+
+	/**
+	 * Fills the result from the status of a refund. succeeded, pending and requires_action give ACCEPTED (the webhook
+	 * confirms a pending refund later); failed and canceled give REJECTED; any other status, null included, gives ERROR.
+	 */
+	protected <R extends AbstractResult> R fillFromRefund(final R result, final AbstractRequest request, final Refund refund)
+	{
+		final String status = StringUtils.defaultString(refund.getStatus());
+		if (ACCEPTED_REFUND_STATUSES.contains(status))
+		{
+			return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+		}
+		if (REJECTED_REFUND_STATUSES.contains(status))
+		{
+			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+		}
+		LOG.error("Refund [{}] has an unknown status [{}]", refund.getId(), refund.getStatus());
+		return fill(result, request, TransactionStatus.ERROR, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
 	}
 
 	protected <R extends AbstractResult> R fill(final R result, final AbstractRequest request, final TransactionStatus status,

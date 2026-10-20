@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Captures the amount of a capture request. A PaymentIntent that Stripe already captured (automatic capture) is
- * accepted without a call to Stripe.
+ * accepted without a call to Stripe, but only when Stripe received the requested amount.
  */
 public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 {
@@ -31,15 +31,19 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 
 		try
 		{
-			PaymentIntent paymentIntent = getStripeGateway().retrievePaymentIntent(paymentIntentId);
-			if (hasStatus(paymentIntent, StripePaymentIntentStatus.AUTHORIZED))
-			{
-				paymentIntent = getStripeGateway().capturePaymentIntent(paymentIntentId,
-						toMinorUnits(request.getTotalAmount(), request.getCurrency()), key);
-			}
+			final long amount = toMinorUnits(request.getTotalAmount(), request.getCurrency());
+			final PaymentIntent paymentIntent = getStripeGateway().retrievePaymentIntent(paymentIntentId);
 			if (hasStatus(paymentIntent, StripePaymentIntentStatus.CAPTURED))
 			{
-				return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+				return alreadyCaptured(paymentIntent, amount, result, request);
+			}
+			if (hasStatus(paymentIntent, StripePaymentIntentStatus.AUTHORIZED))
+			{
+				final PaymentIntent captured = getStripeGateway().capturePaymentIntent(paymentIntentId, amount, key);
+				if (hasStatus(captured, StripePaymentIntentStatus.CAPTURED))
+				{
+					return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+				}
 			}
 			LOG.warn("PaymentIntent [{}] cannot be captured: status [{}]", paymentIntentId, paymentIntent.getStatus());
 			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
@@ -48,5 +52,21 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 		{
 			return error(result, e, request);
 		}
+	}
+
+	/**
+	 * Stripe captured the PaymentIntent before (automatic capture). The capture is accepted only for the amount that
+	 * Stripe received.
+	 */
+	private CaptureResult alreadyCaptured(final PaymentIntent paymentIntent, final long amount, final CaptureResult result,
+			final CaptureRequest request)
+	{
+		if (Long.valueOf(amount).equals(paymentIntent.getAmountReceived()))
+		{
+			return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+		}
+		LOG.warn("PaymentIntent [{}] received [{}], not the requested [{}] of transaction [{}]", paymentIntent.getId(),
+				paymentIntent.getAmountReceived(), amount, request.getMerchantTransactionCode());
+		return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.INVALID_REQUEST);
 	}
 }
