@@ -9,12 +9,17 @@ def pl = platform {
         // Demo only
         property 'log4j2.logger.auditableActionsHandler.name', 'de.hybris.platform.audit.actions.impl.Slf4jAuditableActionHandler'
         property 'log4j2.logger.auditableActionsHandler.level', 'OFF'
+        // Reference server runs the master tenant only: the junit tenant and its *_junit web apps do not start with OMS
+        property 'installed.tenants', ''
         // Stripe configuration
         // Keys come from the environment and are never stored in git
         property 'stripe.secret.key', System.getenv('STRIPE_SECRET_KEY') ?: ''
         property 'stripe.publishable.key', System.getenv('STRIPE_PUBLISHABLE_KEY') ?: ''
         property 'stripe.webhook.secret', System.getenv('STRIPE_WEBHOOK_SECRET') ?: ''
         property 'stripe.capture.mode', 'manual'
+        property 'stripe.webhook.graceperiod.seconds', System.getenv('STRIPE_WEBHOOK_GRACEPERIOD_SECONDS') ?: '300'
+        property 'stripe.payment.pending.timeout.seconds', System.getenv('STRIPE_PAYMENT_PENDING_TIMEOUT_SECONDS') ?: '86400'
+        property 'stripe.payment.pending.retry.seconds', System.getenv('STRIPE_PAYMENT_PENDING_RETRY_SECONDS') ?: '300'
         property 'stripe.statement.descriptor', 'MYSHOP'
         property 'stripe.descriptor.suffix', 'ECOM'
         property 'payment.mode.STRIPE.enabled', 'true'
@@ -139,6 +144,7 @@ def pl = platform {
         extName 'warehousingbackoffice'
         extName 'warehousingfacades'
         extName 'warehousingwebservices'
+        extName 'yacceleratorordermanagement'
 
         /* personalization */
         extName 'personalizationcms'

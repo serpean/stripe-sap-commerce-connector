@@ -1,3 +1,4 @@
 # Reference project: use the Stripe connector on the electronics store.
-INSERT_UPDATE BaseStore; uid[unique = true]; paymentProvider
-                       ; electronics      ; Stripe
+# Add EUR to the store (and so to the electronics-spa site) and use the OMS order process.
+INSERT_UPDATE BaseStore; uid[unique = true]; paymentProvider; currencies(isocode)[mode = append]; submitOrderProcessCode
+                       ; electronics      ; Stripe         ; EUR                                 ; order-process
