@@ -6,20 +6,16 @@ import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.dto.StripeConfigWsDTO;
 import com.stripe.dto.StripeIntentWsDTO;
 import com.stripe.dto.StripeWebhookResponseWsDTO;
-import com.stripe.exception.StripeException;
-import com.stripe.exception.StripeGenericWebserviceException;
-import com.stripe.facades.StripePaymentFacade;
-import com.stripe.facades.data.StripeWebhookResultData;
+import com.stripe.facades.webhook.StripeWebhookFacade;
+import com.stripe.facades.webhook.StripeWebhookReceipt;
 import de.hybris.platform.commercewebservicescommons.errors.exceptions.CartException;
 import de.hybris.platform.order.CartService;
-import de.hybris.platform.webservicescommons.errors.exceptions.WebserviceValidationException;
 import de.hybris.platform.webservicescommons.swagger.ApiBaseSiteIdParam;
 import de.hybris.platform.webservicescommons.swagger.ApiBaseSiteIdUserIdAndCartIdParam;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,8 +35,6 @@ import javax.annotation.Resource;
 @Tag(name = "Stripe Payment")
 public class StripePaymentController
 {
-	private static final Logger LOG = LoggerFactory.getLogger(StripePaymentController.class);
-
 	@Resource(name = "stripePaymentIntentService")
 	private StripePaymentIntentService stripePaymentIntentService;
 
@@ -50,8 +44,8 @@ public class StripePaymentController
 	@Resource(name = "cartService")
 	private CartService cartService;
 
-	@Resource(name = "stripePaymentFacade")
-	private StripePaymentFacade stripePaymentFacade;
+	@Resource(name = "stripeWebhookFacade")
+	private StripeWebhookFacade stripeWebhookFacade;
 
 	@Secured({ "ROLE_CUSTOMERGROUP", "ROLE_CLIENT", "ROLE_CUSTOMERMANAGERGROUP", "ROLE_TRUSTED_CLIENT" })
 	@PostMapping("/users/{userId}/carts/{cartId}/payments/stripe/intent")
@@ -88,29 +82,18 @@ public class StripePaymentController
 	}
 
 	@PostMapping("/payments/stripe/webhook")
-	@ResponseBody
-	public StripeWebhookResponseWsDTO webhook(@RequestHeader("Stripe-Signature") final String signature,
+	public ResponseEntity<StripeWebhookResponseWsDTO> webhook(
+			@RequestHeader(value = "Stripe-Signature", required = false) final String signature,
 			@RequestBody final String payload)
 	{
-		LOG.debug("Received Stripe webhook");
-		try
+		final StripeWebhookReceipt receipt = stripeWebhookFacade.receive(payload, signature);
+		if (receipt == StripeWebhookReceipt.INVALID_SIGNATURE)
 		{
-			final StripeWebhookResponseWsDTO response = new StripeWebhookResponseWsDTO();
-			final StripeWebhookResultData result = stripePaymentFacade.processWebhook(payload, signature);
-			response.setProcessedEventId(result.getEventId());
-			response.setStatus(result.isProcessed() ? "ACK" : "NOK");
-			response.setMessage(result.getMessage());
-			return response;
+			return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
 		}
-		catch (final StripeException e)
-		{
-			LOG.error("Failed to process Stripe webhook", e);
-			throw new StripeGenericWebserviceException(e.getMessage(), e.getCode(), e);
-		}
-		catch (final IllegalArgumentException e)
-		{
-			throw new WebserviceValidationException(e.getMessage());
-		}
+		final StripeWebhookResponseWsDTO response = new StripeWebhookResponseWsDTO();
+		response.setStatus(receipt.name());
+		return ResponseEntity.ok(response);
 	}
 
 	public void setStripePaymentIntentService(final StripePaymentIntentService stripePaymentIntentService)
@@ -128,8 +111,8 @@ public class StripePaymentController
 		this.cartService = cartService;
 	}
 
-	public void setStripePaymentFacade(final StripePaymentFacade stripePaymentFacade)
+	public void setStripeWebhookFacade(final StripeWebhookFacade stripeWebhookFacade)
 	{
-		this.stripePaymentFacade = stripePaymentFacade;
+		this.stripeWebhookFacade = stripeWebhookFacade;
 	}
 }

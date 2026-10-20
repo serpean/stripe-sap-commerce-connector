@@ -9,7 +9,7 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.errors.StripeOccExceptionHandler;
-import com.stripe.facades.StripePaymentFacade;
+import com.stripe.facades.webhook.StripeWebhookFacade;
 import com.stripe.validators.StripePlaceOrderCartValidatorTest.SapLikePlaceOrderCartValidator;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.commercefacades.order.data.CartData;
@@ -58,7 +58,7 @@ public class StripeOccWebSpringContextTest
 				() -> mock(StripePaymentIntentService.class));
 		context.registerBean("stripeConfigurationService", StripeConfigurationService.class,
 				() -> mock(StripeConfigurationService.class));
-		context.registerBean("stripePaymentFacade", StripePaymentFacade.class, () -> mock(StripePaymentFacade.class));
+		context.registerBean("stripeWebhookFacade", StripeWebhookFacade.class, () -> mock(StripeWebhookFacade.class));
 		new XmlBeanDefinitionReader(context).loadBeanDefinitions("classpath:/occ/v2/stripeocc/web/spring/stripeocc-web-spring.xml");
 		context.refresh();
 	}

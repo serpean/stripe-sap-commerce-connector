@@ -30,11 +30,6 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
-    <bean id="stripeWebhookService" class="com.stripe.core.stripe.StripeWebhookService">
-        <property name="modelService" ref="modelService"/>
-        <property name="assistedServiceService" ref="assistedServiceService"/>
-    </bean>
-
     <alias name="defaultStripePaymentIntentRecordDao" alias="stripePaymentIntentRecordDao"/>
     <bean id="defaultStripePaymentIntentRecordDao" class="com.stripe.core.dao.impl.DefaultStripePaymentIntentRecordDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
