@@ -4,7 +4,7 @@
 <extension abstractclassprefix="Generated" classprefix="StripeCore" managername="StripeCoreManager" managersuperclass="de.hybris.platform.jalo.extension.Extension" name="stripecore" usemaven="true">
         <requires-extension name="payment"/>
         <requires-extension name="paymentstandard"/>
-        <requires-extension name="assistedserviceservices"/>
+        <requires-extension name="commerceservices"/>
         <coremodule generated="true" manager="com.stripe.core.jalo.StripeCoreManager" packageroot="com.stripe.core"/>
     </extension>
 </extensioninfo>

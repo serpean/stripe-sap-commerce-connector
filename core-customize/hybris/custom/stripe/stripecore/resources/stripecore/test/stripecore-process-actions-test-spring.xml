@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Test only (StripeProcessActionsPostProcessorIntegrationTest): a child context of the core context with two dummy
+ order process actions, one of them overridden through an alias, as SAP extensions do, and a stand-in for the
+ OMS cancel payment adapter of warehousing.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <bean id="stripeProcessActionsPostProcessor" class="com.stripe.core.process.StripeProcessActionsPostProcessor"/>
+
+    <bean id="checkOrderAction" parent="abstractAction"
+          class="com.stripe.core.process.StripeProcessActionsPostProcessorIntegrationTest$DummyAction"/>
+
+    <alias name="customTakePaymentAction" alias="takePaymentAction"/>
+    <bean id="customTakePaymentAction" parent="abstractAction"
+          class="com.stripe.core.process.StripeProcessActionsPostProcessorIntegrationTest$DummyAction"/>
+
+    <bean id="OmsOrderCancelPaymentServiceAdapter"
+          class="de.hybris.platform.ordercancel.impl.DefaultOrderCancelPaymentServiceAdapter"/>
+</beans>

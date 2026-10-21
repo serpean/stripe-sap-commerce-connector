@@ -18,4 +18,4 @@ These changes come from the connector cleanup (October 2026). They can break an 
 
 - **`@spartacus/opf` is removed** from the reference app, together with `OpfFeatureModule`, `OpfOrderModule` from `@spartacus/opf/order`, and the `opf.scss` styles. If your app imported `OpfOrderModule` only for the Stripe connector, remove it and keep `OrderModule` from `@spartacus/order`.
 - **The `stripeConfirm` OCC endpoint is removed** from the library config (`defaultStripeOccConfig`) and from the `OccEndpoints` augmentation. It had no backend.
-- **The publishable key is not in the code any more.** The reference app reads it from `STRIPE_PUBLISHABLE_KEY`. Your app must give it through `StripePaymentConfig`.
+- **The publishable key is not in the code any more.** The backend serves it (`GET payments/stripe/config`), and `StripePaymentConfig` is optional.

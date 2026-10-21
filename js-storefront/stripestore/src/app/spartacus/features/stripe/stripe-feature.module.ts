@@ -2,14 +2,12 @@ import { NgModule } from '@angular/core';
 import { CmsConfig, I18nConfig, provideConfig } from '@spartacus/core';
 import {
   STRIPE_PAYMENT_FEATURE,
-  StripePaymentConfig,
   StripePaymentRootModule,
 } from 'sap-commerce-stripe-payment/root';
 import {
   stripePaymentTranslationChunksConfig,
   stripePaymentTranslationsEn,
 } from 'sap-commerce-stripe-payment/assets';
-import { STRIPE_PUBLISHABLE_KEY } from './stripe-keys.generated';
 
 @NgModule({
   imports: [StripePaymentRootModule],
@@ -30,11 +28,6 @@ import { STRIPE_PUBLISHABLE_KEY } from './stripe-keys.generated';
               (m) => m.StripePaymentFormComponent
             ),
         },
-      },
-    }),
-    provideConfig(<StripePaymentConfig>{
-      stripePayment: {
-        publishableKey: STRIPE_PUBLISHABLE_KEY,
       },
     }),
     provideConfig(<I18nConfig>{

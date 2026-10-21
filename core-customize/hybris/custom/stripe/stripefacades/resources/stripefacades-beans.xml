@@ -4,15 +4,19 @@
 -->
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="beans.xsd">
 
-	<bean class="com.stripe.facades.data.StripeIntentData">
-		<property name="intentId" type="String"/>
-		<property name="clientSecret" type="String"/>
-		<property name="status" type="String"/>
+	<bean class="com.stripe.facades.data.StripePaymentInfoData">
+		<description>Stripe payment of a cart or an order, as the storefront shows it.</description>
+		<property name="paymentMethodType" type="String"/>
+		<property name="cardBrand" type="String"/>
+		<property name="cardLast4" type="String"/>
+		<property name="cardExpMonth" type="Integer"/>
+		<property name="cardExpYear" type="Integer"/>
+		<property name="paymentStatus" type="String">
+			<description>ACCEPTED, PENDING or FAILED. Empty while the payment has no result.</description>
+		</property>
 	</bean>
 
-	<bean class="com.stripe.facades.data.StripeConfirmData">
-		<property name="intentId" type="String"/>
-		<property name="paymentMethodId" type="String"/>
-		<property name="savePaymentMethod" type="Boolean"/>
+	<bean class="de.hybris.platform.commercefacades.order.data.AbstractOrderData">
+		<property name="stripePaymentInfo" type="com.stripe.facades.data.StripePaymentInfoData"/>
 	</bean>
 </beans>

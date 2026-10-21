@@ -1,163 +1,155 @@
 package com.stripe.core.commands.impl;
 
-import com.stripe.core.payment.request.StripeRequestFactory;
-import com.stripe.core.payment.services.StripePaymentIntegrationService;
-import com.stripe.core.payment.services.StripePaymentTransactionService;
-import com.stripe.exception.CardException;
-import com.stripe.exception.InvalidRequestException;
-import com.stripe.exception.StripeException;
+import com.stripe.core.amount.StripeAmountConverter;
+import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.status.StripePaymentIntentStatus;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
+import de.hybris.platform.payment.commands.request.AbstractRequest;
 import de.hybris.platform.payment.commands.result.AbstractResult;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.dto.TransactionStatusDetails;
 import de.hybris.platform.servicelayer.time.TimeService;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
+import java.util.Currency;
+import java.util.Optional;
+import java.util.Set;
 
 /**
- * Abstract base class for Stripe payment commands.
- * Provides common functionality for error handling and status mapping.
+ * Base of the Stripe payment commands. The requestId of the results is the PaymentIntent id, so later requests of the
+ * framework carry it. The requestToken never holds a secret.
  */
-public abstract class AbstractStripeCommand {
+public abstract class AbstractStripeCommand
+{
+	private static final Logger LOG = LoggerFactory.getLogger(AbstractStripeCommand.class);
+	private static final Set<String> ACCEPTED_REFUND_STATUSES = Set.of("succeeded", "pending", "requires_action");
+	private static final Set<String> REJECTED_REFUND_STATUSES = Set.of("failed", "canceled");
 
-    private static final Logger LOG = LoggerFactory.getLogger(AbstractStripeCommand.class);
+	private StripeGateway stripeGateway;
+	private StripeAmountConverter stripeAmountConverter;
+	private TimeService timeService;
 
-    protected StripeRequestFactory stripeRequestFactory;
-    protected StripePaymentIntegrationService stripePaymentIntegrationService;
-    protected StripePaymentTransactionService stripePaymentTransactionService;
-    protected TimeService timeService;
+	/**
+	 * Stable idempotency key: the prefix plus the merchant transaction code, which SAP makes unique per entry.
+	 */
+	protected String idempotencyKey(final String prefix, final AbstractRequest request)
+	{
+		final String code = request.getMerchantTransactionCode();
+		if (StringUtils.isBlank(code))
+		{
+			throw new IllegalArgumentException("The request has no merchant transaction code");
+		}
+		return prefix + code;
+	}
 
-    /**
-     * Maps a Stripe PaymentIntent status to Hybris TransactionStatus.
-     *
-     * @param stripeStatus the Stripe status string
-     * @return the corresponding TransactionStatus
-     */
-    protected TransactionStatus mapPaymentIntentStatus(final String stripeStatus) {
-        if (stripeStatus == null) {
-            return TransactionStatus.ERROR;
-        }
+	protected String requirePaymentIntentId(final String paymentIntentId)
+	{
+		if (StringUtils.isBlank(paymentIntentId))
+		{
+			throw new IllegalArgumentException("The request has no PaymentIntent id");
+		}
+		return paymentIntentId;
+	}
 
-        switch (stripeStatus.toLowerCase()) {
-            case "succeeded":
-            case "requires_capture":
-            case "canceled":
-                return TransactionStatus.ACCEPTED;
-            case "processing":
-            case "requires_action":
-                return TransactionStatus.REVIEW;
-            case "requires_payment_method":
-                return TransactionStatus.REJECTED;
-            default:
-                LOG.warn("Unknown Stripe PaymentIntent status: {}", stripeStatus);
-                return TransactionStatus.ERROR;
-        }
-    }
+	/**
+	 * Status of the PaymentIntent, or empty when Stripe sends a status that this connector does not know.
+	 */
+	protected Optional<StripePaymentIntentStatus> statusOf(final PaymentIntent paymentIntent)
+	{
+		try
+		{
+			return Optional.of(StripePaymentIntentStatus.of(paymentIntent.getStatus()));
+		}
+		catch (final IllegalArgumentException e)
+		{
+			LOG.warn("PaymentIntent [{}] has an unknown status [{}]", paymentIntent.getId(), paymentIntent.getStatus());
+			return Optional.empty();
+		}
+	}
 
-    /**
-     * Maps a Stripe Refund status to Hybris TransactionStatus.
-     *
-     * @param stripeStatus the Stripe refund status string
-     * @return the corresponding TransactionStatus
-     */
-    protected TransactionStatus mapRefundStatus(final String stripeStatus) {
-        if (stripeStatus == null) {
-            return TransactionStatus.ERROR;
-        }
+	protected boolean hasStatus(final PaymentIntent paymentIntent, final StripePaymentIntentStatus status)
+	{
+		return statusOf(paymentIntent).filter(status::equals).isPresent();
+	}
 
-        switch (stripeStatus.toLowerCase()) {
-            case "succeeded":
-                return TransactionStatus.ACCEPTED;
-            case "pending":
-                return TransactionStatus.REVIEW;
-            case "failed":
-            case "canceled":
-                return TransactionStatus.REJECTED;
-            default:
-                LOG.warn("Unknown Stripe Refund status: {}", stripeStatus);
-                return TransactionStatus.ERROR;
-        }
-    }
+	protected long toMinorUnits(final BigDecimal amount, final Currency currency)
+	{
+		return stripeAmountConverter.toMinorUnits(amount, currency.getCurrencyCode());
+	}
 
-    /**
-     * Handles a Stripe exception and returns an appropriate error result.
-     *
-     * @param exception the Stripe exception
-     * @return the error result with appropriate status details
-     */
-    protected AbstractResult handleStripeException(final StripeException exception) {
-        LOG.error("Stripe API error: {} - {}", exception.getCode(), exception.getMessage());
+	/**
+	 * Fills the result for an error of Stripe: ERROR with COMMUNICATION_PROBLEM when a retry can help, else
+	 * GENERAL_SYSTEM_ERROR.
+	 */
+	protected <R extends AbstractResult> R error(final R result, final StripeGatewayException exception,
+			final AbstractRequest request)
+	{
+		LOG.warn("Stripe call failed for transaction [{}]: code [{}], retryable [{}]", request.getMerchantTransactionCode(),
+				exception.getStripeCode(), exception.isRetryable());
+		return fill(result, request, TransactionStatus.ERROR, exception.isRetryable()
+				? TransactionStatusDetails.COMMUNICATION_PROBLEM : TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+	}
 
-        final TransactionStatusDetails statusDetails;
+	/**
+	 * Fills the result from the status of a refund. succeeded, pending and requires_action give ACCEPTED (the webhook
+	 * confirms a pending refund later); failed and canceled give REJECTED; any other status, null included, gives ERROR.
+	 */
+	protected <R extends AbstractResult> R fillFromRefund(final R result, final AbstractRequest request, final Refund refund)
+	{
+		final String status = StringUtils.defaultString(refund.getStatus());
+		if (ACCEPTED_REFUND_STATUSES.contains(status))
+		{
+			return fill(result, request, TransactionStatus.ACCEPTED, TransactionStatusDetails.SUCCESFULL);
+		}
+		if (REJECTED_REFUND_STATUSES.contains(status))
+		{
+			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+		}
+		LOG.error("Refund [{}] has an unknown status [{}]", refund.getId(), refund.getStatus());
+		return fill(result, request, TransactionStatus.ERROR, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+	}
 
-        if (exception instanceof CardException) {
-            // Card errors (declined, expired, etc.)
-            statusDetails = TransactionStatusDetails.BANK_DECLINE;
-        } else if (exception instanceof InvalidRequestException) {
-            // Invalid parameters
-            statusDetails = TransactionStatusDetails.INVALID_REQUEST;
-        } else if (exception.getStatusCode() != null && exception.getStatusCode() >= 500) {
-            // Server errors - communication problem
-            statusDetails = TransactionStatusDetails.COMMUNICATION_PROBLEM;
-        } else {
-            // Other errors
-            statusDetails = TransactionStatusDetails.UNKNOWN_CODE;
-        }
+	protected <R extends AbstractResult> R fill(final R result, final AbstractRequest request, final TransactionStatus status,
+			final TransactionStatusDetails details)
+	{
+		result.setMerchantTransactionCode(request.getMerchantTransactionCode());
+		result.setTransactionStatus(status);
+		result.setTransactionStatusDetails(details);
+		return result;
+	}
 
-        return createErrorResult(statusDetails);
-    }
+	protected StripeGateway getStripeGateway()
+	{
+		return stripeGateway;
+	}
 
-    /**
-     * Handles an InterruptedException during async operations.
-     *
-     * @return the error result
-     */
-    protected AbstractResult handleInterruptedException() {
-        LOG.error("Operation was interrupted");
-        Thread.currentThread().interrupt();
-        return createErrorResult(TransactionStatusDetails.COMMUNICATION_PROBLEM);
-    }
+	public void setStripeGateway(final StripeGateway stripeGateway)
+	{
+		this.stripeGateway = stripeGateway;
+	}
 
-    /**
-     * Converts an amount to Stripe's smallest currency unit.
-     *
-     * @param amount   the amount in major currency units
-     * @param currency the currency model
-     * @return the amount in smallest currency units
-     */
-    protected Long convertToStripeAmount(final BigDecimal amount,
-                                         final de.hybris.platform.core.model.c2l.CurrencyModel currency) {
-        if (amount == null || currency == null) {
-            return null;
-        }
-        return stripeRequestFactory.convertToStripeAmount(amount, currency.getIsocode());
-    }
+	protected StripeAmountConverter getStripeAmountConverter()
+	{
+		return stripeAmountConverter;
+	}
 
-    /**
-     * Creates an error result with the given status details.
-     * Subclasses must implement this to return the appropriate result type.
-     *
-     * @param statusDetails the transaction status details
-     * @return the error result
-     */
-    protected abstract AbstractResult createErrorResult(TransactionStatusDetails statusDetails);
+	public void setStripeAmountConverter(final StripeAmountConverter stripeAmountConverter)
+	{
+		this.stripeAmountConverter = stripeAmountConverter;
+	}
 
-    // Setters for Spring injection
+	protected TimeService getTimeService()
+	{
+		return timeService;
+	}
 
-    public void setStripeRequestFactory(final StripeRequestFactory stripeRequestFactory) {
-        this.stripeRequestFactory = stripeRequestFactory;
-    }
-
-    public void setStripePaymentIntegrationService(final StripePaymentIntegrationService stripePaymentIntegrationService) {
-        this.stripePaymentIntegrationService = stripePaymentIntegrationService;
-    }
-
-    public void setStripePaymentTransactionService(final StripePaymentTransactionService stripePaymentTransactionService) {
-        this.stripePaymentTransactionService = stripePaymentTransactionService;
-    }
-
-    public void setTimeService(final TimeService timeService) {
-        this.timeService = timeService;
-    }
+	public void setTimeService(final TimeService timeService)
+	{
+		this.timeService = timeService;
+	}
 }

@@ -6,18 +6,15 @@
 
 import {
   AfterViewInit,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   OnDestroy,
   OnInit,
   ViewChild,
 } from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
-import { ActivatedRoute, Params, Router } from '@angular/router';
-import {
-  CheckoutFlowOrchestratorService,
-  CheckoutStepService,
-} from '@spartacus/checkout/base/components';
+import { ActivatedRoute, Router } from '@angular/router';
+import { CheckoutFlowOrchestratorService } from '@spartacus/checkout/base/components';
 import {
   GlobalMessageService,
   GlobalMessageType,
@@ -31,7 +28,10 @@ import {
   StripeElementsOptions,
 } from '@stripe/stripe-js';
 import { Subscription, take } from 'rxjs';
-import { StripePaymentService } from 'sap-commerce-stripe-payment/core';
+import {
+  StripePaymentService,
+  getStripeErrorReason,
+} from 'sap-commerce-stripe-payment/core';
 
 @Component({
   selector: 'cx-stripe-payment-form',
@@ -39,11 +39,13 @@ import { StripePaymentService } from 'sap-commerce-stripe-payment/core';
   styleUrls: ['./stripe-payment-form.component.scss'],
   standalone: false,
 })
-export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDestroy {
+export class StripePaymentFormComponent
+  implements OnInit, AfterViewInit, OnDestroy
+{
   @ViewChild('paymentElement') paymentElementRef?: ElementRef<HTMLDivElement>;
 
-  form: FormGroup;
   isLoading = false;
+  paymentPending = false;
   error?: string;
 
   protected stripe?: Stripe | null;
@@ -58,20 +60,15 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
   protected isReturningFromRedirect = false;
 
   constructor(
-    protected fb: FormBuilder,
     protected stripeService: StripePaymentService,
-    protected checkoutStepService: CheckoutStepService,
     protected translation: TranslationService,
     protected globalMessageService: GlobalMessageService,
     protected checkoutFlowOrchestrator: CheckoutFlowOrchestratorService,
     protected routingService: RoutingService,
     protected route: ActivatedRoute,
-    protected router: Router
+    protected router: Router,
+    protected changeDetector: ChangeDetectorRef
   ) {
-    this.form = this.fb.group({
-      savePaymentMethod: [false],
-    });
-
     this.subscription.add(
       this.checkoutFlowOrchestrator
         .getPaymentProvider()
@@ -86,6 +83,7 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
           } else {
             this.resetStripeState();
           }
+          this.changeDetector.markForCheck();
         })
     );
   }
@@ -93,9 +91,9 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
   ngOnInit(): void {
     this.subscription.add(
       this.route.queryParams.pipe(take(1)).subscribe((params) => {
-        if (params['redirect_status']) {
+        if (params['payment_intent']) {
           this.isReturningFromRedirect = true;
-          this.handleRedirectReturn(params);
+          this.handleRedirectReturn();
         }
       })
     );
@@ -127,13 +125,21 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
     }
     this.stripeSetup = true;
     this.subscription.add(
-      this.stripeService.getStripe().subscribe((stripe) => {
-        this.stripe = stripe;
-        if (!stripe) {
-          this.error = 'stripePayment.missingPublishableKey';
-        } else if (this.clientSecret) {
-          this.initializeElements(this.clientSecret);
-        }
+      this.stripeService.getStripe().subscribe({
+        next: (stripe) => {
+          this.stripe = stripe;
+          if (!stripe) {
+            this.error = 'stripePayment.missingPublishableKey';
+          } else if (this.clientSecret) {
+            this.initializeElements(this.clientSecret);
+          }
+          this.changeDetector.markForCheck();
+        },
+        error: () => {
+          this.isLoading = false;
+          this.error = 'stripePayment.unableToInitialize';
+          this.changeDetector.markForCheck();
+        },
       })
     );
   }
@@ -152,7 +158,6 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
     if (!this.useStripeFlow) {
       return;
     }
-    this.error = undefined;
     this.subscription.add(
       this.stripeService.ensureIntent().subscribe({
         next: (intent) => {
@@ -160,16 +165,18 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
           if (this.clientSecret) {
             this.initializeElements(this.clientSecret);
           }
+          this.changeDetector.markForCheck();
         },
-        error: () => {
-          this.error = 'stripePayment.unableToInitialize';
+        error: (err) => {
+          this.isLoading = false;
+          this.handleError(err, 'stripePayment.unableToInitialize', false);
         },
       })
     );
   }
 
   submit(): void {
-    if (!this.useStripeFlow) {
+    if (!this.useStripeFlow || this.isLoading || this.paymentPending) {
       return;
     }
     if (!this.stripe || !this.elements || !this.clientSecret) {
@@ -178,15 +185,19 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
     }
     this.isLoading = true;
     this.error = undefined;
-    const savePaymentMethod = this.form.get('savePaymentMethod')?.value ?? false;
     this.subscription.add(
       this.stripeService
-        .confirmPayment(this.stripe, this.elements, savePaymentMethod)
+        .confirmPayment(this.stripe, this.elements, this.clientSecret)
         .subscribe({
           next: (result) => {
             this.isLoading = false;
+            if (result.newClientSecret) {
+              this.clientSecret = result.newClientSecret;
+              this.initializeElements(result.newClientSecret);
+            }
             if (result.error) {
               this.error = result.error;
+              this.changeDetector.markForCheck();
               return;
             }
             this.translation
@@ -202,7 +213,7 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
           },
           error: (err) => {
             this.isLoading = false;
-            this.error = err?.message ?? 'stripePayment.genericError';
+            this.handleError(err, 'stripePayment.genericError');
           },
         })
     );
@@ -219,6 +230,7 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
     }
     this.placingOrder = true;
     this.isLoading = true;
+    this.changeDetector.markForCheck();
 
     this.subscription.add(
       this.stripeService
@@ -230,73 +242,76 @@ export class StripePaymentFormComponent implements OnInit, AfterViewInit, OnDest
             this.resetStripeState();
             this.subscription.unsubscribe();
             this.isLoading = false;
+            this.changeDetector.markForCheck();
             this.routingService.go({ cxRoute: 'orderConfirmation' });
           },
           error: (err) => {
             this.isLoading = false;
             this.placingOrder = false;
-            this.error = err?.message ?? 'stripePayment.genericError';
+            this.recoverFromRedirectFailure(err);
+            this.handleError(err, 'stripePayment.genericError');
           },
         })
     );
   }
 
-  protected handleRedirectReturn(params: Params): void {
-    const redirectStatus = params['redirect_status'];
-    const clientSecret = params['payment_intent_client_secret'];
-
-    this.isLoading = true;
+  /** The server decides the outcome; the client status is not used. */
+  protected handleRedirectReturn(): void {
     this.clearUrlParams();
+    this.placeOrderAfterPayment();
+  }
 
-    if (redirectStatus === 'succeeded') {
-      this.placeOrderAfterPayment();
-    } else if (redirectStatus === 'failed') {
-      this.isLoading = false;
-      this.error = 'stripePayment.paymentFailed';
-      this.isReturningFromRedirect = false;
-    } else {
-      // pending or other status - verify with Stripe
-      this.verifyPaymentStatus(clientSecret);
+  /**
+   * After a failed redirect return the Payment Element is not mounted yet.
+   * Mount it again so the customer can retry.
+   */
+  protected recoverFromRedirectFailure(err: unknown): void {
+    if (!this.isReturningFromRedirect) {
+      return;
+    }
+    const reason = getStripeErrorReason(err);
+    if (reason === 'STRIPE_PAYMENT_IN_PROGRESS' || reason === 'STRIPE_ALREADY_PLACED') {
+      return;
+    }
+    this.isReturningFromRedirect = false;
+    if (reason !== 'STRIPE_AMOUNT_MISMATCH') {
+      this.ensureIntent();
     }
   }
 
-  protected verifyPaymentStatus(clientSecret: string): void {
-    if (!clientSecret) {
-      this.isLoading = false;
-      this.error = 'stripePayment.missingClientSecret';
-      this.isReturningFromRedirect = false;
-      return;
+  protected handleError(
+    err: unknown,
+    fallbackMessage: string,
+    remountOnMismatch = true
+  ): void {
+    switch (getStripeErrorReason(err)) {
+      case 'STRIPE_AMOUNT_MISMATCH':
+        if (remountOnMismatch) {
+          this.ensureIntent();
+        }
+        this.error = 'stripePayment.amountChanged';
+        break;
+      case 'STRIPE_PAYMENT_FAILED':
+        this.error = 'stripePayment.paymentFailed';
+        break;
+      case 'STRIPE_PAYMENT_IN_PROGRESS':
+        this.paymentPending = true;
+        this.error = 'stripePayment.paymentPending';
+        break;
+      case 'STRIPE_ALREADY_PLACED':
+        this.globalMessageService.add(
+          { key: 'stripePayment.alreadyPlaced' },
+          GlobalMessageType.MSG_TYPE_INFO
+        );
+        this.routingService.go({ cxRoute: 'orders' });
+        break;
+      case 'STRIPE_UNAVAILABLE':
+        this.error = 'stripePayment.genericError';
+        break;
+      default:
+        this.error = fallbackMessage;
     }
-
-    this.subscription.add(
-      this.stripeService.verifyPaymentIntent(clientSecret).subscribe({
-        next: (paymentIntent) => {
-          if (
-            paymentIntent?.status === 'succeeded' ||
-            paymentIntent?.status === 'requires_capture'
-          ) {
-            this.placeOrderAfterPayment();
-          } else if (
-            paymentIntent?.status === 'requires_payment_method' ||
-            paymentIntent?.status === 'canceled'
-          ) {
-            this.isLoading = false;
-            this.error = 'stripePayment.paymentFailed';
-            this.isReturningFromRedirect = false;
-          } else {
-            // Still processing or other status
-            this.isLoading = false;
-            this.error = 'stripePayment.paymentPending';
-            this.isReturningFromRedirect = false;
-          }
-        },
-        error: () => {
-          this.isLoading = false;
-          this.error = 'stripePayment.verificationFailed';
-          this.isReturningFromRedirect = false;
-        },
-      })
-    );
+    this.changeDetector.markForCheck();
   }
 
   protected clearUrlParams(): void {

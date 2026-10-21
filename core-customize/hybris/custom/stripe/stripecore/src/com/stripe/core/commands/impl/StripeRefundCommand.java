@@ -1,100 +1,70 @@
 package com.stripe.core.commands.impl;
 
-import com.stripe.exception.StripeException;
+import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.payment.StripeTransactionLookup;
 import com.stripe.model.Refund;
 import de.hybris.platform.payment.commands.FollowOnRefundCommand;
-import de.hybris.platform.payment.commands.request.AbstractRequest;
 import de.hybris.platform.payment.commands.request.FollowOnRefundRequest;
-import de.hybris.platform.payment.commands.result.AbstractResult;
 import de.hybris.platform.payment.commands.result.RefundResult;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.dto.TransactionStatusDetails;
+import de.hybris.platform.payment.model.PaymentTransactionModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
-
-import static de.hybris.platform.servicelayer.util.ServicesUtil.validateParameterNotNull;
+import java.util.Optional;
 
 /**
- * Stripe implementation of {@link FollowOnRefundCommand}.
- * Refunds a previously captured payment.
+ * Refunds an amount of a captured PaymentIntent. The requestId of the result is the refund id. A pending refund is
+ * accepted; the webhook confirms it later. The idempotency key does not change when SAP retries the refund. Without
+ * exactly one live payment transaction for the PaymentIntent, the command does not call Stripe.
  */
-public class StripeRefundCommand extends AbstractStripeCommand implements FollowOnRefundCommand<FollowOnRefundRequest> {
+public class StripeRefundCommand extends AbstractStripeCommand implements FollowOnRefundCommand<FollowOnRefundRequest>
+{
+	private static final Logger LOG = LoggerFactory.getLogger(StripeRefundCommand.class);
 
-    private static final Logger LOG = LoggerFactory.getLogger(StripeRefundCommand.class);
+	private StripeTransactionLookup stripeTransactionLookup;
 
-    @Override
-    public RefundResult perform(final FollowOnRefundRequest refundRequest) {
-        validateParameterNotNull(refundRequest, "FollowOnRefundRequest cannot be null");
-        validateParameterNotNull(refundRequest.getMerchantTransactionCode(), "MerchantTransactionCode cannot be null");
-        validateParameterNotNull(refundRequest.getCurrency(), "Currency cannot be null");
+	@Override
+	public RefundResult perform(final FollowOnRefundRequest request)
+	{
+		final String paymentIntentId = requirePaymentIntentId(request.getRequestId());
+		final RefundResult result = new RefundResult();
+		result.setRequestId(paymentIntentId);
+		result.setRequestToken(paymentIntentId);
+		result.setCurrency(request.getCurrency());
+		result.setTotalAmount(request.getTotalAmount());
+		result.setPaymentProvider(request.getPaymentProvider());
+		result.setRequestTime(getTimeService().getCurrentTime());
 
-        LOG.info("Processing refund request for transaction: {}, amount: {}",
-                refundRequest.getMerchantTransactionCode(), refundRequest.getTotalAmount());
+		final Optional<PaymentTransactionModel> transaction = stripeTransactionLookup.findByPaymentIntentId(paymentIntentId);
+		if (transaction.isEmpty())
+		{
+			LOG.error("No single live payment transaction for PaymentIntent [{}]; refund of transaction [{}] not sent",
+					paymentIntentId, request.getMerchantTransactionCode());
+			return fill(result, request, TransactionStatus.ERROR, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+		}
 
-        final String paymentIntentId = stripePaymentTransactionService
-                .getPaymentReferenceFromTransactionEntryCode(refundRequest.getMerchantTransactionCode());
+		final long amount = toMinorUnits(request.getTotalAmount(), request.getCurrency());
+		final String key = "refund-" + paymentIntentId + "-" + stripeTransactionLookup.countSettledRefunds(transaction.get())
+				+ "-" + amount;
+		final Refund refund;
+		try
+		{
+			refund = getStripeGateway().createRefund(paymentIntentId, amount, key);
+		}
+		catch (final StripeGatewayException e)
+		{
+			return error(result, e, request);
+		}
 
-        if (paymentIntentId == null) {
-            LOG.error("Could not find PaymentIntent ID for transaction: {}", refundRequest.getMerchantTransactionCode());
-            return (RefundResult) createErrorResult(TransactionStatusDetails.INVALID_REQUEST);
-        }
+		result.setRequestId(refund.getId());
+		LOG.info("Refund [{}] of PaymentIntent [{}] has status [{}]", refund.getId(), paymentIntentId, refund.getStatus());
+		return fillFromRefund(result, request, refund);
+	}
 
-        try {
-            // If amount is null or zero, Stripe will refund the full amount
-            final BigDecimal refundAmount = refundRequest.getTotalAmount();
-
-            final Refund refund = stripePaymentIntegrationService.refundPayment(paymentIntentId, refundAmount);
-
-            return buildRefundResult(refundRequest, refund);
-
-        } catch (final StripeException e) {
-            LOG.error("Stripe exception while refunding payment for transaction {}: {}",
-                    refundRequest.getMerchantTransactionCode(), e.getMessage());
-            return (RefundResult) handleStripeException(e);
-        }
-    }
-
-    /**
-     * Builds a successful RefundResult from the Stripe Refund response.
-     *
-     * @param request the original refund request
-     * @param refund  the Stripe Refund response
-     * @return the refund result
-     */
-    protected RefundResult buildRefundResult(final FollowOnRefundRequest request, final Refund refund) {
-        final RefundResult result = new RefundResult();
-
-        result.setCurrency(request.getCurrency());
-        result.setTotalAmount(request.getTotalAmount());
-        result.setRequestId(request.getRequestId());
-        result.setRequestToken(refund.getId());
-        result.setRequestTime(timeService.getCurrentTime());
-
-        final TransactionStatus status = mapRefundStatus(refund.getStatus());
-        result.setTransactionStatus(status);
-
-        if (TransactionStatus.ACCEPTED.equals(status)) {
-            result.setTransactionStatusDetails(TransactionStatusDetails.SUCCESFULL);
-        } else if (TransactionStatus.REVIEW.equals(status)) {
-            result.setTransactionStatusDetails(TransactionStatusDetails.REVIEW_NEEDED);
-        } else {
-            result.setTransactionStatusDetails(TransactionStatusDetails.UNKNOWN_CODE);
-        }
-
-        LOG.info("Refund result for Refund {}: status={}, statusDetails={}",
-                refund.getId(), status, result.getTransactionStatusDetails());
-
-        return result;
-    }
-
-    @Override
-    protected AbstractResult createErrorResult(final TransactionStatusDetails statusDetails) {
-        final RefundResult result = new RefundResult();
-        result.setTransactionStatus(TransactionStatus.ERROR);
-        result.setTransactionStatusDetails(statusDetails);
-        result.setRequestTime(timeService.getCurrentTime());
-        return result;
-    }
+	public void setStripeTransactionLookup(final StripeTransactionLookup stripeTransactionLookup)
+	{
+		this.stripeTransactionLookup = stripeTransactionLookup;
+	}
 }

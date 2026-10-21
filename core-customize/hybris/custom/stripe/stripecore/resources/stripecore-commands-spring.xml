@@ -1,34 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
- Stripe Payment Commands Configuration
- Registers payment commands with the Hybris CommandFactory for PaymentService integration.
+ Stripe commands of the SAP payment framework, registered for the payment provider "Stripe".
 -->
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- Abstract Command Base -->
     <bean id="abstractStripeCommand" abstract="true"
           class="com.stripe.core.commands.impl.AbstractStripeCommand">
-        <property name="stripeRequestFactory" ref="stripeRequestFactory"/>
-        <property name="stripePaymentIntegrationService" ref="stripePaymentIntegrationService"/>
-        <property name="stripePaymentTransactionService" ref="stripePaymentTransactionService"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="timeService" ref="timeService"/>
     </bean>
 
-    <!-- Capture Command -->
+    <bean id="stripeAuthorizationCommand" parent="abstractStripeCommand"
+          class="com.stripe.core.commands.impl.StripeAuthorizationCommand">
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+    </bean>
+
     <bean id="stripeCaptureCommand" parent="abstractStripeCommand"
           class="com.stripe.core.commands.impl.StripeCaptureCommand"/>
 
-    <!-- Void Command -->
+    <bean id="stripePartialCaptureCommand" parent="abstractStripeCommand"
+          class="com.stripe.core.commands.impl.StripePartialCaptureCommand"/>
+
     <bean id="stripeVoidCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeVoidCommand"/>
+          class="com.stripe.core.commands.impl.StripeVoidCommand">
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+    </bean>
 
-    <!-- Refund Command -->
     <bean id="stripeRefundCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeRefundCommand"/>
+          class="com.stripe.core.commands.impl.StripeRefundCommand">
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+    </bean>
 
-    <!-- Command Factory - Registers commands with PaymentService -->
     <bean id="stripeCommandFactory"
           class="de.hybris.platform.payment.commands.factory.impl.DefaultCommandFactoryImpl">
         <property name="paymentProvider" value="Stripe"/>
@@ -36,9 +41,21 @@
             <map>
                 <entry>
                     <key>
+                        <value type="java.lang.Class">de.hybris.platform.payment.commands.SubscriptionAuthorizationCommand</value>
+                    </key>
+                    <ref bean="stripeAuthorizationCommand"/>
+                </entry>
+                <entry>
+                    <key>
                         <value type="java.lang.Class">de.hybris.platform.payment.commands.CaptureCommand</value>
                     </key>
                     <ref bean="stripeCaptureCommand"/>
+                </entry>
+                <entry>
+                    <key>
+                        <value type="java.lang.Class">de.hybris.platform.payment.commands.PartialCaptureCommand</value>
+                    </key>
+                    <ref bean="stripePartialCaptureCommand"/>
                 </entry>
                 <entry>
                     <key>

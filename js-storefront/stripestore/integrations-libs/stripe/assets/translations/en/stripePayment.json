@@ -9,6 +9,10 @@
     "genericError": "An unexpected error occurred while processing the payment.",
     "missingClientSecret": "Missing client secret for Stripe intent. Please contact support.",
     "noPaymentIntent": "Payment intent was not returned by Stripe.",
-    "saveForLater": "Save this card for future orders"
+    "paymentFailed": "The payment failed. Please try another payment method.",
+    "paymentPending": "Your payment is still in progress. We will confirm your order when it completes.",
+    "amountChanged": "The order total changed. Please review the payment details and try again.",
+    "verificationFailed": "We could not verify your payment. Please try again.",
+    "alreadyPlaced": "Your order was already placed."
   }
 }

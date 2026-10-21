@@ -1,20 +1,55 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
-<!--
- Copyright (c) 2020 SAP SE or an SAP affiliate company. All rights reserved.
--->
-<!--
-	ATTENTION: This is just an example file. You have to edit it according to your needs.
--->
-
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="beans.xsd">
 
-	<!--
-		Example Data POJO
-	
-	<bean class="yemptypackage.data.MyPojo">
-		<property name="id" type="String"/>
-		<property name="flag" type="boolean"/>
+	<bean class="com.stripe.dto.StripeIntentWsDTO">
+		<description>Stripe PaymentIntent of a cart, as the storefront needs it to confirm the payment.</description>
+		<hints>
+			<hint name="wsRelated"/>
+			<hint name="alias">StripeIntent</hint>
+		</hints>
+		<property name="paymentIntentId" type="String"/>
+		<property name="clientSecret" type="String"/>
+		<property name="status" type="String"/>
 	</bean>
-	-->
+
+	<bean class="com.stripe.dto.StripeConfigWsDTO">
+		<description>Public Stripe configuration of a base site.</description>
+		<hints>
+			<hint name="wsRelated"/>
+			<hint name="alias">StripeConfig</hint>
+		</hints>
+		<property name="publishableKey" type="String"/>
+	</bean>
+
+	<bean class="com.stripe.dto.StripeWebhookResponseWsDTO">
+		<description>Result of a Stripe webhook call.</description>
+		<hints>
+			<hint name="wsRelated"/>
+			<hint name="alias">StripeWebhookResponse</hint>
+		</hints>
+		<property name="processedEventId" type="String"/>
+		<property name="status" type="String"/>
+		<property name="message" type="String"/>
+	</bean>
+
+	<bean class="com.stripe.dto.StripePaymentInfoWsDTO">
+		<description>Stripe payment of a cart or an order.</description>
+		<hints>
+			<hint name="wsRelated"/>
+			<hint name="alias">StripePaymentInfo</hint>
+		</hints>
+		<property name="paymentMethodType" type="String"/>
+		<property name="cardBrand" type="String"/>
+		<property name="cardLast4" type="String"/>
+		<property name="cardExpMonth" type="Integer"/>
+		<property name="cardExpYear" type="Integer"/>
+		<property name="paymentStatus" type="String">
+			<description>ACCEPTED, PENDING or FAILED. Empty while the payment has no result.</description>
+		</property>
+	</bean>
+
+	<bean class="de.hybris.platform.commercewebservicescommons.dto.order.AbstractOrderWsDTO">
+		<property name="stripePaymentInfo" type="com.stripe.dto.StripePaymentInfoWsDTO"/>
+	</bean>
 
 </beans>

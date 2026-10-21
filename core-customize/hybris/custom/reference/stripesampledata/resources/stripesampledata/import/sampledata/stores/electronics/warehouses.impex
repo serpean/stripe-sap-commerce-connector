@@ -1,0 +1,34 @@
+# Reference project: OMS sourcing for the electronics store (from the deprecated ordermanagementaddon sample data).
+# Without a sourcing configuration and warehouse delivery modes, OMS cannot source an order and suspends it.
+$storeUid = electronics
+
+INSERT_UPDATE AtpFormula; code[unique = true]; availability; allocation; cancellation; increase; reserved; shrinkage; wastage; returned
+                        ; Default_Formula  ; true        ; true      ; true        ; true    ; true    ; true     ; true   ; true
+
+INSERT_UPDATE SourcingConfig; code[unique = true]; distanceWeightFactor; allocationWeightFactor; priorityWeightFactor; scoreWeightFactor
+                            ; Hybris_OMS_Config ; 50                  ; 30                    ; 20                  ; 0
+
+UPDATE BaseStore; uid[unique = true]; sourcingConfig(code); defaultAtpFormula(code)
+                ; $storeUid         ; Hybris_OMS_Config   ; Default_Formula
+
+INSERT_UPDATE Warehouse2DeliveryModeRelation; source(code)[unique = true]; target(code)[unique = true]
+                                            ; warehouse_s ; premium-net
+                                            ; warehouse_s ; standard-net
+                                            ; warehouse_s ; premium-gross
+                                            ; warehouse_s ; standard-gross
+                                            ; warehouse_s ; free-standard-shipping
+                                            ; warehouse_e ; premium-net
+                                            ; warehouse_e ; standard-net
+                                            ; warehouse_e ; premium-gross
+                                            ; warehouse_e ; standard-gross
+                                            ; warehouse_e ; free-standard-shipping
+                                            ; warehouse_w ; premium-net
+                                            ; warehouse_w ; standard-net
+                                            ; warehouse_w ; premium-gross
+                                            ; warehouse_w ; standard-gross
+                                            ; warehouse_w ; free-standard-shipping
+                                            ; warehouse_n ; premium-net
+                                            ; warehouse_n ; standard-net
+                                            ; warehouse_n ; premium-gross
+                                            ; warehouse_n ; standard-gross
+                                            ; warehouse_n ; free-standard-shipping

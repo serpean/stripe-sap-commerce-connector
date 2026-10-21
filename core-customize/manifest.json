@@ -185,7 +185,7 @@
             "IntegrationTests"
         ],
         "packages": [
-            "com.acme.*"
+            "com.stripe.*"
         ]
     }
 }

@@ -1,97 +1,65 @@
 package com.stripe.facades.order.impl;
 
-import com.stripe.core.stripe.StripePaymentProvider;
+import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
+import com.stripe.facades.order.StripePlaceOrderGuard;
 import de.hybris.platform.commercefacades.order.impl.DefaultCheckoutFacade;
+import de.hybris.platform.commercefacades.order.data.OrderData;
 import de.hybris.platform.core.model.order.CartModel;
-import de.hybris.platform.payment.dto.TransactionStatus;
-import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
-import org.apache.commons.lang.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static com.stripe.core.constants.StripeCoreConstants.STRIPE_PROVIDER;
+import de.hybris.platform.order.InvalidCartException;
+import org.apache.commons.lang3.StringUtils;
 
 /**
- * Stripe-specific checkout facade that handles payment authorization via Stripe.
+ * {@link DefaultCheckoutFacade} that authorizes a cart with a Stripe payment info through the
+ * {@link StripeCheckoutAuthorizer}, and places its order through the {@link StripePlaceOrderGuard}. Other payment infos
+ * use the standard SAP behavior.
  */
-public class StripeCheckoutFacade extends DefaultCheckoutFacade {
+public class StripeCheckoutFacade extends DefaultCheckoutFacade
+{
+	private StripeCheckoutAuthorizer stripeCheckoutAuthorizer;
+	private StripePlaceOrderGuard stripePlaceOrderGuard;
 
-    private static final Logger LOG = LoggerFactory.getLogger(StripeCheckoutFacade.class);
+	@Override
+	public boolean authorizePayment(final String securityCode)
+	{
+		final CartModel cart = getCart();
+		if (cart != null && cart.getPaymentInfo() instanceof StripePaymentInfoModel)
+		{
+			return checkIfCurrentUserIsTheCartUser() && stripeCheckoutAuthorizer.authorize(cart);
+		}
+		return super.authorizePayment(securityCode);
+	}
 
-    private StripePaymentProvider stripePaymentProvider;
+	/**
+	 * Places the order of a Stripe cart through the {@link StripePlaceOrderGuard}.
+	 */
+	@Override
+	public OrderData placeOrder() throws InvalidCartException
+	{
+		final String paymentIntentId = stripePaymentIntentId(getCart());
+		if (paymentIntentId == null)
+		{
+			return super.placeOrder();
+		}
+		return stripePlaceOrderGuard.placeOrder(paymentIntentId, super::placeOrder);
+	}
 
-    @Override
-    public boolean authorizePayment(final String securityCode) {
-        final String paymentProvider = getPaymentProvider();
+	private String stripePaymentIntentId(final CartModel cart)
+	{
+		if (cart != null && cart.getPaymentInfo() instanceof StripePaymentInfoModel)
+		{
+			return StringUtils.trimToNull(((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+		}
+		return null;
+	}
 
-        // Only handle Stripe payments, delegate others to parent
-        if (!isStripePayment(paymentProvider)) {
-            return super.authorizePayment(securityCode);
-        }
+	public void setStripeCheckoutAuthorizer(final StripeCheckoutAuthorizer stripeCheckoutAuthorizer)
+	{
+		this.stripeCheckoutAuthorizer = stripeCheckoutAuthorizer;
+	}
 
-        LOG.debug("Processing Stripe authorization");
-
-        final CartModel cart = getCart();
-        if (cart == null) {
-            LOG.error("No cart found in session for Stripe authorization");
-            return false;
-        }
-
-        // Check if we already have an accepted authorization
-        if (stripePaymentProvider.hasAcceptedAuthorization(cart)) {
-            LOG.info("Stripe authorization already accepted for cart: {}", cart.getCode());
-            return true;
-        }
-
-        // No PaymentIntent exists - create one via StripePaymentProvider
-        LOG.info("No PaymentIntent found for cart: {}, creating authorization", cart.getCode());
-        return createAuthorization(cart);
-    }
-
-    /**
-     * Checks if the payment provider is Stripe.
-     *
-     * @param paymentProvider the payment provider name
-     * @return true if Stripe
-     */
-    protected boolean isStripePayment(final String paymentProvider) {
-        return StringUtils.equalsIgnoreCase(paymentProvider, STRIPE_PROVIDER);
-    }
-
-    /**
-     * Creates a new authorization (PaymentIntent) for the cart.
-     *
-     * @param cart the cart
-     * @return true if authorization was created successfully
-     */
-    protected boolean createAuthorization(final CartModel cart) {
-        try {
-            final PaymentTransactionEntryModel entry = stripePaymentProvider.authorize(cart);
-
-            if (entry == null) {
-                LOG.error("Failed to create authorization for cart: {}", cart.getCode());
-                return false;
-            }
-
-            final String status = entry.getTransactionStatus();
-            LOG.info("Authorization created for cart {}: status={}, intentId={}",
-                    cart.getCode(), status, entry.getRequestId());
-
-            // For Stripe, authorization creates a PaymentIntent in "requires_payment_method" or "requires_confirmation"
-            // The frontend still needs to confirm with card details
-            // We return true to allow checkout to proceed to the payment confirmation step
-            return TransactionStatus.ACCEPTED.name().equals(status)
-                    || TransactionStatus.REVIEW.name().equals(status);
-
-        } catch (final Exception e) {
-            LOG.error("Exception creating authorization for cart: {}", cart.getCode(), e);
-            return false;
-        }
-    }
-
-    // Setter for Spring injection
-
-    public void setStripePaymentProvider(final StripePaymentProvider stripePaymentProvider) {
-        this.stripePaymentProvider = stripePaymentProvider;
-    }
+	public void setStripePlaceOrderGuard(final StripePlaceOrderGuard stripePlaceOrderGuard)
+	{
+		this.stripePlaceOrderGuard = stripePlaceOrderGuard;
+	}
 }

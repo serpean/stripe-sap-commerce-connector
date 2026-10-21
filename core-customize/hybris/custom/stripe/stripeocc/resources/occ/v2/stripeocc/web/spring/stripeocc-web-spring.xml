@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
- Copyright (c) 2020 SAP SE or an SAP affiliate company. All rights reserved.
--->
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xmlns:context="http://www.springframework.org/schema/context"
@@ -12,5 +9,57 @@
 
     <context:component-scan base-package="com.stripe.controllers"/>
 
+    <!-- Stable error codes for Stripe payment errors, also when SAP's OrdersController places the order. -->
+    <bean id="stripeOccExceptionHandler" class="com.stripe.errors.StripeOccExceptionHandler"/>
+
+    <!--
+        SAP injects placeOrderCartValidator by the class PlaceOrderCartValidator, which is in the OCC web application
+        only. So the Stripe rule is advice on a class proxy of SAP's validator bean.
+    -->
+    <alias name="stripePlaceOrderCartValidator" alias="placeOrderCartValidator"/>
+    <bean id="stripePlaceOrderCartValidator" class="org.springframework.aop.framework.ProxyFactoryBean">
+        <property name="target" ref="defaultPlaceOrderCartValidator"/>
+        <property name="proxyTargetClass" value="true"/>
+        <property name="interceptorNames">
+            <list>
+                <value>stripePlaceOrderCartValidatorAdvice</value>
+            </list>
+        </property>
+    </bean>
+    <bean id="stripePlaceOrderCartValidatorAdvice" class="com.stripe.validators.StripePlaceOrderCartValidator">
+        <property name="cartService" ref="cartService"/>
+    </bean>
+
+    <!-- Adds the Stripe payment info to the SAP field levels of carts and orders. -->
+    <bean parent="fieldSetLevelMapping">
+        <property name="dtoClass" value="de.hybris.platform.commercewebservicescommons.dto.order.OrderWsDTO"/>
+        <property name="levelMapping">
+            <map>
+                <entry key="DEFAULT" value="stripePaymentInfo(DEFAULT)"/>
+                <entry key="FULL" value="stripePaymentInfo(FULL)"/>
+            </map>
+        </property>
+    </bean>
+
+    <bean parent="fieldSetLevelMapping">
+        <property name="dtoClass" value="de.hybris.platform.commercewebservicescommons.dto.order.CartWsDTO"/>
+        <property name="levelMapping">
+            <map>
+                <entry key="DEFAULT" value="stripePaymentInfo(DEFAULT)"/>
+                <entry key="FULL" value="stripePaymentInfo(FULL)"/>
+            </map>
+        </property>
+    </bean>
+
+    <bean parent="fieldSetLevelMapping" id="stripePaymentInfoWsDTOFieldSetLevelMapping">
+        <property name="dtoClass" value="com.stripe.dto.StripePaymentInfoWsDTO"/>
+        <property name="levelMapping">
+            <map>
+                <entry key="BASIC" value="paymentMethodType,paymentStatus"/>
+                <entry key="DEFAULT" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear"/>
+                <entry key="FULL" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear"/>
+            </map>
+        </property>
+    </bean>
 
 </beans>

@@ -73,7 +73,7 @@ function createStripeFeatureModule(options: StripePaymentOptions): Rule {
       return tree;
     }
 
-    const publishableKey = options.publishableKey || 'YOUR_STRIPE_PUBLISHABLE_KEY';
+    const publishableKey = options.publishableKey || '';
 
     const featureModuleContent = generateFeatureModuleContent(publishableKey, options.lazy);
 
@@ -91,13 +91,21 @@ function createStripeFeatureModule(options: StripePaymentOptions): Rule {
 }
 
 function generateFeatureModuleContent(publishableKey: string, lazy: boolean): string {
+  const keyConfig = publishableKey
+    ? `    provideConfig(<StripePaymentConfig>{
+      stripePayment: {
+        publishableKey: '${publishableKey}',
+      },
+    }),
+`
+    : '';
+  const configImport = publishableKey ? '  StripePaymentConfig,\n' : '';
   if (lazy) {
     return `import { NgModule } from '@angular/core';
 import { CmsConfig, I18nConfig, provideConfig } from '@spartacus/core';
 import {
   STRIPE_PAYMENT_FEATURE,
-  StripePaymentConfig,
-  StripePaymentRootModule,
+${configImport}  StripePaymentRootModule,
 } from 'sap-commerce-stripe-payment/root';
 import {
   stripePaymentTranslationChunksConfig,
@@ -117,12 +125,7 @@ import {
         },
       },
     }),
-    provideConfig(<StripePaymentConfig>{
-      stripePayment: {
-        publishableKey: '${publishableKey}',
-      },
-    }),
-    provideConfig(<I18nConfig>{
+${keyConfig}    provideConfig(<I18nConfig>{
       i18n: {
         resources: { en: stripePaymentTranslationsEn },
         chunks: stripePaymentTranslationChunksConfig,
@@ -136,8 +139,7 @@ export class StripePaymentFeatureModule {}
     return `import { NgModule } from '@angular/core';
 import { I18nConfig, provideConfig } from '@spartacus/core';
 import { StripePaymentModule } from 'sap-commerce-stripe-payment';
-import { StripePaymentConfig } from 'sap-commerce-stripe-payment/root';
-import {
+${publishableKey ? "import { StripePaymentConfig } from 'sap-commerce-stripe-payment/root';\n" : ''}import {
   stripePaymentTranslationChunksConfig,
   stripePaymentTranslationsEn,
 } from 'sap-commerce-stripe-payment/assets';
@@ -145,12 +147,7 @@ import {
 @NgModule({
   imports: [StripePaymentModule],
   providers: [
-    provideConfig(<StripePaymentConfig>{
-      stripePayment: {
-        publishableKey: '${publishableKey}',
-      },
-    }),
-    provideConfig(<I18nConfig>{
+${keyConfig}    provideConfig(<I18nConfig>{
       i18n: {
         resources: { en: stripePaymentTranslationsEn },
         chunks: stripePaymentTranslationChunksConfig,
@@ -265,8 +262,9 @@ function logCompletion(_options: StripePaymentOptions): Rule {
     context.logger.info(`  - ${SPARTACUS_FEATURES_MODULE_PATH}`);
     context.logger.info('');
     context.logger.info('Next steps:');
-    context.logger.info('1. Update the publishable key in stripe-feature.module.ts');
-    context.logger.info('2. Ensure OCC endpoints for stripe intent/confirm are configured');
+    context.logger.info('1. The storefront reads the publishable key from the backend (GET payments/stripe/config).');
+    context.logger.info('   To override it, set stripePayment.publishableKey in stripe-feature.module.ts.');
+    context.logger.info('2. Ensure the OCC endpoints stripeIntent and stripeConfig are configured.');
     context.logger.info('');
 
     return tree;

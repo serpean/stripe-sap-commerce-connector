@@ -5,48 +5,66 @@
        xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
         http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd">
 
-    <bean id="stripePaymentFacade" class="com.stripe.facades.impl.DefaultStripePaymentFacade">
-        <property name="stripeClient" ref="stripeClient"/>
-        <property name="stripeWebhookService" ref="stripeWebhookService"/>
-        <property name="cartService" ref="cartService"/>
-        <property name="baseStoreService" ref="baseStoreService"/>
-        <property name="userService" ref="userService"/>
+    <alias name="defaultStripeWebhookFacade" alias="stripeWebhookFacade"/>
+    <bean id="defaultStripeWebhookFacade" class="com.stripe.facades.webhook.impl.DefaultStripeWebhookFacade">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeWebhookEventDao" ref="stripeWebhookEventDao"/>
         <property name="modelService" ref="modelService"/>
+        <property name="taskService" ref="taskService"/>
+    </bean>
+
+    <alias name="defaultStripeCheckoutAuthorizer" alias="stripeCheckoutAuthorizer"/>
+    <bean id="defaultStripeCheckoutAuthorizer" class="com.stripe.facades.checkout.impl.DefaultStripeCheckoutAuthorizer">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="commerceCheckoutService" ref="commerceCheckoutService"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+        <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+    </bean>
+
+    <alias name="defaultStripePlaceOrderGuard" alias="stripePlaceOrderGuard"/>
+    <bean id="defaultStripePlaceOrderGuard" class="com.stripe.facades.order.StripePlaceOrderGuard">
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
     </bean>
 
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>
     <bean id="stripeCheckoutFacade" class="com.stripe.facades.order.impl.StripeCheckoutFacade" parent="defaultCheckoutFacade">
-        <property name="stripePaymentProvider" ref="stripePaymentProvider"/>
+        <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
+        <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
-    <alias name="defaultStripePaymentInfoPopulator" alias="stripePaymentInfoPopulator"/>
-    <bean id="defaultStripePaymentInfoPopulator"
-          class="com.stripe.facades.order.converters.populators.StripePaymentInfoPopulator"/>
-
-    <alias name="defaultStripePaymentInfoConverter" alias="stripePaymentInfoConverter"/>
-    <bean id="defaultStripePaymentInfoConverter" parent="abstractPopulatingConverter">
-        <property name="targetClass" value="de.hybris.platform.commercefacades.payment.data.GenericPaymentInfoData"/>
-        <property name="populators">
-            <list>
-                <ref bean="stripePaymentInfoPopulator"/>
-            </list>
-        </property>
+    <alias name="stripeAcceleratorCheckoutFacade" alias="acceleratorCheckoutFacade"/>
+    <bean id="stripeAcceleratorCheckoutFacade" class="com.stripe.facades.order.impl.StripeAcceleratorCheckoutFacade"
+          parent="defaultAcceleratorCheckoutFacade">
+        <property name="stripeCheckoutAuthorizer" ref="stripeCheckoutAuthorizer"/>
+        <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
-    <alias name="defaultStripeOrderGenericPaymentInfoPopulator" alias="stripeOrderGenericPaymentInfoPopulator"/>
-    <bean id="defaultStripeOrderGenericPaymentInfoPopulator"
-          class="com.stripe.facades.order.converters.populators.StripeOrderPaymentInfoPopulator" parent="baseOrderPopulator">
-        <constructor-arg name="stripePaymentInfoConverter" ref="stripePaymentInfoConverter"/>
+    <alias name="defaultStripeOrderPaymentPopulator" alias="stripeOrderPaymentPopulator"/>
+    <bean id="defaultStripeOrderPaymentPopulator"
+          class="com.stripe.facades.order.converters.populators.StripeOrderPaymentPopulator">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
     </bean>
 
     <bean parent="modifyPopulatorList">
         <property name="list" ref="extendedCartConverter"/>
-        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+        <property name="add" ref="stripeOrderPaymentPopulator"/>
     </bean>
 
     <bean parent="modifyPopulatorList">
         <property name="list" ref="orderConverter"/>
-        <property name="add" ref="stripeOrderGenericPaymentInfoPopulator"/>
+        <property name="add" ref="stripeOrderPaymentPopulator"/>
     </bean>
 
 </beans>

@@ -121,9 +121,6 @@ rebel.xml
 # Jars downloaded by Maven (usemaven=true)
 core-customize/hybris/custom/stripe/stripecore/lib/
 
-# Generated Stripe key file for the reference app
-js-storefront/stripestore/src/app/spartacus/features/stripe/stripe-keys.generated.ts
-
 # Playwright output
 js-storefront/stripestore/test-results/
 js-storefront/stripestore/playwright-report/

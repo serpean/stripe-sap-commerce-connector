@@ -15,6 +15,9 @@ def pl = platform {
         property 'stripe.publishable.key', System.getenv('STRIPE_PUBLISHABLE_KEY') ?: ''
         property 'stripe.webhook.secret', System.getenv('STRIPE_WEBHOOK_SECRET') ?: ''
         property 'stripe.capture.mode', 'manual'
+        property 'stripe.webhook.graceperiod.seconds', System.getenv('STRIPE_WEBHOOK_GRACEPERIOD_SECONDS') ?: '300'
+        property 'stripe.payment.pending.timeout.seconds', System.getenv('STRIPE_PAYMENT_PENDING_TIMEOUT_SECONDS') ?: '86400'
+        property 'stripe.payment.pending.retry.seconds', System.getenv('STRIPE_PAYMENT_PENDING_RETRY_SECONDS') ?: '300'
         property 'stripe.statement.descriptor', 'MYSHOP'
         property 'stripe.descriptor.suffix', 'ECOM'
         property 'payment.mode.STRIPE.enabled', 'true'
@@ -139,6 +142,7 @@ def pl = platform {
         extName 'warehousingbackoffice'
         extName 'warehousingfacades'
         extName 'warehousingwebservices'
+        extName 'yacceleratorordermanagement'
 
         /* personalization */
         extName 'personalizationcms'
@@ -221,7 +225,6 @@ def pl = platform {
         extName 'stripecore'
         extName 'stripefacades'
         extName 'stripeocc'
-        extName 'stripefulfilmentprocess'
 
         /* Reference project only: enables Stripe on the electronics store */
         extName 'stripesampledata'

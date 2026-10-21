@@ -17,7 +17,16 @@ import {
   loadStripe,
   PaymentIntent,
 } from '@stripe/stripe-js';
-import { from, mergeMap, Observable, of, shareReplay, tap } from 'rxjs';
+import {
+  defer,
+  from,
+  map,
+  mergeMap,
+  Observable,
+  of,
+  shareReplay,
+  tap,
+} from 'rxjs';
 import { StripePaymentOccService } from './stripe-payment-occ.service';
 import {
   StripePaymentConfig,
@@ -27,22 +36,27 @@ import {
 
 @Injectable({ providedIn: 'root' })
 export class StripePaymentService {
-  private stripe$: Observable<Stripe | null>;
+  private stripe$?: Observable<Stripe | null>;
 
   constructor(
     protected config: StripePaymentConfig,
     protected occService: StripePaymentOccService,
     protected orderFacade: OrderFacade,
     protected globalMessage: GlobalMessageService,
-    protected windowRef: WindowRef
-  ) {
-    const publishableKey = this.config?.stripePayment?.publishableKey;
-    this.stripe$ = publishableKey
-      ? from(loadStripe(publishableKey)).pipe(shareReplay(1))
-      : of(null);
-  }
+    protected windowRef: WindowRef,
+  ) {}
 
+  /**
+   * Loads Stripe.js with the configured publishable key. When the
+   * configuration has no key, the backend supplies it.
+   */
   getStripe(): Observable<Stripe | null> {
+    if (!this.stripe$) {
+      this.stripe$ = defer(() => this.resolvePublishableKey()).pipe(
+        mergeMap((key) => (key ? from(this.loadStripeJs(key)) : of(null))),
+        shareReplay(1),
+      );
+    }
     return this.stripe$;
   }
 
@@ -51,84 +65,99 @@ export class StripePaymentService {
       tap((response) => {
         if (!response.clientSecret) {
           this.globalMessage.add(
-            { key: 'stripe.missingClientSecret' },
-            GlobalMessageType.MSG_TYPE_ERROR
+            { key: 'stripePayment.missingClientSecret' },
+            GlobalMessageType.MSG_TYPE_ERROR,
           );
         }
-      })
+      }),
     );
   }
 
+  /**
+   * Syncs the intent amount with the cart, then confirms the payment. With the
+   * same client secret, the Payment Element fetches the new amount first. A new
+   * client secret means that the cart has a new PaymentIntent: the old one is
+   * not confirmed, and the result asks to mount the new one and pay again.
+   */
   confirmPayment(
     stripe: Stripe,
     elements: StripeElements,
-    savePaymentMethod = false
+    currentClientSecret?: string,
   ): Observable<StripePaymentResult> {
-    const confirmParams: Record<string, unknown> = {};
-    const resolvedLocation = this.windowRef?.location;
-    let returnUrl = '/';
-    if (resolvedLocation?.href) {
-      returnUrl = resolvedLocation.href;
-    } else if (this.windowRef?.nativeWindow?.location?.href) {
-      returnUrl = this.windowRef.nativeWindow.location.href;
-    }
-    confirmParams['return_url'] = returnUrl;
-    if (savePaymentMethod) {
-      confirmParams['payment_method_options'] = {
-        card: { setup_future_usage: 'off_session' },
-      };
-    }
-    return from(
-      stripe.confirmPayment({
-        elements,
-        confirmParams,
-        redirect: 'if_required',
-      })
-    ).pipe(
-      mergeMap((result) => {
-        if (result.error) {
-          return of({ error: result.error.message });
+    return this.ensureIntent().pipe(
+      mergeMap((intent): Observable<StripePaymentResult> => {
+        if (intent.clientSecret && intent.clientSecret !== currentClientSecret) {
+          return of<StripePaymentResult>({
+            newClientSecret: intent.clientSecret,
+            error: 'stripePayment.amountChanged',
+          });
         }
-        const paymentIntent = result.paymentIntent;
-        if (!paymentIntent) {
-          return of({ error: 'stripe.noPaymentIntent' });
-        }
-        return of({
-          intent: this.mapPaymentIntent(paymentIntent),
-        });
-      })
+        return from(elements.fetchUpdates()).pipe(
+          mergeMap((update) =>
+            update.error
+              ? of<StripePaymentResult>({ error: 'stripePayment.genericError' })
+              : this.confirm(stripe, elements),
+          ),
+        );
+      }),
     );
-  }
-
-  protected mapPaymentIntent(
-    paymentIntent: PaymentIntent
-  ): StripeIntentResponse {
-    return {
-      intentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret ?? undefined,
-      status: paymentIntent.status,
-    };
   }
 
   placeOrder(): Observable<Order> {
     return this.orderFacade.placeOrder(true);
   }
 
-  verifyPaymentIntent(clientSecret: string): Observable<PaymentIntent | null> {
-    return this.stripe$.pipe(
-      mergeMap((stripe) => {
-        if (!stripe) {
-          return of(null);
+  protected loadStripeJs(publishableKey: string): Promise<Stripe | null> {
+    return loadStripe(publishableKey);
+  }
+
+  protected resolvePublishableKey(): Observable<string | undefined> {
+    const configured = this.config?.stripePayment?.publishableKey;
+    return configured
+      ? of(configured)
+      : this.occService.getConfig().pipe(map((c) => c?.publishableKey));
+  }
+
+  protected confirm(
+    stripe: Stripe,
+    elements: StripeElements,
+  ): Observable<StripePaymentResult> {
+    return from(
+      stripe.confirmPayment({
+        elements,
+        confirmParams: { return_url: this.currentUrl() },
+        redirect: 'if_required',
+      }),
+    ).pipe(
+      map((result): StripePaymentResult => {
+        if (result.error) {
+          // Stripe shows its own message inside the Payment Element; the shop shows a translated one.
+          return { error: 'stripePayment.paymentFailed' };
         }
-        return from(stripe.retrievePaymentIntent(clientSecret)).pipe(
-          mergeMap((result) => {
-            if (result.error) {
-              return of(null);
-            }
-            return of(result.paymentIntent ?? null);
-          })
-        );
-      })
+        const paymentIntent = result.paymentIntent;
+        if (!paymentIntent) {
+          return { error: 'stripePayment.noPaymentIntent' };
+        }
+        return { intent: this.mapPaymentIntent(paymentIntent) };
+      }),
     );
+  }
+
+  protected currentUrl(): string {
+    return (
+      this.windowRef?.location?.href ??
+      this.windowRef?.nativeWindow?.location?.href ??
+      '/'
+    );
+  }
+
+  protected mapPaymentIntent(
+    paymentIntent: PaymentIntent,
+  ): StripeIntentResponse {
+    return {
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret ?? undefined,
+      status: paymentIntent.status,
+    };
   }
 }
