@@ -108,7 +108,7 @@ stripe.capture.mode=manual
 
 ### All properties
 
-Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for example `stripe.capture.mode.electronics-spa=automatic`. The connector reads the site value first, then the global value. The site is the current base site.
+Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for example `stripe.capture.mode.electronics-spa=automatic`. The connector reads the site value first, then the global value. In a storefront request, the site is the current base site. In background work (webhook tasks, order process steps, cancel and refund, retry tasks), the connector uses the site of the data: the site of the PaymentIntent record, of the order, or of the cart.
 
 | Property | Default | Meaning |
 |----------|---------|---------|
@@ -145,6 +145,10 @@ Rules:
 
 - One PaymentIntent pays one order. A lock (`StripeOrderPlacementLock`) stops two orders for the same PaymentIntent. A lock older than 10 minutes with no order is stale and is removed.
 - If the cart changes, the PaymentIntent is updated. If it was cancelled, a new one is created. If it is in `processing` and the cart changed, the connector answers `STRIPE_PAYMENT_IN_PROGRESS`.
+- A paid PaymentIntent (authorized or captured) is released for a changed cart only when the connector can take its placement lock and no order exists for it. When an order is being placed for it (for example in another browser tab), the connector answers `STRIPE_PAYMENT_IN_PROGRESS` and changes nothing. After the release the lock stays, so no order can use that PaymentIntent later.
+- When a PaymentIntent is released or replaced, the connector removes the cart's SAP payment transactions of that PaymentIntent. An order never carries an authorization of a released PaymentIntent.
+- After the order is placed, the connector compares the order total with the PaymentIntent amount. When they differ (the cart changed in another tab while the order was placed), it logs an ERROR, cancels the order, and gives the money back.
+- When SAP cannot finish the authorization (Stripe did not answer), the connector keeps the payment and answers `STRIPE_UNAVAILABLE`. The customer can try again. Only a rejected authorization releases the money.
 - The connector refunds the money (or voids the authorization) when it cannot place an order for a paid PaymentIntent:
   - the cart is missing;
   - the amount does not match the cart;
@@ -183,6 +187,7 @@ The connector wraps the standard SAP order process. It works with OMS (`yacceler
 - **Processing:** the intake saves the event and schedules a SAP `Task` in one transaction. The task runner (`stripeWebhookEventTaskRunner`) processes it.
 - **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Other events are ignored.
 - **Retries:** a failure that can pass is retried after 30 s, 2 min, 8 min, and 30 min. After 5 attempts the event is `FAILED` with `lastError`, and an ERROR is logged.
+- **Recovery:** when Stripe sends a `FAILED` event again (a resend from the Stripe Dashboard or the Stripe CLI), the connector sets it to `RECEIVED`, clears `attempts` and `lastError`, and processes it again. See [Operations runbook](#operations-runbook).
 - **Unreadable events** (the payload cannot be read) fail at once with no retry.
 - **States:** `RECEIVED`, `PROCESSED`, `IGNORED`, `FAILED`.
 
@@ -194,6 +199,8 @@ Some methods confirm later (the PaymentIntent is `processing`). The order is cre
 - payment failed, cancelled, or refunded: the order is cancelled;
 - still pending: the process checks again after `stripe.payment.pending.retry.seconds`;
 - still pending after `stripe.payment.pending.timeout.seconds`: the order is cancelled.
+
+Each check reads the PaymentIntent from Stripe. When it is authorized or captured with all its money, the order is authorized and the process goes on, also when the webhook event was lost. When Stripe does not answer, the order is never cancelled: the process checks again later.
 
 The storefront shows the label `paymentPending` for this status (the connector adds it to `acceleratorStatusDisplayMap` when that bean exists).
 
@@ -220,7 +227,7 @@ The response is an SAP error list. The error has `type` `StripePaymentError` and
 | `STRIPE_PAYMENT_FAILED` | 400 | The payment was not completed (failed, cancelled, or needs action). |
 | `STRIPE_ALREADY_PLACED` | 400 | An order for this payment already exists or is in progress. |
 | `STRIPE_PAYMENT_IN_PROGRESS` | 400 | The payment is processing. Wait for the result. |
-| `STRIPE_UNAVAILABLE` | 503 | Stripe did not answer. Try again later. |
+| `STRIPE_UNAVAILABLE` | 503 | Stripe did not answer, or SAP could not finish the authorization. The payment is kept. Try again later. |
 
 ## How the connector hooks into SAP
 
@@ -243,6 +250,8 @@ The connector does not replace SAP classes with one alias. It adds to them.
 The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 3.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
 
 The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
+
+Just before it confirms, the library syncs the PaymentIntent with the cart. When the PaymentIntent is the same, the Payment Element fetches the new amount and the payment is confirmed. When the cart got a new PaymentIntent (the old one was released), the library does not confirm the old one: it mounts the Payment Element of the new one, shows `stripePayment.amountChanged`, and the customer pays again.
 
 # Reference project
 
@@ -350,10 +359,43 @@ ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
 
 Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
 
+# Operations runbook
+
+Do these checks every day, and after an outage of Stripe or of the shop. Run the queries in the HAC (Console, FlexibleSearch).
+
+## Find failed webhook events
+
+```sql
+SELECT {e.eventId}, {e.type}, {e.attempts}, {e.lastError}, {e.modifiedtime}
+FROM {StripeWebhookEvent AS e JOIN StripeWebhookEventState AS s ON {e.state} = {s.pk}}
+WHERE {s.code} = 'FAILED'
+ORDER BY {e.modifiedtime} DESC
+```
+
+## Find PaymentIntents without an order (orphans)
+
+```sql
+SELECT {r.paymentIntentId}, {r.cartCode}, {r.baseSiteUid}, {s.code}, {r.amount}, {r.currencyIso}, {r.creationtime}
+FROM {StripePaymentIntentRecord AS r JOIN StripePaymentIntentState AS s ON {r.state} = {s.pk}}
+WHERE {r.order} IS NULL AND {s.code} NOT IN ('CANCELED', 'REFUNDED', 'FAILED')
+ORDER BY {r.creationtime} DESC
+```
+
+A record in `CREATED` state can hold money when its confirmation event failed. Ignore the records that are newer than the grace period (`stripe.webhook.graceperiod.seconds`). For each other record, open the PaymentIntent in the Stripe Dashboard. When its status is `requires_capture`, `succeeded`, or `processing`, Stripe holds money without an SAP order.
+
+## Queue the work again
+
+Send the event again from Stripe. Do not change the tables by hand.
+
+- **Failed event:** in the Stripe Dashboard, open the event (Developers, Events) and click **Resend** for the shop's webhook endpoint. With the Stripe CLI: `stripe events resend <eventId> --webhook-endpoint=<we_...>`. Give the secret key to the CLI in `STRIPE_API_KEY`, never on the command line.
+- **Orphan PaymentIntent:** resend its latest `payment_intent.succeeded` or `payment_intent.amount_capturable_updated` event the same way.
+
+The connector sets the event to `RECEIVED` and processes it again. For a paid PaymentIntent without an order, it places the order from the cart, or gives the money back when the cart is gone or its total changed. Run the queries again: the event must be `PROCESSED` or `IGNORED`, and the record must have an order or the state `CANCELED` or `REFUNDED`. If an event fails again, read `lastError` and the ERROR lines of the log for that PaymentIntent.
+
 # Known limitations
 
 - `PAYMENT_PENDING` cannot be tested end to end with a Stripe test account in Spain: no method stays in `processing`. Integration and unit tests cover the retry path.
-- There is no reconciliation job yet for webhook events in `FAILED` state, or for PaymentIntents that have no order (orphans). Look for them in the logs and in the `stripe_webhook_event` and `stripe_pi_record` tables.
+- There is no reconciliation job for webhook events in `FAILED` state, or for PaymentIntents that have no order (orphans). Follow the [Operations runbook](#operations-runbook).
 - A retry of a cancel adjustment can replay a Stripe failure that Stripe saved for the same idempotency key. Stripe keeps keys for 24 hours.
 - HSQLDB has no row locks. The locks on the PaymentIntent record and on the webhook event do nothing there. Use a real database (not HSQLDB) to test concurrency.
 - A card authorization expires after 7 days.

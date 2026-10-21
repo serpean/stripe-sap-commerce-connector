@@ -4,12 +4,14 @@ import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
+import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.StripeOrderPlacementService;
-import com.stripe.core.payment.StripePaymentIntentRecordService;
-import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
+import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
@@ -51,7 +53,9 @@ import org.slf4j.LoggerFactory;
  * the cart, or the authorization is rejected, the funds are released and no order is placed. The lock stays: the
  * decision for the PaymentIntent is made. Any other failure after the lock is thrown, so the webhook runner tries
  * again; the lock is given back only when no live order exists for the PaymentIntent. After the placement, an order
- * total that is not the amount of the PaymentIntent is logged as an error.
+ * total that is not the amount of the PaymentIntent is logged as an error, and the order is cancelled and its money
+ * given back. The work runs in the site of the PaymentIntent (its metadata), so the Stripe settings of that site are
+ * used.
  */
 public class DefaultStripeOrderPlacementService implements StripeOrderPlacementService
 {
@@ -76,10 +80,19 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	private ModelService modelService;
 	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
 	private StripePaymentIntentChecks stripePaymentIntentChecks;
+	private StripeSiteContext stripeSiteContext;
+	private StripeOrderCancellationService stripeOrderCancellationService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 
 	@Override
 	public Optional<OrderModel> placeOrderFor(final PaymentIntent paymentIntent)
+	{
+		final Map<String, String> metadata = paymentIntent.getMetadata();
+		return stripeSiteContext.runInSite(metadata == null ? null : metadata.get("baseSiteUid"),
+				() -> placeOrderInSite(paymentIntent));
+	}
+
+	protected Optional<OrderModel> placeOrderInSite(final PaymentIntent paymentIntent)
 	{
 		final String paymentIntentId = paymentIntent.getId();
 		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(paymentIntent.getStatus());
@@ -149,17 +162,19 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	}
 
 	/**
-	 * The order total must be the amount of the PaymentIntent. A difference is logged for the merchant; the order stays,
-	 * and the cancellation and refund process handles adjustments.
+	 * The order total must be the amount of the PaymentIntent (the cart can change while the order is placed). On a
+	 * difference an ERROR is logged, the order is cancelled and its money is given back, as for a rejected
+	 * authorization.
 	 */
 	protected void checkOrderTotal(final OrderModel order, final PaymentIntent paymentIntent)
 	{
 		if (!stripePaymentIntentChecks.matchesAmount(order, paymentIntent))
 		{
-			LOG.error("Order {} must charge {} {} but payment intent {} has {} {}", order.getCode(),
-					stripeAmountConverter.chargeAmountMinor(order),
+			LOG.error("Order {} must charge {} {} but payment intent {} has {} {}: cancelling the order and releasing the "
+					+ "funds", order.getCode(), stripeAmountConverter.chargeAmountMinor(order),
 					order.getCurrency() == null ? null : order.getCurrency().getIsocode(), paymentIntent.getId(),
 					paymentIntent.getAmount(), paymentIntent.getCurrency());
+			stripeOrderCancellationService.cancelForAmountMismatch(order);
 		}
 	}
 
@@ -293,13 +308,19 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	}
 
 	/**
-	 * Takes the released PaymentIntent off the cart, so the next checkout of the cart creates a new one.
+	 * Takes the released PaymentIntent off the cart, with the cart's authorizations of it, so the next checkout of the
+	 * cart creates a new one.
 	 */
 	protected void detachPaymentIntent(final CartModel cart)
 	{
 		final StripePaymentInfoModel paymentInfo = (StripePaymentInfoModel) cart.getPaymentInfo();
+		final String paymentIntentId = paymentInfo.getStripePaymentIntentId();
 		paymentInfo.setStripePaymentIntentId(null);
 		modelService.save(paymentInfo);
+		if (paymentIntentId != null)
+		{
+			stripeOrderAuthorizationService.removeAuthorizations(cart, paymentIntentId);
+		}
 	}
 
 	protected void afterFailedPlacement(final String paymentIntentId)
@@ -393,5 +414,15 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
 	{
 		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
+	}
+
+	public void setStripeOrderCancellationService(final StripeOrderCancellationService stripeOrderCancellationService)
+	{
+		this.stripeOrderCancellationService = stripeOrderCancellationService;
 	}
 }

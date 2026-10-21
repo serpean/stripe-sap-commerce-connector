@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -24,6 +25,8 @@ import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.core.webhook.StripeWebhookException;
 import com.stripe.core.webhook.StripeWebhookOutcome;
 import com.stripe.model.PaymentIntent;
@@ -59,6 +62,7 @@ public class DefaultStripePaymentIntentEventHandlerTest
 	private StripeOrderPlacementService placementService;
 	private StripeOrderCancellationService cancellationService;
 	private ModelService modelService;
+	private StripeSiteContext siteContext;
 	private DefaultStripePaymentIntentEventHandler handler;
 	private PaymentIntent eventObject;
 	private Instant eventCreated;
@@ -91,6 +95,8 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		handler.setStripeOrderCancellationService(cancellationService);
 		handler.setModelService(modelService);
 		handler.setTimeService(timeService);
+		siteContext = StripeSiteContextMocks.direct();
+		handler.setStripeSiteContext(siteContext);
 
 		eventObject = new PaymentIntent();
 		eventObject.setId(PI_ID);
@@ -112,6 +118,21 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		verify(authorizationService).authorizePendingOrder(order, live);
 		assertEquals(StripePaymentIntentState.AUTHORIZED, record.getState());
 		verifyNoInteractions(placementService);
+	}
+
+	@Test
+	public void eventIsHandledInTheSiteOfTheRecord() throws Exception
+	{
+		final StripePaymentIntentRecordModel record = givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofDays(1));
+		record.setBaseSiteUid("site-b");
+		final PaymentIntent live = givenLive("requires_capture");
+		when(placementService.placeOrderFor(live)).thenReturn(Optional.of(new OrderModel()));
+
+		handler.handle(SUCCEEDED, eventObject, eventCreated);
+
+		final InOrder inOrder = inOrder(siteContext, gateway);
+		inOrder.verify(siteContext).runInSite(eq("site-b"), any());
+		inOrder.verify(gateway).retrievePaymentIntent(PI_ID);
 	}
 
 	@Test

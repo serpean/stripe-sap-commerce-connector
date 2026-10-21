@@ -1,8 +1,11 @@
 package com.stripe.core.order.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -21,8 +24,12 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeLogCapture;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.basecommerce.enums.CancelReason;
+import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderEntryModel;
 import de.hybris.platform.core.model.order.OrderModel;
@@ -50,6 +57,8 @@ public class DefaultStripeOrderCancellationServiceTest
 	private EmployeeModel admin;
 	private OrderModel order;
 	private StripePaymentIntentRecordModel record;
+	private StripeSiteContext siteContext;
+	private BaseSiteModel site;
 
 	@Before
 	public void setUp() throws Exception
@@ -68,6 +77,10 @@ public class DefaultStripeOrderCancellationServiceTest
 		service.setStripePaymentIntentService(paymentIntentService);
 		service.setStripePaymentIntentRecordDao(recordDao);
 		service.setStripeOrderAuthorizationService(authorizationService);
+		siteContext = StripeSiteContextMocks.direct();
+		service.setStripeSiteContext(siteContext);
+		site = new BaseSiteModel();
+		site.setUid("site-b");
 
 		final StripePaymentInfoModel paymentInfo = new StripePaymentInfoModel();
 		paymentInfo.setStripePaymentIntentId(PI_ID);
@@ -75,6 +88,7 @@ public class DefaultStripeOrderCancellationServiceTest
 		order.setCode("order-cancel");
 		order.setPaymentInfo(paymentInfo);
 		order.setStatus(OrderStatus.PAYMENT_PENDING);
+		order.setSite(site);
 		final OrderEntryModel entry = new OrderEntryModel();
 		entry.setQuantity(2L);
 		order.setEntries(List.of(entry));
@@ -141,19 +155,51 @@ public class DefaultStripeOrderCancellationServiceTest
 		assertEquals(OrderStatus.CANCELLED, order.getStatus());
 	}
 
-	@Test(expected = IllegalStateException.class)
-	public void refusedCancellationFailsAndKeepsFunds() throws Exception
+	@Test
+	public void refusedCancellationLogsTheOrderAndThePaymentIntentThenFails() throws Exception
 	{
 		doThrow(new OrderCancelException("order-cancel", "denied")).when(orderCancelService).requestOrderCancel(any(), any());
 
-		try
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeOrderCancellationService.class))
 		{
-			service.cancelForFailedPayment(order);
+			assertThrows(IllegalStateException.class, () -> service.cancelForFailedPayment(order));
+
+			assertTrue("ERROR log with order and payment intent", log.hasError("order-cancel", PI_ID));
 		}
-		finally
-		{
-			verifyNoInteractions(paymentIntentService);
-		}
+		verifyNoInteractions(paymentIntentService);
+	}
+
+	@Test
+	public void cancellationRunsInTheSiteOfTheOrder() throws Exception
+	{
+		service.cancelForFailedPayment(order);
+
+		verify(siteContext).runInSite(same(site), any());
+	}
+
+	@Test
+	public void amountMismatchCancelsAPaidOrderAndReleasesTheFunds() throws Exception
+	{
+		when(authorizationService.hasAcceptedAuthorization(order, PI_ID)).thenReturn(true);
+		record.setState(StripePaymentIntentState.AUTHORIZED);
+
+		service.cancelForAmountMismatch(order);
+
+		final InOrder inOrder = inOrder(orderCancelService, paymentIntentService);
+		inOrder.verify(orderCancelService).requestOrderCancel(any(), same(admin));
+		inOrder.verify(paymentIntentService).releaseFunds(PI_ID, "order order-cancel: amount differs from the payment");
+		verify(siteContext).runInSite(same(site), any());
+	}
+
+	@Test
+	public void amountMismatchOfACancelledOrderOnlyReleasesTheFunds() throws Exception
+	{
+		order.setStatus(OrderStatus.CANCELLED);
+
+		service.cancelForAmountMismatch(order);
+
+		verify(orderCancelService, never()).requestOrderCancel(any(), any());
+		verify(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
 	}
 
 	@Test

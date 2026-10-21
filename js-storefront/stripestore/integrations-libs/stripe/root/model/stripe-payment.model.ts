@@ -13,6 +13,8 @@ export interface StripeIntentResponse {
 export interface StripePaymentResult {
   intent?: StripeIntentResponse;
   error?: string;
+  /** The cart now has a new PaymentIntent: mount it and let the customer pay again. */
+  newClientSecret?: string;
 }
 
 export interface StripeConfigResponse {

@@ -3,6 +3,7 @@ package com.stripe.core.process;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,7 +13,10 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.OrderModel;
@@ -35,6 +39,8 @@ import org.junit.Test;
 @UnitTest
 public class StripeTakePaymentActionTest
 {
+	private StripeSiteContext siteContext;
+	private BaseSiteModel site;
 	private static final String PI_ID = "pi_take";
 	private static final BigDecimal AUTHORIZED = new BigDecimal("100.00");
 
@@ -60,6 +66,10 @@ public class StripeTakePaymentActionTest
 		action.setModelService(mock(ModelService.class));
 		action.setPaymentService(paymentService);
 		action.setStripeAmountConverter(amountConverter);
+		siteContext = StripeSiteContextMocks.direct();
+		action.setStripeSiteContext(siteContext);
+		site = new BaseSiteModel();
+		site.setUid("site-d");
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -67,6 +77,7 @@ public class StripeTakePaymentActionTest
 		paymentInfo.setStripePaymentIntentId(PI_ID);
 		order = new OrderModel();
 		order.setCode("order-take");
+		order.setSite(site);
 		order.setCurrency(currency);
 		order.setPaymentInfo(paymentInfo);
 		transaction = transaction(PI_ID, AUTHORIZED);
@@ -220,5 +231,18 @@ public class StripeTakePaymentActionTest
 		entry.setType(PaymentTransactionType.CAPTURE);
 		entry.setTransactionStatus(status.name());
 		return entry;
+	}
+
+	@Test
+	public void captureRunsInTheSiteOfTheOrder() throws Exception
+	{
+		when(amountConverter.chargeAmount(order)).thenReturn(new BigDecimal("100.0"));
+		when(paymentService.capture(transaction)).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		action.execute(process);
+
+		final org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(siteContext, paymentService);
+		inOrder.verify(siteContext).runInSite(same(site), any());
+		inOrder.verify(paymentService).capture(transaction);
 	}
 }

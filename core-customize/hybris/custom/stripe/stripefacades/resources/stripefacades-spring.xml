@@ -25,12 +25,17 @@
         <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
         <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+        <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
     </bean>
 
     <alias name="defaultStripePlaceOrderGuard" alias="stripePlaceOrderGuard"/>
     <bean id="defaultStripePlaceOrderGuard" class="com.stripe.facades.order.StripePlaceOrderGuard">
         <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
         <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
     </bean>
 
     <alias name="stripeCheckoutFacade" alias="checkoutFacade"/>

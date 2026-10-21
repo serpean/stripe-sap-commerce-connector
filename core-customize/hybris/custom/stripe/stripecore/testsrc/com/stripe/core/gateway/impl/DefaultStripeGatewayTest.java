@@ -10,6 +10,9 @@ import static org.mockito.Mockito.when;
 import com.stripe.Stripe;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.exception.CardException;
+import com.stripe.exception.IdempotencyException;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.param.PaymentIntentCreateParams;
 import de.hybris.bootstrap.annotations.UnitTest;
 import org.junit.Before;
@@ -69,5 +72,27 @@ public class DefaultStripeGatewayTest
 			assertEquals("secret_key_missing", e.getStripeCode());
 			assertFalse(e.isRetryable());
 		}
+	}
+	@Test
+	public void idempotencyKeyInUseIsRetryable()
+	{
+		assertTrue("409: another request with the same key is still running",
+				gateway.isRetryable(new IdempotencyException("in use", "req_1", "idempotency_key_in_use", 409)));
+		assertTrue("409 without a code",
+				gateway.isRetryable(new InvalidRequestException("conflict", null, "req_2", null, 409, null)));
+	}
+
+	@Test
+	public void lockTimeoutIsRetryable()
+	{
+		assertTrue(gateway.isRetryable(new InvalidRequestException("locked", null, "req_3", "lock_timeout", 400, null)));
+	}
+
+	@Test
+	public void requestErrorsAreNotRetryable()
+	{
+		assertFalse("other parameters with the same key",
+				gateway.isRetryable(new IdempotencyException("mismatch", "req_4", "idempotency_error", 400)));
+		assertFalse(gateway.isRetryable(new CardException("declined", "req_5", "card_declined", null, null, null, 402, null)));
 	}
 }

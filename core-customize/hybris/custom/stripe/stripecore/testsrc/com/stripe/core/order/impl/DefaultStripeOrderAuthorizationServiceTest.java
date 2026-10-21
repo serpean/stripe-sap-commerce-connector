@@ -1,5 +1,6 @@
 package com.stripe.core.order.impl;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -17,6 +18,7 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
+import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.user.AddressModel;
 import de.hybris.platform.payment.PaymentService;
@@ -27,6 +29,7 @@ import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.i18n.I18NService;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Currency;
 import java.util.List;
 import org.junit.Before;
@@ -137,6 +140,46 @@ public class DefaultStripeOrderAuthorizationServiceTest
 		givenAuthorization(TransactionStatus.ERROR);
 
 		service.authorizePendingOrder(order, paymentIntent);
+	}
+
+	@Test
+	public void removeAuthorizationsDropsOnlyTheTransactionsOfThePaymentIntent()
+	{
+		final PaymentTransactionModel stale = transaction(PI_ID, TransactionStatus.ACCEPTED);
+		final PaymentTransactionModel other = transaction("pi_other", TransactionStatus.ACCEPTED);
+		final CartModel cart = new CartModel();
+		cart.setCode("cart-9");
+		cart.setPaymentTransactions(new ArrayList<>(List.of(stale, other)));
+
+		service.removeAuthorizations(cart, PI_ID);
+
+		verify(modelService).removeAll(List.of(stale.getEntries().get(0), stale));
+		assertEquals(List.of(other), cart.getPaymentTransactions());
+		assertFalse(service.hasAcceptedAuthorization(cart, PI_ID));
+		assertTrue(service.hasAcceptedAuthorization(cart, "pi_other"));
+	}
+
+	@Test
+	public void removeAuthorizationsWithoutMatchDoesNothing()
+	{
+		final CartModel cart = new CartModel();
+		cart.setPaymentTransactions(List.of(transaction("pi_other", TransactionStatus.ACCEPTED)));
+
+		service.removeAuthorizations(cart, PI_ID);
+
+		verifyNoInteractions(modelService);
+	}
+
+	private static PaymentTransactionModel transaction(final String paymentIntentId, final TransactionStatus status)
+	{
+		final PaymentTransactionEntryModel entry = new PaymentTransactionEntryModel();
+		entry.setType(PaymentTransactionType.AUTHORIZATION);
+		entry.setTransactionStatus(status.name());
+		entry.setRequestId(paymentIntentId);
+		final PaymentTransactionModel transaction = new PaymentTransactionModel();
+		transaction.setCode("txn-" + paymentIntentId);
+		transaction.setEntries(List.of(entry));
+		return transaction;
 	}
 
 	private PaymentTransactionEntryModel givenAuthorization(final TransactionStatus status)

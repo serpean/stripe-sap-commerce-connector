@@ -24,4 +24,11 @@ public interface StripeOrderAuthorizationService
 	 * @throws IllegalStateException when the authorization ended in ERROR (Stripe not reachable): a retry can help
 	 */
 	boolean authorizePendingOrder(OrderModel order, PaymentIntent paymentIntent);
+
+	/**
+	 * Removes the payment transactions of the cart whose AUTHORIZATION entry belongs to the PaymentIntent, with their
+	 * entries. Call it when the PaymentIntent is released or replaced, so that the order of the cart never carries an
+	 * authorization of money that was given back.
+	 */
+	void removeAuthorizations(AbstractOrderModel cart, String paymentIntentId);
 }

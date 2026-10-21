@@ -7,6 +7,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -16,11 +17,15 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.model.StripePaymentInfoModel;
+import com.stripe.core.order.StripeOrderAuthorizationService;
+import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
-import com.stripe.core.payment.StripePaymentIntentRecordService;
-import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
+import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
@@ -82,6 +87,8 @@ public class DefaultStripeOrderPlacementServiceTest
 	private final StripePaymentIntentService paymentIntentService = mock(StripePaymentIntentService.class);
 	private final StripeAmountConverter amountConverter = mock(StripeAmountConverter.class);
 	private final ModelService modelService = mock(ModelService.class);
+	private final StripeOrderCancellationService cancellationService = mock(StripeOrderCancellationService.class);
+	private final StripeSiteContext siteContext = StripeSiteContextMocks.direct();
 
 	private final BaseSiteModel site = mock(BaseSiteModel.class);
 	private final CustomerModel user = mock(CustomerModel.class);
@@ -116,7 +123,11 @@ public class DefaultStripeOrderPlacementServiceTest
 		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
 		checks.setStripeAmountConverter(amountConverter);
 		service.setStripePaymentIntentChecks(checks);
-		service.setStripeOrderAuthorizationService(new DefaultStripeOrderAuthorizationService());
+		final DefaultStripeOrderAuthorizationService authorizationService = new DefaultStripeOrderAuthorizationService();
+		authorizationService.setModelService(modelService);
+		service.setStripeOrderAuthorizationService(authorizationService);
+		service.setStripeOrderCancellationService(cancellationService);
+		service.setStripeSiteContext(siteContext);
 
 		paymentIntent = new PaymentIntent();
 		paymentIntent.setId(PI_ID);
@@ -275,6 +286,26 @@ public class DefaultStripeOrderPlacementServiceTest
 		verify(modelService).save(paymentInfo);
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
 		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void releasedPaymentIntentLeavesNoAuthorizationOnTheCart() throws Exception
+	{
+		final StripeOrderAuthorizationService authorizationService = mock(StripeOrderAuthorizationService.class);
+		service.setStripeOrderAuthorizationService(authorizationService);
+		when(amountConverter.chargeAmountMinor(cart)).thenReturn(AMOUNT_MINOR + 1);
+
+		service.placeOrderFor(paymentIntent);
+
+		verify(authorizationService).removeAuthorizations(cart, PI_ID);
+	}
+
+	@Test
+	public void placementRunsInTheSiteOfThePaymentIntent() throws Exception
+	{
+		service.placeOrderFor(paymentIntent);
+
+		verify(siteContext).runInSite(eq(SITE_UID), any());
 	}
 
 	@Test
@@ -473,8 +504,8 @@ public class DefaultStripeOrderPlacementServiceTest
 		assertEquals(1, errors.size());
 		assertTrue(errors.get(0).contains(PI_ID));
 		assertTrue(errors.get(0).contains("order-1"));
-		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
 		verify(recordService).linkOrder(PI_ID, order);
+		verify(cancellationService).cancelForAmountMismatch(order);
 	}
 
 	@Test
@@ -483,6 +514,7 @@ public class DefaultStripeOrderPlacementServiceTest
 		assertSame(order, service.placeOrderFor(paymentIntent).get());
 
 		verify(amountConverter).chargeAmountMinor(order);
+		verify(cancellationService, never()).cancelForAmountMismatch(any());
 	}
 
 	@Test

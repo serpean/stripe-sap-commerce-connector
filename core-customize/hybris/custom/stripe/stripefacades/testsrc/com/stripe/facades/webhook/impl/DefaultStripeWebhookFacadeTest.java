@@ -2,11 +2,13 @@ package com.stripe.facades.webhook.impl;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,12 +25,13 @@ import com.stripe.model.Event;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.servicelayer.exceptions.ModelSavingException;
 import de.hybris.platform.servicelayer.model.ModelService;
-import de.hybris.platform.task.TaskService;
 import de.hybris.platform.task.TaskModel;
+import de.hybris.platform.task.TaskService;
 import java.util.Date;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.InOrder;
 
 @UnitTest
 public class DefaultStripeWebhookFacadeTest
@@ -271,5 +274,31 @@ public class DefaultStripeWebhookFacadeTest
 		assertEquals(StripeWebhookReceipt.DUPLICATE, facade.receive(PAYLOAD, SIGNATURE));
 		verify(dao, never()).hasScheduledTask(any());
 		verify(taskService, never()).scheduleTask(any());
+	}
+
+	@Test
+	public void resentFailedEventIsQueuedAgain()
+	{
+		final StripeWebhookEventModel failed = new StripeWebhookEventModel();
+		failed.setEventId("evt_1");
+		failed.setState(StripeWebhookEventState.FAILED);
+		failed.setAttempts(5);
+		failed.setLastError("StripeGatewayException: Stripe is not reachable");
+		when(gateway.constructEvent(PAYLOAD, SIGNATURE)).thenReturn(event());
+		when(dao.findByEventId("evt_1")).thenReturn(Optional.of(failed));
+		doAnswer(invocation -> {
+			assertTrue("the event and its task are saved in one transaction", transactionOpen);
+			return null;
+		}).when(taskService).scheduleTask(task);
+
+		assertEquals(StripeWebhookReceipt.ACCEPTED, facade.receive(PAYLOAD, SIGNATURE));
+
+		assertEquals(StripeWebhookEventState.RECEIVED, failed.getState());
+		assertEquals(Integer.valueOf(0), failed.getAttempts());
+		assertNull(failed.getLastError());
+		final InOrder inOrder = inOrder(modelService, taskService);
+		inOrder.verify(modelService).save(failed);
+		inOrder.verify(taskService).scheduleTask(task);
+		verify(task).setContextItem(failed);
 	}
 }

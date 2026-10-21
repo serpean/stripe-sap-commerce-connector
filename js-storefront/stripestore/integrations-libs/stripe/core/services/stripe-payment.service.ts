@@ -74,8 +74,10 @@ export class StripePaymentService {
   }
 
   /**
-   * Syncs the intent amount with the cart, refreshes the Payment Element when
-   * the client secret changed, and confirms the payment.
+   * Syncs the intent amount with the cart, then confirms the payment. With the
+   * same client secret, the Payment Element fetches the new amount first. A new
+   * client secret means that the cart has a new PaymentIntent: the old one is
+   * not confirmed, and the result asks to mount the new one and pay again.
    */
   confirmPayment(
     stripe: Stripe,
@@ -84,19 +86,20 @@ export class StripePaymentService {
   ): Observable<StripePaymentResult> {
     return this.ensureIntent().pipe(
       mergeMap((intent): Observable<StripePaymentResult> => {
-        const changed =
-          !!intent.clientSecret && intent.clientSecret !== currentClientSecret;
-        if (!changed) {
-          return this.confirm(stripe, elements);
+        if (intent.clientSecret && intent.clientSecret !== currentClientSecret) {
+          return of<StripePaymentResult>({
+            newClientSecret: intent.clientSecret,
+            error: 'stripePayment.amountChanged',
+          });
         }
         return from(elements.fetchUpdates()).pipe(
           mergeMap((update) =>
             update.error
               ? of<StripePaymentResult>({ error: 'stripePayment.genericError' })
-              : this.confirm(stripe, elements)
-          )
+              : this.confirm(stripe, elements),
+          ),
         );
-      })
+      }),
     );
   }
 

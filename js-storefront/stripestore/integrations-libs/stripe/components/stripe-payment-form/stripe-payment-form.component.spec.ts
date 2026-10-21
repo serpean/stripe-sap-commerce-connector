@@ -131,6 +131,27 @@ describe('StripePaymentFormComponent', () => {
       });
     });
 
+    it('mounts the new PaymentIntent and lets the customer pay again when the client secret changed', () => {
+      stripeService.confirmPayment.and.returnValue(
+        of({ newClientSecret: 'cs_2', error: 'stripePayment.amountChanged' })
+      );
+
+      component.submit();
+
+      expect(component.error).toBe('stripePayment.amountChanged');
+      expect(paymentElement.mount).toHaveBeenCalledTimes(2);
+      expect(stripeService.placeOrder).not.toHaveBeenCalled();
+      expect(component.isLoading).toBeFalse();
+
+      stripeService.confirmPayment.and.returnValue(
+        of({ intent: { paymentIntentId: 'pi_2', status: 'succeeded' } })
+      );
+      component.submit();
+
+      expect(stripeService.confirmPayment.calls.mostRecent().args[2]).toBe('cs_2');
+      expect(stripeService.placeOrder).toHaveBeenCalledTimes(1);
+    });
+
     it('maps STRIPE_AMOUNT_MISMATCH to amountChanged message', () => {
       stripeService.confirmPayment.and.returnValue(
         throwError(() => stripeError('STRIPE_AMOUNT_MISMATCH'))

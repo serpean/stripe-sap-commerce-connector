@@ -2,13 +2,17 @@ package com.stripe.core.order;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.product.ProductModel;
 import de.hybris.platform.task.RetryLaterException;
@@ -20,6 +24,8 @@ import org.junit.Test;
 @UnitTest
 public class StripePaymentAdjustmentTaskRunnerTest
 {
+	private StripeSiteContext siteContext;
+	private BaseSiteModel site;
 	private StripePaymentAdjustmentService adjustmentService;
 	private TaskService taskService;
 	private StripePaymentAdjustmentTaskRunner runner;
@@ -33,8 +39,13 @@ public class StripePaymentAdjustmentTaskRunnerTest
 		taskService = mock(TaskService.class);
 		runner = new StripePaymentAdjustmentTaskRunner();
 		runner.setStripePaymentAdjustmentService(adjustmentService);
+		siteContext = StripeSiteContextMocks.direct();
+		runner.setStripeSiteContext(siteContext);
+		site = new BaseSiteModel();
+		site.setUid("site-c");
 		order = new OrderModel();
 		order.setCode("order-retry");
+		order.setSite(site);
 		task = new TaskModel();
 		task.setContextItem(order);
 	}
@@ -108,5 +119,16 @@ public class StripePaymentAdjustmentTaskRunnerTest
 		runner.run(taskService, task);
 
 		verifyNoInteractions(adjustmentService);
+	}
+
+	@Test
+	public void adjustmentRunsInTheSiteOfTheOrder() throws Exception
+	{
+		when(adjustmentService.adjustToOrderTotal(order)).thenReturn(true);
+
+		runner.run(taskService, task);
+
+		verify(siteContext).runInSite(same(site), org.mockito.ArgumentMatchers.any());
+		verify(adjustmentService).adjustToOrderTotal(order);
 	}
 }

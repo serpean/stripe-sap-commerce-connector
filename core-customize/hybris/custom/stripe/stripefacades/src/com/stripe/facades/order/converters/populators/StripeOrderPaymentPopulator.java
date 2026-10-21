@@ -44,16 +44,20 @@ public class StripeOrderPaymentPopulator implements Populator<AbstractOrderModel
 		target.setStripePaymentInfo(data);
 	}
 
+	/**
+	 * ACCEPTED only for an ACCEPTED authorization of the current PaymentIntent of the payment info: an authorization of
+	 * a released PaymentIntent does not count.
+	 */
 	private String paymentStatus(final AbstractOrderModel source, final StripePaymentInfoModel paymentInfo)
 	{
-		if (hasAcceptedAuthorization(source.getPaymentTransactions()))
-		{
-			return ACCEPTED;
-		}
 		final String paymentIntentId = StringUtils.trimToNull(paymentInfo.getStripePaymentIntentId());
 		if (paymentIntentId == null)
 		{
 			return null;
+		}
+		if (hasAcceptedAuthorization(source.getPaymentTransactions(), paymentIntentId))
+		{
+			return ACCEPTED;
 		}
 		return stripePaymentIntentRecordDao.findByPaymentIntentId(paymentIntentId)
 				.map(StripePaymentIntentRecordModel::getState)
@@ -61,14 +65,16 @@ public class StripeOrderPaymentPopulator implements Populator<AbstractOrderModel
 				.orElse(null);
 	}
 
-	private static boolean hasAcceptedAuthorization(final Collection<PaymentTransactionModel> transactions)
+	private static boolean hasAcceptedAuthorization(final Collection<PaymentTransactionModel> transactions,
+			final String paymentIntentId)
 	{
 		return transactions != null && transactions.stream()
 				.map(PaymentTransactionModel::getEntries)
 				.filter(Objects::nonNull)
 				.flatMap(Collection::stream)
 				.anyMatch(entry -> PaymentTransactionType.AUTHORIZATION.equals(entry.getType())
-						&& TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus()));
+						&& TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus())
+						&& paymentIntentId.equals(entry.getRequestId()));
 	}
 
 	private static String statusOf(final StripePaymentIntentState state)

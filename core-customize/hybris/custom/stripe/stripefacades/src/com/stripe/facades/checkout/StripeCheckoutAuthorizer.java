@@ -12,7 +12,8 @@ public interface StripeCheckoutAuthorizer
 	 *
 	 * @return {@code true} when the order can be placed
 	 * @throws StripeCheckoutException when the amount is different, the payment is missing, the payment failed, needs
-	 *            an action of the customer or is cancelled, or an order is already placed for the PaymentIntent
+	 *            an action of the customer or is cancelled, an order is already placed (or being placed) for the
+	 *            PaymentIntent, or the authorization could not finish (UNAVAILABLE: the payment is kept)
 	 */
 	boolean authorize(CartModel cart);
 }

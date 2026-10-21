@@ -191,6 +191,10 @@ export class StripePaymentFormComponent
         .subscribe({
           next: (result) => {
             this.isLoading = false;
+            if (result.newClientSecret) {
+              this.clientSecret = result.newClientSecret;
+              this.initializeElements(result.newClientSecret);
+            }
             if (result.error) {
               this.error = result.error;
               this.changeDetector.markForCheck();

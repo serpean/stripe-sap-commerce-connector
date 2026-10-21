@@ -34,6 +34,7 @@ import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.payment.StripeTransactionLookup;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.core.webhook.impl.DefaultStripePaymentIntentEventHandler;
 import com.stripe.core.webhook.impl.DefaultStripeRefundEventHandler;
 import com.stripe.model.PaymentIntent;
@@ -100,6 +101,7 @@ public class StripeWebhookEventTaskRunnerTest
 		when(recordService.findLiveOrder(anyString())).thenReturn(Optional.empty());
 
 		final DefaultStripePaymentIntentEventHandler paymentIntentHandler = new DefaultStripePaymentIntentEventHandler();
+		paymentIntentHandler.setStripeSiteContext(StripeSiteContextMocks.direct());
 		paymentIntentHandler.setStripePaymentIntentRecordDao(recordDao);
 		paymentIntentHandler.setStripePaymentIntentRecordService(recordService);
 		paymentIntentHandler.setStripeGateway(gateway);

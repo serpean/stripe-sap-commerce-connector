@@ -32,6 +32,8 @@ public enum StripeErrorCode
 				return STRIPE_AMOUNT_MISMATCH;
 			case ALREADY_PLACED:
 				return STRIPE_ALREADY_PLACED;
+			case UNAVAILABLE:
+				return STRIPE_UNAVAILABLE;
 			default:
 				return STRIPE_PAYMENT_FAILED;
 		}

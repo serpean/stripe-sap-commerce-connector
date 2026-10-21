@@ -14,6 +14,7 @@ import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.i18n.I18NService;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Currency;
 import java.util.List;
@@ -80,6 +81,47 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 		LOG.warn("Authorization of order {} by payment intent {} was rejected: {}", order.getCode(), paymentIntentId,
 				entry.getTransactionStatusDetails());
 		return false;
+	}
+
+	/**
+	 * The transactions are removed, not marked: a cart transaction is not an audit record yet (SAP copies it to the
+	 * order at placement), and SAP itself removes a cart transaction whose authorization was not accepted.
+	 */
+	@Override
+	public void removeAuthorizations(final AbstractOrderModel cart, final String paymentIntentId)
+	{
+		final List<PaymentTransactionModel> transactions = cart.getPaymentTransactions() == null ? List.of()
+				: List.copyOf(cart.getPaymentTransactions());
+		final List<PaymentTransactionModel> stale = transactions.stream()
+				.filter(transaction -> authorizes(transaction, paymentIntentId))
+				.toList();
+		if (stale.isEmpty())
+		{
+			return;
+		}
+		final List<Object> removed = new ArrayList<>();
+		for (final PaymentTransactionModel transaction : stale)
+		{
+			if (transaction.getEntries() != null)
+			{
+				removed.addAll(transaction.getEntries());
+			}
+			removed.add(transaction);
+		}
+		modelService.removeAll(removed);
+		final List<PaymentTransactionModel> kept = new ArrayList<>(transactions);
+		kept.removeAll(stale);
+		cart.setPaymentTransactions(kept);
+		LOG.info("Removed {} payment transaction(s) of released payment intent {} from {}", stale.size(), paymentIntentId,
+				cart.getCode());
+	}
+
+	private static boolean authorizes(final PaymentTransactionModel transaction, final String paymentIntentId)
+	{
+		return transaction.getEntries() != null && transaction.getEntries().stream()
+				.filter(Objects::nonNull)
+				.anyMatch(entry -> PaymentTransactionType.AUTHORIZATION.equals(entry.getType())
+						&& paymentIntentId.equals(entry.getRequestId()));
 	}
 
 	public void setPaymentService(final PaymentService paymentService)

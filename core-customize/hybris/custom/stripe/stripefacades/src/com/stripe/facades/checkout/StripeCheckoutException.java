@@ -6,9 +6,13 @@ package com.stripe.facades.checkout;
  */
 public class StripeCheckoutException extends RuntimeException
 {
+	/**
+	 * UNAVAILABLE: the authorization could not finish (for example, Stripe did not answer); the payment is kept and the
+	 * customer can try again.
+	 */
 	public enum Reason
 	{
-		AMOUNT_MISMATCH, PAYMENT_FAILED, PAYMENT_NOT_FOUND, ALREADY_PLACED
+		AMOUNT_MISMATCH, PAYMENT_FAILED, PAYMENT_NOT_FOUND, ALREADY_PLACED, UNAVAILABLE
 	}
 
 	private final Reason reason;

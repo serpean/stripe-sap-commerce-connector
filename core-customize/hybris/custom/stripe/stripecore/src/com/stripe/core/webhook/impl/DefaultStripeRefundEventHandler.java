@@ -17,7 +17,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Default {@link StripeRefundEventHandler}. A succeeded refund gives ACCEPTED; a failed or canceled refund gives
- * REJECTED (the money was not given back); a pending refund keeps the entry as it is.
+ * REJECTED (the money was not given back); a pending refund keeps the entry as it is. A failed or canceled refund
+ * without SAP entry (for example, a release of funds of a PaymentIntent without order) is logged as an ERROR.
  */
 public class DefaultStripeRefundEventHandler implements StripeRefundEventHandler
 {
@@ -62,7 +63,15 @@ public class DefaultStripeRefundEventHandler implements StripeRefundEventHandler
 		final List<PaymentTransactionEntryModel> entries = stripeTransactionLookup.findRefundEntries(refund.getId());
 		if (entries.isEmpty())
 		{
-			LOG.info("Refund {} of payment intent {} has no SAP refund entry", refund.getId(), refund.getPaymentIntent());
+			if (REJECTED_STATUSES.contains(refund.getStatus()))
+			{
+				LOG.error("Refund {} of payment intent {} has status {} and no SAP refund entry: the money was not given "
+						+ "back. Check the payment in Stripe", refund.getId(), refund.getPaymentIntent(), refund.getStatus());
+			}
+			else
+			{
+				LOG.info("Refund {} of payment intent {} has no SAP refund entry", refund.getId(), refund.getPaymentIntent());
+			}
 			return false;
 		}
 		final String status = refund.getStatus();

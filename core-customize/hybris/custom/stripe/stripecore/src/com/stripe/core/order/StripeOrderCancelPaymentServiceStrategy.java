@@ -1,6 +1,7 @@
 package com.stripe.core.order;
 
 import com.stripe.core.payment.StripePaymentInfos;
+import com.stripe.core.site.StripeSiteContext;
 import com.stripe.model.PaymentIntent;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.ordercancel.impl.DefaultOrderCancelPaymentServiceStrategy;
@@ -18,13 +19,15 @@ import org.slf4j.LoggerFactory;
  * <li>{@link StripePaymentAdjustmentService#adjust} voids or refunds the money above the order amount.</li>
  * </ol>
  * When the adjustment fails after the recalculation (refund or void not ACCEPTED, or an exception), a retry task is
- * scheduled, so SAP and Stripe do not stay different. Other orders get only the SAP behaviour.
+ * scheduled, so SAP and Stripe do not stay different. The work runs in the site of the order, so the Stripe settings
+ * of that site are used. Other orders get only the SAP behaviour.
  */
 public class StripeOrderCancelPaymentServiceStrategy extends DefaultOrderCancelPaymentServiceStrategy
 {
 	private static final Logger LOG = LoggerFactory.getLogger(StripeOrderCancelPaymentServiceStrategy.class);
 
 	private StripePaymentAdjustmentService stripePaymentAdjustmentService;
+	private StripeSiteContext stripeSiteContext;
 
 	@Override
 	public void recalculateOrderAndModifyPayments(final OrderModel order)
@@ -34,6 +37,14 @@ public class StripeOrderCancelPaymentServiceStrategy extends DefaultOrderCancelP
 			super.recalculateOrderAndModifyPayments(order);
 			return;
 		}
+		stripeSiteContext.runInSite(order.getSite(), () -> {
+			recalculateAndAdjust(order);
+			return null;
+		});
+	}
+
+	private void recalculateAndAdjust(final OrderModel order)
+	{
 		final Optional<PaymentIntent> paymentIntent = stripePaymentAdjustmentService.livePaymentIntent(order);
 		super.recalculateOrderAndModifyPayments(order);
 		if (paymentIntent.isEmpty())
@@ -76,5 +87,10 @@ public class StripeOrderCancelPaymentServiceStrategy extends DefaultOrderCancelP
 	public void setStripePaymentAdjustmentService(final StripePaymentAdjustmentService stripePaymentAdjustmentService)
 	{
 		this.stripePaymentAdjustmentService = stripePaymentAdjustmentService;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
 	}
 }

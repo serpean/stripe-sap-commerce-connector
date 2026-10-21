@@ -8,6 +8,7 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.payment.StripePaymentInfos;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
 import de.hybris.platform.basecommerce.enums.CancelReason;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderModel;
@@ -21,16 +22,18 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Default {@link StripeOrderCancellationService}. It cancels the full order with the SAP {@link OrderCancelService},
- * then gives the money of the PaymentIntent back (cancel, or refund when Stripe captured it). An order with an ACCEPTED
- * authorization of its PaymentIntent is paid: it is not cancelled. When Stripe refuses the release (for example, the
- * payment is still processing), the order stays cancelled: if the payment succeeds later, the webhook handler refunds
- * it.
+ * then gives the money of the PaymentIntent back (cancel, or refund when Stripe captured it). For a failed payment, an
+ * order with an ACCEPTED authorization of its PaymentIntent is paid: it is not cancelled. When Stripe refuses the
+ * release (for example, the payment is still processing), the order stays cancelled: if the payment succeeds later,
+ * the webhook handler refunds it. The work runs in the site of the order, so the Stripe settings of that site are used.
+ * When SAP refuses the cancel, an ERROR names the order and the PaymentIntent, and the caller gets the failure.
  */
 public class DefaultStripeOrderCancellationService implements StripeOrderCancellationService
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeOrderCancellationService.class);
 
 	static final String CANCEL_NOTES = "stripe-payment-failed";
+	static final String CANCEL_NOTES_AMOUNT_MISMATCH = "stripe-amount-mismatch";
 	private static final Set<StripePaymentIntentState> FUNDS_RELEASED = Set.of(StripePaymentIntentState.CANCELED,
 			StripePaymentIntentState.REFUNDED);
 
@@ -38,10 +41,40 @@ public class DefaultStripeOrderCancellationService implements StripeOrderCancell
 	private UserService userService;
 	private StripePaymentIntentService stripePaymentIntentService;
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
+	private StripeSiteContext stripeSiteContext;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 
 	@Override
 	public void cancelForFailedPayment(final OrderModel order)
+	{
+		stripeSiteContext.runInSite(order.getSite(), () -> {
+			cancelForFailedPaymentInSite(order);
+			return null;
+		});
+	}
+
+	@Override
+	public void cancelForAmountMismatch(final OrderModel order)
+	{
+		stripeSiteContext.runInSite(order.getSite(), () -> {
+			final String paymentIntentId = StripePaymentInfos.paymentIntentId(order);
+			if (OrderStatus.CANCELLED.equals(order.getStatus()))
+			{
+				LOG.info("Order {} is already cancelled", order.getCode());
+			}
+			else
+			{
+				cancelOrder(order, paymentIntentId, CANCEL_NOTES_AMOUNT_MISMATCH);
+			}
+			if (paymentIntentId != null)
+			{
+				releaseFunds(order, paymentIntentId, "order " + order.getCode() + ": amount differs from the payment");
+			}
+			return null;
+		});
+	}
+
+	protected void cancelForFailedPaymentInSite(final OrderModel order)
 	{
 		final String paymentIntentId = StripePaymentInfos.paymentIntentId(order);
 		if (paymentIntentId != null && stripeOrderAuthorizationService.hasAcceptedAuthorization(order, paymentIntentId))
@@ -56,29 +89,36 @@ public class DefaultStripeOrderCancellationService implements StripeOrderCancell
 		}
 		else
 		{
-			cancelOrder(order);
+			cancelOrder(order, paymentIntentId, CANCEL_NOTES);
 		}
 		if (paymentIntentId != null)
 		{
-			releaseFunds(order, paymentIntentId);
+			releaseFunds(order, paymentIntentId, "order " + order.getCode() + ": payment failed");
 		}
 	}
 
-	protected void cancelOrder(final OrderModel order)
+	/**
+	 * Cancels the full order. When SAP refuses (or fails), an ERROR names the order and the PaymentIntent first, then
+	 * the failure goes to the caller (for example, the order process task fails).
+	 */
+	protected void cancelOrder(final OrderModel order, final String paymentIntentId, final String notes)
 	{
-		final OrderCancelRequest request = new OrderCancelRequest(order, CancelReason.OTHER, CANCEL_NOTES);
+		final OrderCancelRequest request = new OrderCancelRequest(order, CancelReason.OTHER, notes);
 		try
 		{
 			orderCancelService.requestOrderCancel(request, userService.getAdminUser());
-			LOG.info("Order {} is cancelled because its Stripe payment failed", order.getCode());
+			LOG.info("Order {} of payment intent {} is cancelled ({})", order.getCode(), paymentIntentId, notes);
 		}
-		catch (final OrderCancelException e)
+		catch (final OrderCancelException | RuntimeException e)
 		{
-			throw new IllegalStateException("Order " + order.getCode() + " cannot be cancelled: " + e.getMessage(), e);
+			LOG.error("SAP refused to cancel order {} of Stripe payment intent {} ({}): {}. Cancel the order and check "
+					+ "the payment in Stripe by hand", order.getCode(), paymentIntentId, notes, e.getMessage());
+			throw new IllegalStateException("Order " + order.getCode() + " of payment intent " + paymentIntentId
+					+ " cannot be cancelled: " + e.getMessage(), e);
 		}
 	}
 
-	protected void releaseFunds(final OrderModel order, final String paymentIntentId)
+	protected void releaseFunds(final OrderModel order, final String paymentIntentId, final String reason)
 	{
 		final StripePaymentIntentState state = stripePaymentIntentRecordDao.findByPaymentIntentId(paymentIntentId)
 				.map(StripePaymentIntentRecordModel::getState)
@@ -90,7 +130,7 @@ public class DefaultStripeOrderCancellationService implements StripeOrderCancell
 		}
 		try
 		{
-			stripePaymentIntentService.releaseFunds(paymentIntentId, "order " + order.getCode() + ": payment failed");
+			stripePaymentIntentService.releaseFunds(paymentIntentId, reason);
 		}
 		catch (final StripeGatewayException e)
 		{
@@ -122,5 +162,10 @@ public class DefaultStripeOrderCancellationService implements StripeOrderCancell
 	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
 	{
 		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
 	}
 }

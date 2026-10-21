@@ -8,8 +8,11 @@ import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
+import com.stripe.core.order.StripeOrderAuthorizationService;
+import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripePaymentInProgressException;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -17,12 +20,11 @@ import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.model.ModelService;
+import java.util.Optional;
+import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Optional;
-import java.util.Set;
 
 /**
  * Default {@link StripePaymentIntentService}.
@@ -38,6 +40,9 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	private StripeConfigurationService stripeConfigurationService;
 	private StripeAmountConverter stripeAmountConverter;
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
+	private StripeOrderPlacementLockService stripeOrderPlacementLockService;
+	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
+	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 	private ModelService modelService;
 
 	@Override
@@ -57,6 +62,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		if ("canceled".equals(existing.getStatus()))
 		{
 			releaseFunds(existingId, "cart " + cart.getCode() + " had a canceled payment intent");
+			stripeOrderAuthorizationService.removeAuthorizations(cart, existingId);
 			return toData(createFor(cart, amount, currencyIso));
 		}
 
@@ -73,8 +79,41 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		{
 			throw new StripePaymentInProgressException(existingId);
 		}
-		releaseFunds(existingId, "cart " + cart.getCode() + " changed after the payment intent was confirmed");
+		releaseConfirmedForChangedCart(cart, existingId);
 		return toData(createFor(cart, amount, currencyIso));
+	}
+
+	/**
+	 * Releases a confirmed PaymentIntent (authorized or captured) of a cart that changed. An order may be placed for it
+	 * at the same time (for example in another browser tab), so the release happens only under its order placement
+	 * lock and only when no order exists for it. Otherwise nothing changes and the customer is told that the payment is
+	 * in progress. The lock stays after the release: the PaymentIntent is never used for an order again. When Stripe
+	 * refuses the release, the lock is given back.
+	 */
+	protected void releaseConfirmedForChangedCart(final CartModel cart, final String paymentIntentId)
+	{
+		if (!stripeOrderPlacementLockService.tryAcquire(paymentIntentId))
+		{
+			LOG.info("Cart {} changed while an order is placed for payment intent {}: nothing is released", cart.getCode(),
+					paymentIntentId);
+			throw new StripePaymentInProgressException(paymentIntentId, "an order is being placed for it");
+		}
+		if (stripePaymentIntentRecordService.findLiveOrder(paymentIntentId).isPresent())
+		{
+			LOG.warn("Cart {} changed but payment intent {} already has an order: nothing is released", cart.getCode(),
+					paymentIntentId);
+			throw new StripePaymentInProgressException(paymentIntentId, "it already has an order");
+		}
+		try
+		{
+			releaseFunds(paymentIntentId, "cart " + cart.getCode() + " changed after the payment intent was confirmed");
+		}
+		catch (final RuntimeException e)
+		{
+			stripeOrderPlacementLockService.release(paymentIntentId);
+			throw e;
+		}
+		stripeOrderAuthorizationService.removeAuthorizations(cart, paymentIntentId);
 	}
 
 	@Override
@@ -325,5 +364,20 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public void setModelService(final ModelService modelService)
 	{
 		this.modelService = modelService;
+	}
+
+	public void setStripeOrderPlacementLockService(final StripeOrderPlacementLockService stripeOrderPlacementLockService)
+	{
+		this.stripeOrderPlacementLockService = stripeOrderPlacementLockService;
+	}
+
+	public void setStripePaymentIntentRecordService(final StripePaymentIntentRecordService stripePaymentIntentRecordService)
+	{
+		this.stripePaymentIntentRecordService = stripePaymentIntentRecordService;
+	}
+
+	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
+	{
+		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
 	}
 }

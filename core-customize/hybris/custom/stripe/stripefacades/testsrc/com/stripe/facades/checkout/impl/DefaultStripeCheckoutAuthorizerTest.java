@@ -25,6 +25,7 @@ import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.impl.DefaultStripeOrderAuthorizationService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.facades.checkout.StripeCheckoutException;
 import com.stripe.model.Charge;
@@ -35,12 +36,14 @@ import de.hybris.platform.commerceservices.order.CommerceCheckoutService;
 import de.hybris.platform.commerceservices.service.data.CommerceCheckoutParameter;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.CartModel;
+import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -62,6 +65,8 @@ public class DefaultStripeCheckoutAuthorizerTest
 	private CartModel cart;
 	private StripePaymentInfoModel paymentInfo;
 	private StripePaymentIntentRecordModel record;
+	private StripePaymentIntentRecordService recordService;
+	private ModelService modelService;
 
 	@Before
 	public void setUp()
@@ -98,14 +103,20 @@ public class DefaultStripeCheckoutAuthorizerTest
 		authorizer.setCommerceCheckoutService(commerceCheckoutService);
 		authorizer.setStripeAmountConverter(converter);
 		authorizer.setStripePaymentIntentRecordDao(recordDao);
-		authorizer.setModelService(mock(ModelService.class));
+		modelService = mock(ModelService.class);
+		authorizer.setModelService(modelService);
+		recordService = mock(StripePaymentIntentRecordService.class);
+		when(recordService.findLiveOrder(PI_ID)).thenReturn(Optional.empty());
+		authorizer.setStripePaymentIntentRecordService(recordService);
 		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
 		paymentInfoUpdater.setModelService(mock(ModelService.class));
 		authorizer.setStripePaymentInfoUpdater(paymentInfoUpdater);
 		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
 		checks.setStripeAmountConverter(converter);
 		authorizer.setStripePaymentIntentChecks(checks);
-		authorizer.setStripeOrderAuthorizationService(new DefaultStripeOrderAuthorizationService());
+		final DefaultStripeOrderAuthorizationService authorizationService = new DefaultStripeOrderAuthorizationService();
+		authorizationService.setModelService(modelService);
+		authorizer.setStripeOrderAuthorizationService(authorizationService);
 	}
 
 	@Test
@@ -200,7 +211,8 @@ public class DefaultStripeCheckoutAuthorizerTest
 	public void failedReleaseOfFundsStillFailsThePayment()
 	{
 		givenIntent("requires_capture", 1999L, "eur");
-		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(null);
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
 		doThrow(new IllegalStateException("Stripe down")).when(paymentIntentService)
 				.releaseFunds(PI_ID, "authorization-rejected");
 
@@ -222,27 +234,104 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
-	public void missingAuthorizationThrowsPaymentFailedAndReleasesLock()
+	public void missingAuthorizationEntryIsUnavailableAndKeepsThePayment()
 	{
 		givenIntent("requires_capture", 1999L, "eur");
 		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class))).thenReturn(null);
 
-		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+		assertReason(StripeCheckoutException.Reason.UNAVAILABLE);
 
 		verify(lockService).release(PI_ID);
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
 	}
 
 	@Test
-	public void amountMismatchReleasesFundsAndThrows()
+	public void authorizationErrorIsUnavailableAndKeepsThePayment()
+	{
+		givenIntent("requires_capture", 1999L, "eur");
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.ERROR));
+
+		assertReason(StripeCheckoutException.Reason.UNAVAILABLE);
+
+		verify(lockService).release(PI_ID);
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
+	}
+
+	@Test
+	public void rejectedAuthorizationRemovesTheStaleAuthorizationOfTheReleasedIntent()
+	{
+		final PaymentIntent intent = givenIntent("succeeded", 1999L, "eur");
+		intent.setAmountReceived(1999L);
+		intent.setLatestChargeObject(charge(500L));
+		givenAcceptedAuthorization("pi_other");
+		final PaymentTransactionModel kept = cart.getPaymentTransactions().get(0);
+		final PaymentTransactionModel stale = transaction(PI_ID);
+		cart.setPaymentTransactions(new ArrayList<>(List.of(kept, stale)));
+		when(commerceCheckoutService.authorizePayment(any(CommerceCheckoutParameter.class)))
+				.thenReturn(entry(TransactionStatus.REJECTED));
+
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+
+		assertEquals(List.of(kept), cart.getPaymentTransactions());
+		verify(modelService).removeAll(List.of(stale.getEntries().get(0), stale));
+	}
+
+	@Test
+	public void amountMismatchReleasesFundsUnderTheLockAndThrows()
 	{
 		givenIntent("requires_capture", 1500L, "eur");
+		cart.setPaymentTransactions(new ArrayList<>(List.of(transaction(PI_ID))));
 
 		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
 
+		verify(lockService).tryAcquire(PI_ID);
+		verify(recordService).findLiveOrder(PI_ID);
 		verify(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
 		assertNull(paymentInfo.getStripePaymentIntentId());
-		verify(lockService, never()).tryAcquire(anyString());
+		assertTrue("the stale authorization of the released intent is removed", cart.getPaymentTransactions().isEmpty());
+		verify(lockService, never()).release(anyString());
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+	}
+
+	@Test
+	public void amountMismatchWhileTheOrderIsPlacedInAnotherTabChangesNothing()
+	{
+		givenIntent("requires_capture", 1500L, "eur");
+		when(lockService.tryAcquire(PI_ID)).thenReturn(false);
+
+		assertReason(StripeCheckoutException.Reason.ALREADY_PLACED);
+
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
+		verify(lockService, never()).release(anyString());
+	}
+
+	@Test
+	public void amountMismatchWithAnOrderChangesNothing()
+	{
+		givenIntent("succeeded", 1500L, "eur");
+		when(recordService.findLiveOrder(PI_ID)).thenReturn(Optional.of(new OrderModel()));
+
+		assertReason(StripeCheckoutException.Reason.ALREADY_PLACED);
+
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
+		verify(lockService, never()).release(anyString());
+	}
+
+	@Test
+	public void amountMismatchWhenStripeRefusesTheReleaseGivesTheLockBack()
+	{
+		givenIntent("requires_capture", 1500L, "eur");
+		doThrow(new IllegalStateException("Stripe down")).when(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
+
+		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
+
+		assertEquals(PI_ID, paymentInfo.getStripePaymentIntentId());
+		verify(lockService).release(PI_ID);
 	}
 
 	@Test
@@ -256,11 +345,13 @@ public class DefaultStripeCheckoutAuthorizerTest
 	}
 
 	@Test
-	public void amountMismatchWithoutMoneyDoesNotReleaseFunds()
+	public void amountMismatchWithoutMoneyGivesAStableCodeWithoutRelease()
 	{
 		givenIntent("requires_payment_method", 1500L, "eur");
 
-		assertFalse(authorizer.authorize(cart));
+		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
+
+		verify(lockService, never()).tryAcquire(anyString());
 
 		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
@@ -351,7 +442,7 @@ public class DefaultStripeCheckoutAuthorizerTest
 
 		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
 
-		verify(lockService, never()).tryAcquire(anyString());
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
 	}
 
 	@Test
@@ -445,6 +536,17 @@ public class DefaultStripeCheckoutAuthorizerTest
 		transaction.setPaymentProvider("Stripe");
 		transaction.setEntries(List.of(entry));
 		cart.setPaymentTransactions(List.of(transaction));
+	}
+
+	private PaymentTransactionModel transaction(final String requestId)
+	{
+		final PaymentTransactionEntryModel entry = entry(TransactionStatus.ACCEPTED);
+		entry.setType(PaymentTransactionType.AUTHORIZATION);
+		entry.setRequestId(requestId);
+		final PaymentTransactionModel transaction = new PaymentTransactionModel();
+		transaction.setCode("txn-" + requestId);
+		transaction.setEntries(List.of(entry));
+		return transaction;
 	}
 
 	private static Charge charge(final long refunded)

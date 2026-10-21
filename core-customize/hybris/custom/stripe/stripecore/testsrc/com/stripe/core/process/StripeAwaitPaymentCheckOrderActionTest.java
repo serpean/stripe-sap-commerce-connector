@@ -3,6 +3,7 @@ package com.stripe.core.process;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -10,14 +11,23 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
+import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
+import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
+import com.stripe.model.Charge;
+import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.PK;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderModel;
@@ -49,6 +59,9 @@ public class StripeAwaitPaymentCheckOrderActionTest
 	private StripeOrderAuthorizationService authorizationService;
 	private StripeOrderCancellationService cancellationService;
 	private ModelService modelService;
+	private StripeGateway gateway;
+	private StripeSiteContext siteContext;
+	private BaseSiteModel site;
 	private StripeAwaitPaymentCheckOrderAction action;
 	private OrderModel order;
 	private OrderProcessModel process;
@@ -75,6 +88,15 @@ public class StripeAwaitPaymentCheckOrderActionTest
 		action.setStripeOrderCancellationService(cancellationService);
 		action.setStripeConfigurationService(configurationService);
 		action.setTimeService(timeService);
+		gateway = mock(StripeGateway.class);
+		action.setStripeGateway(gateway);
+		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
+		checks.setStripeAmountConverter(mock(StripeAmountConverter.class));
+		action.setStripePaymentIntentChecks(checks);
+		siteContext = StripeSiteContextMocks.direct();
+		action.setStripeSiteContext(siteContext);
+		site = new BaseSiteModel();
+		site.setUid("site-f");
 
 		final StripePaymentInfoModel paymentInfo = new StripePaymentInfoModel();
 		paymentInfo.setStripePaymentIntentId(PI_ID);
@@ -82,6 +104,7 @@ public class StripeAwaitPaymentCheckOrderActionTest
 		order.setCode("order-1");
 		order.setPaymentInfo(paymentInfo);
 		order.setStatus(OrderStatus.CREATED);
+		order.setSite(site);
 		order.setDate(Date.from(NOW.minus(Duration.ofHours(1))));
 		process = new OrderProcessModel();
 		process.setOrder(order);
@@ -92,6 +115,7 @@ public class StripeAwaitPaymentCheckOrderActionTest
 	public void pendingPaymentRetriesLaterAndSetsPaymentPending() throws Exception
 	{
 		final StripePaymentIntentRecordModel record = givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("processing");
 
 		try
 		{
@@ -130,6 +154,7 @@ public class StripeAwaitPaymentCheckOrderActionTest
 	public void expiredPendingPaymentCancelsOrder() throws Exception
 	{
 		givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("processing");
 		order.setDate(Date.from(NOW.minus(TIMEOUT)));
 
 		assertEquals("NOK", action.execute(process));
@@ -142,6 +167,7 @@ public class StripeAwaitPaymentCheckOrderActionTest
 	public void failedPaymentCancelsOrder() throws Exception
 	{
 		givenRecord(StripePaymentIntentState.FAILED);
+		givenLive("requires_payment_method");
 
 		assertEquals("NOK", action.execute(process));
 
@@ -157,6 +183,109 @@ public class StripeAwaitPaymentCheckOrderActionTest
 		assertEquals("NOK", action.execute(process));
 
 		verify(cancellationService).cancelForFailedPayment(order);
+	}
+
+	@Test
+	public void canceledLivePaymentCancelsOrder() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("canceled");
+
+		assertEquals("NOK", action.execute(process));
+
+		verify(cancellationService).cancelForFailedPayment(order);
+	}
+
+	@Test
+	public void paymentThatSucceededWithoutWebhookAuthorizesTheOrderInsteadOfCancellingIt() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.FAILED);
+		order.setDate(Date.from(NOW.minus(TIMEOUT)));
+		final PaymentIntent live = givenLive("requires_capture");
+		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(true);
+
+		assertEquals("OK", action.execute(process));
+
+		verify(authorizationService).authorizePendingOrder(order, live);
+		verify(delegate).executeAction(process);
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void capturedPaymentWithAllMoneyAuthorizesTheOrder() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		final PaymentIntent live = givenLive("succeeded");
+		live.setAmount(1999L);
+		live.setAmountReceived(1999L);
+		live.setLatestChargeObject(charge(0L));
+		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(true);
+
+		assertEquals("OK", action.execute(process));
+
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void capturedPaymentThatWasRefundedCancelsTheOrder() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		final PaymentIntent live = givenLive("succeeded");
+		live.setAmount(1999L);
+		live.setAmountReceived(1999L);
+		live.setLatestChargeObject(charge(1999L));
+
+		assertEquals("NOK", action.execute(process));
+
+		verify(authorizationService, never()).authorizePendingOrder(any(), any());
+		verify(cancellationService).cancelForFailedPayment(order);
+	}
+
+	@Test
+	public void rejectedAuthorizationOfThePaymentCancelsTheOrder() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		final PaymentIntent live = givenLive("requires_capture");
+		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(false);
+
+		assertEquals("NOK", action.execute(process));
+
+		verify(cancellationService).cancelForFailedPayment(order);
+		verify(delegate, never()).executeAction(any());
+	}
+
+	@Test
+	public void unreachableStripeAtTheTimeoutRetriesInsteadOfCancelling() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		order.setDate(Date.from(NOW.minus(TIMEOUT)));
+		when(gateway.retrievePaymentIntent(PI_ID))
+				.thenThrow(new StripeGatewayException("down", "api_connection_error", true, false, null));
+
+		try
+		{
+			action.execute(process);
+			fail("RetryLaterException expected");
+		}
+		catch (final RetryLaterException e)
+		{
+			assertEquals(RETRY.toMillis(), e.getDelay());
+		}
+
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void decisionRunsInTheSiteOfTheOrder() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("canceled");
+
+		action.execute(process);
+
+		final InOrder inOrder = inOrder(siteContext, gateway);
+		inOrder.verify(siteContext).runInSite(same(site), any());
+		inOrder.verify(gateway).retrievePaymentIntent(PI_ID);
 	}
 
 	@Test
@@ -191,6 +320,22 @@ public class StripeAwaitPaymentCheckOrderActionTest
 
 		verify(delegate).executeAction(process);
 		verifyNoInteractions(recordDao, authorizationService, cancellationService);
+	}
+
+	private PaymentIntent givenLive(final String status)
+	{
+		final PaymentIntent live = new PaymentIntent();
+		live.setId(PI_ID);
+		live.setStatus(status);
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(live);
+		return live;
+	}
+
+	private static Charge charge(final long refunded)
+	{
+		final Charge charge = new Charge();
+		charge.setAmountRefunded(refunded);
+		return charge;
 	}
 
 	private StripePaymentIntentRecordModel givenRecord(final StripePaymentIntentState state)

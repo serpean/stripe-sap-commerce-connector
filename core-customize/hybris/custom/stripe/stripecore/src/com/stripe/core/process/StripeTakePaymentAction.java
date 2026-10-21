@@ -2,6 +2,7 @@ package com.stripe.core.process;
 
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.payment.StripePaymentInfos;
+import com.stripe.core.site.StripeSiteContext;
 import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.orderprocessing.model.OrderProcessModel;
@@ -26,7 +27,8 @@ import org.slf4j.LoggerFactory;
  * transactions (for example, of a PaymentIntent released at checkout) are skipped. When the order total is above the
  * authorized amount, nothing is captured. A transaction with an ACCEPTED capture is not captured again (a second entry
  * would double the captured sum used for refunds). The order gets PAYMENT_CAPTURED (OK) or PAYMENT_NOT_CAPTURED (NOK). The
- * wrapped action does not run for Stripe orders; other orders go to it.
+ * wrapped action does not run for Stripe orders; other orders go to it. The capture runs in the site of the order, so
+ * the Stripe settings of that site are used.
  */
 public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderProcessModel>
 {
@@ -34,6 +36,7 @@ public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderP
 
 	private final AbstractSimpleDecisionAction<OrderProcessModel> delegate;
 	private PaymentService paymentService;
+	private StripeSiteContext stripeSiteContext;
 	private StripeAmountConverter stripeAmountConverter;
 
 	public StripeTakePaymentAction(final AbstractSimpleDecisionAction<OrderProcessModel> delegate)
@@ -50,7 +53,11 @@ public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderP
 		{
 			return delegate.executeAction(process);
 		}
+		return stripeSiteContext.runInSite(order.getSite(), () -> takePayment(order, paymentIntentId));
+	}
 
+	private Transition takePayment(final OrderModel order, final String paymentIntentId)
+	{
 		PaymentTransactionModel authorized = null;
 		PaymentTransactionEntryModel authorization = null;
 		for (final PaymentTransactionModel transaction : transactionsOf(order))
@@ -152,5 +159,10 @@ public class StripeTakePaymentAction extends AbstractSimpleDecisionAction<OrderP
 	public void setStripeAmountConverter(final StripeAmountConverter stripeAmountConverter)
 	{
 		this.stripeAmountConverter = stripeAmountConverter;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
 	}
 }

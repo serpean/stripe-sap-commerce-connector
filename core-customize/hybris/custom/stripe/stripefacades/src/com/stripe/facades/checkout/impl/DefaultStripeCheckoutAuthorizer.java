@@ -10,6 +10,7 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.facades.checkout.StripeCheckoutAuthorizer;
@@ -49,6 +50,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	private ModelService modelService;
 	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
 	private StripePaymentIntentChecks stripePaymentIntentChecks;
+	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 
 	@Override
@@ -64,11 +66,9 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 			if (WITH_MONEY.contains(status))
 			{
 				releaseMismatchedFunds(cart, paymentInfo, intent);
-				throw new StripeCheckoutException(Reason.AMOUNT_MISMATCH,
-						"Payment intent " + paymentIntentId + " does not match the amount of cart " + cart.getCode());
 			}
-			LOG.info("Payment intent {} in status {} does not match cart {}", paymentIntentId, status, cart.getCode());
-			return false;
+			throw new StripeCheckoutException(Reason.AMOUNT_MISMATCH, "Payment intent " + paymentIntentId + " in status "
+					+ status + " does not match the amount of cart " + cart.getCode());
 		}
 
 		if (!stripeOrderPlacementLockService.tryAcquire(paymentIntentId))
@@ -107,13 +107,20 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 					return true;
 				}
 				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
-				if (!isAccepted(commerceCheckoutService.authorizePayment(createParameter(cart))))
+				final PaymentTransactionEntryModel entry = commerceCheckoutService.authorizePayment(createParameter(cart));
+				if (hasStatus(entry, TransactionStatus.REJECTED))
 				{
-					LOG.warn("Authorization of payment intent {} for cart {} was not accepted: the funds are released",
+					LOG.warn("Authorization of payment intent {} for cart {} was rejected: the funds are released",
 							intent.getId(), cart.getCode());
 					releaseHeldFunds(cart, paymentInfo, intent, AUTHORIZATION_REJECTED);
 					throw new StripeCheckoutException(Reason.PAYMENT_FAILED,
-							"Authorization of payment intent " + intent.getId() + " for cart " + cart.getCode() + " was not accepted");
+							"Authorization of payment intent " + intent.getId() + " for cart " + cart.getCode() + " was rejected");
+				}
+				if (!hasStatus(entry, TransactionStatus.ACCEPTED))
+				{
+					throw new StripeCheckoutException(Reason.UNAVAILABLE, "Authorization of payment intent " + intent.getId()
+							+ " for cart " + cart.getCode() + " did not finish (" + (entry == null ? "no entry"
+							: entry.getTransactionStatus()) + "): the payment is kept for a new attempt");
 				}
 				updateRecordState(intent.getId(), status == StripePaymentIntentStatus.CAPTURED
 						? StripePaymentIntentState.CAPTURED : StripePaymentIntentState.AUTHORIZED);
@@ -145,35 +152,57 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	}
 
 	/**
-	 * Releases the funds of a PaymentIntent whose amount or currency is not the amount of the cart.
+	 * Releases the funds of a PaymentIntent whose amount or currency is not the amount of the cart. An order may be
+	 * placed for it at the same time (for example in another browser tab), so the release happens only under its order
+	 * placement lock and only when no order exists for it; otherwise nothing changes and ALREADY_PLACED is thrown. The
+	 * lock stays after the release (the decision is final), and is given back when Stripe refuses the release.
 	 */
 	protected void releaseMismatchedFunds(final CartModel cart, final StripePaymentInfoModel paymentInfo,
 			final PaymentIntent intent)
 	{
-		LOG.warn("Payment intent {} has {} {} but cart {} must charge {} {}", intent.getId(), intent.getAmount(),
+		final String paymentIntentId = intent.getId();
+		if (!stripeOrderPlacementLockService.tryAcquire(paymentIntentId))
+		{
+			throw new StripeCheckoutException(Reason.ALREADY_PLACED, "Cart " + cart.getCode() + " differs from payment intent "
+					+ paymentIntentId + ", but an order is being placed for it: nothing is released");
+		}
+		if (stripePaymentIntentRecordService.findLiveOrder(paymentIntentId).isPresent())
+		{
+			throw new StripeCheckoutException(Reason.ALREADY_PLACED, "Cart " + cart.getCode() + " differs from payment intent "
+					+ paymentIntentId + ", which already has an order: nothing is released");
+		}
+		LOG.warn("Payment intent {} has {} {} but cart {} must charge {} {}", paymentIntentId, intent.getAmount(),
 				intent.getCurrency(), cart.getCode(), stripeAmountConverter.chargeAmountMinor(cart),
 				cart.getCurrency().getIsocode());
-		releaseHeldFunds(cart, paymentInfo, intent, "amount of cart " + cart.getCode() + " differs from the payment intent");
+		if (!releaseHeldFunds(cart, paymentInfo, intent, "amount of cart " + cart.getCode() + " differs from the payment intent"))
+		{
+			stripeOrderPlacementLockService.release(paymentIntentId);
+		}
 	}
 
 	/**
-	 * Gives the money of the PaymentIntent back and takes the PaymentIntent off the cart, so the next payment of the
-	 * cart uses a new PaymentIntent. When Stripe refuses, the PaymentIntent stays on the cart: the next preparation of
-	 * the cart releases it.
+	 * Gives the money of the PaymentIntent back, takes the PaymentIntent off the cart and removes the cart's
+	 * authorizations of it, so the next payment of the cart uses a new PaymentIntent. When Stripe refuses, the
+	 * PaymentIntent stays on the cart: the next preparation of the cart releases it.
+	 *
+	 * @return true when the funds were released
 	 */
-	protected void releaseHeldFunds(final CartModel cart, final StripePaymentInfoModel paymentInfo, final PaymentIntent intent,
-			final String reason)
+	protected boolean releaseHeldFunds(final CartModel cart, final StripePaymentInfoModel paymentInfo,
+			final PaymentIntent intent, final String reason)
 	{
 		try
 		{
 			stripePaymentIntentService.releaseFunds(intent.getId(), reason);
-			paymentInfo.setStripePaymentIntentId(null);
-			modelService.save(paymentInfo);
 		}
 		catch (final RuntimeException e)
 		{
 			LOG.error("Could not release the funds of payment intent {} for cart {}", intent.getId(), cart.getCode(), e);
+			return false;
 		}
+		paymentInfo.setStripePaymentIntentId(null);
+		modelService.save(paymentInfo);
+		stripeOrderAuthorizationService.removeAuthorizations(cart, intent.getId());
+		return true;
 	}
 
 	protected void updateRecordState(final String paymentIntentId, final StripePaymentIntentState state)
@@ -197,9 +226,9 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		throw new StripeCheckoutException(Reason.PAYMENT_NOT_FOUND, "Cart " + cart.getCode() + " has no payment intent");
 	}
 
-	private boolean isAccepted(final PaymentTransactionEntryModel entry)
+	private static boolean hasStatus(final PaymentTransactionEntryModel entry, final TransactionStatus status)
 	{
-		return entry != null && TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus());
+		return entry != null && status.name().equals(entry.getTransactionStatus());
 	}
 
 	public void setStripeGateway(final StripeGateway stripeGateway)
@@ -250,5 +279,10 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	public void setStripeOrderAuthorizationService(final StripeOrderAuthorizationService stripeOrderAuthorizationService)
 	{
 		this.stripeOrderAuthorizationService = stripeOrderAuthorizationService;
+	}
+
+	public void setStripePaymentIntentRecordService(final StripePaymentIntentRecordService stripePaymentIntentRecordService)
+	{
+		this.stripePaymentIntentRecordService = stripePaymentIntentRecordService;
 	}
 }

@@ -1,6 +1,7 @@
 package com.stripe.core.order;
 
 import com.stripe.core.payment.StripePaymentInfos;
+import com.stripe.core.site.StripeSiteContext;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.task.RetryLaterException;
 import de.hybris.platform.task.TaskModel;
@@ -16,7 +17,8 @@ import org.slf4j.LoggerFactory;
  * the live PaymentIntent, so a retry never refunds twice. A failed attempt (refund or void not ACCEPTED, or an exception)
  * gives a {@link RetryLaterException} after 30 s, 2 min, 8 min and 30 min. The work of an attempt is kept (a REJECTED
  * refund entry is a real answer of Stripe). After the fifth failed attempt the runner logs an ERROR with the order and
- * the PaymentIntent and stops.
+ * the PaymentIntent and stops. The adjustment runs in the site of the order, so the Stripe settings of that site are
+ * used.
  */
 public class StripePaymentAdjustmentTaskRunner implements TaskRunner<TaskModel>
 {
@@ -27,6 +29,7 @@ public class StripePaymentAdjustmentTaskRunner implements TaskRunner<TaskModel>
 	private static final Logger LOG = LoggerFactory.getLogger(StripePaymentAdjustmentTaskRunner.class);
 
 	private StripePaymentAdjustmentService stripePaymentAdjustmentService;
+	private StripeSiteContext stripeSiteContext;
 
 	@Override
 	public void run(final TaskService taskService, final TaskModel task) throws RetryLaterException
@@ -39,7 +42,7 @@ public class StripePaymentAdjustmentTaskRunner implements TaskRunner<TaskModel>
 		String failure;
 		try
 		{
-			if (stripePaymentAdjustmentService.adjustToOrderTotal(order))
+			if (stripeSiteContext.runInSite(order.getSite(), () -> stripePaymentAdjustmentService.adjustToOrderTotal(order)))
 			{
 				LOG.info("Stripe payment of order {} is adjusted", order.getCode());
 				return;
@@ -82,5 +85,10 @@ public class StripePaymentAdjustmentTaskRunner implements TaskRunner<TaskModel>
 	public void setStripePaymentAdjustmentService(final StripePaymentAdjustmentService stripePaymentAdjustmentService)
 	{
 		this.stripePaymentAdjustmentService = stripePaymentAdjustmentService;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
 	}
 }

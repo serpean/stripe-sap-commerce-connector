@@ -1,6 +1,8 @@
 package com.stripe.core.webhook.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -9,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.payment.StripeTransactionLookup;
+import com.stripe.core.testsupport.StripeLogCapture;
 import com.stripe.core.webhook.StripeWebhookOutcome;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -71,6 +74,34 @@ public class DefaultStripeRefundEventHandlerTest
 		assertEquals(StripeWebhookOutcome.IGNORED, handler.handle(refund("re_other", "succeeded")));
 
 		verifyNoInteractions(modelService);
+	}
+
+	@Test
+	public void failedRefundWithoutSapEntryIsLoggedAsError()
+	{
+		when(lookup.findRefundEntries("re_release")).thenReturn(List.of());
+		final Refund refund = refund("re_release", "failed");
+		refund.setPaymentIntent("pi_released");
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeRefundEventHandler.class))
+		{
+			assertEquals(StripeWebhookOutcome.IGNORED, handler.handle(refund));
+
+			assertTrue("ERROR log with refund and payment intent", log.hasError("re_release", "pi_released", "failed"));
+		}
+	}
+
+	@Test
+	public void succeededRefundWithoutSapEntryIsNoError()
+	{
+		when(lookup.findRefundEntries("re_ok")).thenReturn(List.of());
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeRefundEventHandler.class))
+		{
+			handler.handle(refund("re_ok", "succeeded"));
+
+			assertFalse(log.hasError("re_ok"));
+		}
 	}
 
 	@Test

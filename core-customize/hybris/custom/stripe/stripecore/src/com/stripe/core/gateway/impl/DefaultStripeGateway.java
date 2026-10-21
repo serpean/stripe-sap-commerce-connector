@@ -20,6 +20,7 @@ import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import com.stripe.param.RefundCreateParams;
+import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,8 @@ public class DefaultStripeGateway implements StripeGateway
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeGateway.class);
 	private static final int MAX_NETWORK_RETRIES = 2;
 	private static final int HTTP_SERVER_ERROR = 500;
+	private static final int HTTP_CONFLICT = 409;
+	private static final Set<String> RETRYABLE_CODES = Set.of("idempotency_key_in_use", "lock_timeout");
 
 	private StripeConfigurationService stripeConfigurationService;
 
@@ -137,11 +140,17 @@ public class DefaultStripeGateway implements StripeGateway
 		}
 	}
 
+	/**
+	 * A retry can help for a network error, a rate limit, a server error, a conflict (HTTP 409, for example
+	 * {@code idempotency_key_in_use}: a request with the same key still runs) and {@code lock_timeout} (another request
+	 * holds the object). The retry uses the same idempotency key.
+	 */
 	protected boolean isRetryable(final StripeException e)
 	{
 		final Integer status = e.getStatusCode();
 		return e instanceof ApiConnectionException || e instanceof RateLimitException
-				|| (status != null && status >= HTTP_SERVER_ERROR);
+				|| (status != null && (status >= HTTP_SERVER_ERROR || status == HTTP_CONFLICT))
+				|| RETRYABLE_CODES.contains(StringUtils.defaultString(e.getCode()));
 	}
 
 	public void setStripeConfigurationService(final StripeConfigurationService stripeConfigurationService)

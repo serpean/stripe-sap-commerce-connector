@@ -96,7 +96,7 @@ describe('StripePaymentService', () => {
       }) as any);
     });
 
-    it('syncs intent before confirming', (done) => {
+    it('syncs the intent and fetches the element updates before confirming', (done) => {
       occService.ensureIntent.and.callFake(() => {
         calls.push('ensureIntent');
         return of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' });
@@ -104,7 +104,7 @@ describe('StripePaymentService', () => {
       const service = createService();
 
       service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
-        expect(calls).toEqual(['ensureIntent', 'confirm']);
+        expect(calls).toEqual(['ensureIntent', 'fetchUpdates', 'confirm']);
         expect(result.intent?.paymentIntentId).toBe('pi_1');
         const args = stripe.confirmPayment.calls.mostRecent().args[0] as any;
         expect(args.redirect).toBe('if_required');
@@ -113,15 +113,18 @@ describe('StripePaymentService', () => {
       });
     });
 
-    it('fetches element updates when the client secret changed', (done) => {
+    it('does not confirm the old PaymentIntent when the client secret changed', (done) => {
       occService.ensureIntent.and.callFake(() => {
         calls.push('ensureIntent');
         return of({ paymentIntentId: 'pi_2', clientSecret: 'cs_2' });
       });
       const service = createService();
 
-      service.confirmPayment(stripe, elements, 'cs_1').subscribe(() => {
-        expect(calls).toEqual(['ensureIntent', 'fetchUpdates', 'confirm']);
+      service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
+        expect(calls).toEqual(['ensureIntent']);
+        expect(stripe.confirmPayment).not.toHaveBeenCalled();
+        expect(result.newClientSecret).toBe('cs_2');
+        expect(result.error).toBe('stripePayment.amountChanged');
         done();
       });
     });
@@ -143,7 +146,7 @@ describe('StripePaymentService', () => {
 
     it('does not confirm and reports genericError when fetchUpdates fails', (done) => {
       occService.ensureIntent.and.returnValue(
-        of({ paymentIntentId: 'pi_2', clientSecret: 'cs_2' })
+        of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
       );
       elements.fetchUpdates.and.resolveTo({ error: { message: 'boom' } } as any);
       const service = createService();

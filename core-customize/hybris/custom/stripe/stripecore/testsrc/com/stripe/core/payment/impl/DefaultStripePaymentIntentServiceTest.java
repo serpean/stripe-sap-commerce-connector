@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -20,10 +21,14 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
+import com.stripe.core.order.StripeOrderAuthorizationService;
+import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripePaymentInProgressException;
+import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
@@ -32,6 +37,7 @@ import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.CartModel;
+import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.user.UserModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.math.BigDecimal;
@@ -49,6 +55,9 @@ public class DefaultStripePaymentIntentServiceTest
 	private StripeConfigurationService config;
 	private StripePaymentIntentRecordDao recordDao;
 	private ModelService modelService;
+	private StripeOrderPlacementLockService lockService;
+	private StripePaymentIntentRecordService recordService;
+	private StripeOrderAuthorizationService authorizationService;
 	private DefaultStripePaymentIntentService service;
 	private CartModel cart;
 
@@ -76,6 +85,14 @@ public class DefaultStripePaymentIntentServiceTest
 		service.setStripeAmountConverter(converter);
 		service.setStripePaymentIntentRecordDao(recordDao);
 		service.setModelService(modelService);
+		lockService = mock(StripeOrderPlacementLockService.class);
+		recordService = mock(StripePaymentIntentRecordService.class);
+		authorizationService = mock(StripeOrderAuthorizationService.class);
+		when(lockService.tryAcquire(anyString())).thenReturn(true);
+		when(recordService.findLiveOrder(anyString())).thenReturn(Optional.empty());
+		service.setStripeOrderPlacementLockService(lockService);
+		service.setStripePaymentIntentRecordService(recordService);
+		service.setStripeOrderAuthorizationService(authorizationService);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -200,6 +217,76 @@ public class DefaultStripePaymentIntentServiceTest
 		verify(gateway).createPaymentIntent(any(), anyString());
 		assertEquals("pi_new", data.getPaymentIntentId());
 		assertEquals("pi_new", ((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+		verify(lockService).tryAcquire("pi_old");
+		verify(lockService, never()).release(anyString());
+		verify(authorizationService).removeAuthorizations(cart, "pi_old");
+	}
+
+	@Test
+	public void cartChangeInAnotherTabDoesNotReleaseWhileTheOrderIsPlaced()
+	{
+		cartHasIntent("pi_old");
+		final de.hybris.platform.core.model.order.payment.PaymentInfoModel info = cart.getPaymentInfo();
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(intent("pi_old", "requires_capture", 1000));
+		when(lockService.tryAcquire("pi_old")).thenReturn(false);
+
+		assertPaymentInProgress();
+
+		assertTrue(info == cart.getPaymentInfo());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(lockService, never()).release(anyString());
+		verify(authorizationService, never()).removeAuthorizations(any(), anyString());
+	}
+
+	@Test
+	public void confirmedIntentWithAnOrderIsNotReleased()
+	{
+		cartHasIntent("pi_old");
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(intent("pi_old", "succeeded", 1000));
+		when(recordService.findLiveOrder("pi_old")).thenReturn(Optional.of(new OrderModel()));
+
+		assertPaymentInProgress();
+
+		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(lockService, never()).release(anyString());
+	}
+
+	@Test
+	public void failedReleaseGivesTheLockBack()
+	{
+		cartHasIntent("pi_old");
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(intent("pi_old", "requires_capture", 1000));
+		final StripeGatewayException down = new StripeGatewayException("down", "api_error", true, false, null);
+		doThrow(down).when(gateway).cancelPaymentIntent(anyString(), anyString());
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("Expected StripeGatewayException");
+		}
+		catch (final StripeGatewayException e)
+		{
+			assertTrue(e == down);
+		}
+		verify(lockService).release("pi_old");
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(authorizationService, never()).removeAuthorizations(any(), anyString());
+	}
+
+	private void assertPaymentInProgress()
+	{
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("Expected StripePaymentInProgressException");
+		}
+		catch (final StripePaymentInProgressException e)
+		{
+			assertTrue(e.getMessage().contains("pi_old"));
+		}
 	}
 
 	@Test
@@ -354,6 +441,8 @@ public class DefaultStripePaymentIntentServiceTest
 
 		assertEquals("pi_new", data.getPaymentIntentId());
 		assertEquals("pi_new", ((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+		verify(authorizationService).removeAuthorizations(cart, "pi_old");
+		verify(lockService, never()).tryAcquire(anyString());
 	}
 
 	@Test

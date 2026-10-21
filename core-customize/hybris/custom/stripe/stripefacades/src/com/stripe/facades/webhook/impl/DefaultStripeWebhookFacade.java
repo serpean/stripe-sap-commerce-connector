@@ -11,8 +11,8 @@ import com.stripe.facades.webhook.StripeWebhookReceipt;
 import com.stripe.model.Event;
 import de.hybris.platform.servicelayer.exceptions.ModelSavingException;
 import de.hybris.platform.servicelayer.model.ModelService;
-import de.hybris.platform.task.TaskService;
 import de.hybris.platform.task.TaskModel;
+import de.hybris.platform.task.TaskService;
 import de.hybris.platform.tx.Transaction;
 import de.hybris.platform.tx.TransactionBody;
 import java.util.Date;
@@ -95,6 +95,11 @@ public class DefaultStripeWebhookFacade implements StripeWebhookFacade
 
 	private StripeWebhookReceipt duplicateOf(final StripeWebhookEventModel existing)
 	{
+		if (StripeWebhookEventState.FAILED.equals(existing.getState()))
+		{
+			requeue(existing);
+			return StripeWebhookReceipt.ACCEPTED;
+		}
 		if (StripeWebhookEventState.RECEIVED.equals(existing.getState()) && !stripeWebhookEventDao.hasScheduledTask(existing))
 		{
 			LOG.warn("Stripe webhook {} was stored without a task; scheduling it again", existing.getEventId());
@@ -102,6 +107,23 @@ public class DefaultStripeWebhookFacade implements StripeWebhookFacade
 		}
 		LOG.debug("Stripe webhook {} is a duplicate", existing.getEventId());
 		return StripeWebhookReceipt.DUPLICATE;
+	}
+
+	/**
+	 * A FAILED event that Stripe sends again (a resend from the Stripe Dashboard or the Stripe CLI) is the recovery
+	 * path: the event is RECEIVED again with no attempts and no error, and a new task processes it.
+	 */
+	private void requeue(final StripeWebhookEventModel failed)
+	{
+		LOG.warn("Stripe webhook {} ({}) failed before ({}); it is sent again and is processed again", failed.getEventId(),
+				failed.getType(), failed.getLastError());
+		executeInTransaction(() -> {
+			failed.setState(StripeWebhookEventState.RECEIVED);
+			failed.setAttempts(0);
+			failed.setLastError(null);
+			modelService.save(failed);
+			scheduleTask(failed);
+		});
 	}
 
 	private void storeAndSchedule(final Event event, final String payload)

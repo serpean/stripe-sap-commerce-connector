@@ -10,6 +10,7 @@ import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.site.StripeSiteContext;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.core.webhook.StripePaymentIntentEventHandler;
 import com.stripe.core.webhook.StripeRowLocks;
@@ -41,7 +42,8 @@ import org.slf4j.LoggerFactory;
  * <li>Failure events (payment_failed, canceled): cancels the pending order.</li>
  * </ul>
  * An event for a PaymentIntent without a record (not created by this shop) is ignored. The record row is locked first,
- * so two events of one PaymentIntent are handled one after the other.
+ * so two events of one PaymentIntent are handled one after the other. The event is handled in the site of the record,
+ * so the Stripe settings of that site (secret key, grace period) are used.
  * <p>
  * {@link StripeOrderPlacementService} and {@link StripeOrderCancellationService} are optional properties: when one is
  * not configured, an event that needs it fails with a clear error.
@@ -71,6 +73,7 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	private StripeOrderPlacementService stripeOrderPlacementService;
 	private StripeOrderCancellationService stripeOrderCancellationService;
 	private ModelService modelService;
+	private StripeSiteContext stripeSiteContext;
 	private TimeService timeService;
 
 	@Override
@@ -92,7 +95,8 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 			return StripeWebhookOutcome.IGNORED;
 		}
 		StripeRowLocks.lockAndRefresh(modelService, record.get());
-		return confirmation ? onConfirmation(record.get(), eventCreated) : onFailure(eventType, record.get());
+		return stripeSiteContext.runInSite(record.get().getBaseSiteUid(),
+				() -> confirmation ? onConfirmation(record.get(), eventCreated) : onFailure(eventType, record.get()));
 	}
 
 	private StripeWebhookOutcome onConfirmation(final StripePaymentIntentRecordModel record, final Instant eventCreated)
@@ -340,5 +344,10 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	public void setTimeService(final TimeService timeService)
 	{
 		this.timeService = timeService;
+	}
+
+	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
+	{
+		this.stripeSiteContext = stripeSiteContext;
 	}
 }

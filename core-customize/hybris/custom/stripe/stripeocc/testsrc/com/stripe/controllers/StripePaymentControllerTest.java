@@ -134,6 +134,16 @@ public class StripePaymentControllerTest
 	}
 
 	@Test
+	public void unavailableAuthorizationMapsToUnavailable() throws Exception
+	{
+		final MockHttpServletResponse response = resolveOnForeignController(
+				new StripeCheckoutException(StripeCheckoutException.Reason.UNAVAILABLE, "authorization ended in ERROR"));
+
+		assertEquals(503, response.getStatus());
+		assertTrue(response.getContentAsString().contains("\"reason\":\"STRIPE_UNAVAILABLE\""));
+	}
+
+	@Test
 	public void gatewayErrorMapsToUnavailable() throws Exception
 	{
 		final MockHttpServletResponse response = resolveOnForeignController(

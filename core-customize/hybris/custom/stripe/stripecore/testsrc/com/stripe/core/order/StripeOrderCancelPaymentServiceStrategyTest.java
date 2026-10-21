@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -18,11 +19,14 @@ import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.impl.DefaultStripePaymentAdjustmentService;
 import com.stripe.core.payment.StripePaymentIntentChecks;
+import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
-import de.hybris.platform.core.model.c2l.CurrencyModel;
+import de.hybris.platform.basecommerce.model.site.BaseSiteModel;
 import de.hybris.platform.core.enums.OrderStatus;
+import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.OrderEntryModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.order.payment.CreditCardPaymentInfoModel;
@@ -38,8 +42,8 @@ import de.hybris.platform.servicelayer.time.TimeService;
 import de.hybris.platform.task.TaskModel;
 import de.hybris.platform.task.TaskService;
 import java.math.BigDecimal;
-import java.util.Date;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
@@ -48,6 +52,8 @@ import org.mockito.InOrder;
 @UnitTest
 public class StripeOrderCancelPaymentServiceStrategyTest
 {
+	private StripeSiteContext siteContext;
+	private BaseSiteModel site;
 	private static final String PI_ID = "pi_cancel";
 
 	private static final Date NOW = new Date(1_700_000_000_000L);
@@ -94,6 +100,10 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		strategy = new StripeOrderCancelPaymentServiceStrategy();
 		strategy.setCalculationService(calculationService);
 		strategy.setStripePaymentAdjustmentService(adjustmentService);
+		siteContext = StripeSiteContextMocks.direct();
+		strategy.setStripeSiteContext(siteContext);
+		site = new BaseSiteModel();
+		site.setUid("site-e");
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -101,6 +111,7 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		paymentInfo.setStripePaymentIntentId(PI_ID);
 		order = new OrderModel();
 		order.setCode("order-cancel");
+		order.setSite(site);
 		order.setCurrency(currency);
 		order.setPaymentInfo(paymentInfo);
 		final OrderEntryModel orderEntry = new OrderEntryModel();
@@ -406,5 +417,19 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		final PaymentTransactionEntryModel entry = new PaymentTransactionEntryModel();
 		entry.setTransactionStatus(status.name());
 		return entry;
+	}
+
+	@Test
+	public void adjustmentRunsInTheSiteOfTheOrder() throws Exception
+	{
+		livePaymentIntent("requires_capture", 0L, null);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(0L);
+		when(paymentService.cancel(authorization)).thenReturn(entry(TransactionStatus.ACCEPTED));
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		final InOrder inOrder = inOrder(siteContext, stripeGateway);
+		inOrder.verify(siteContext).runInSite(same(site), any());
+		inOrder.verify(stripeGateway).retrievePaymentIntent(PI_ID);
 	}
 }

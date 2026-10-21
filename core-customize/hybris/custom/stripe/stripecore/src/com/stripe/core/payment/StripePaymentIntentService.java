@@ -10,6 +10,10 @@ public interface StripePaymentIntentService
 	/**
 	 * Gives the PaymentIntent of the cart. Creates it when the cart has none. Updates the amount and the currency
 	 * when they changed. Replaces the PaymentIntent, and releases its money, when Stripe no longer accepts changes.
+	 * A paid PaymentIntent is released only under its order placement lock and when it has no order.
+	 *
+	 * @throws StripePaymentInProgressException when the PaymentIntent is processing, or an order is placed (or being
+	 *            placed) for it: nothing changes
 	 */
 	StripeIntentData prepareForCart(CartModel cart);
 

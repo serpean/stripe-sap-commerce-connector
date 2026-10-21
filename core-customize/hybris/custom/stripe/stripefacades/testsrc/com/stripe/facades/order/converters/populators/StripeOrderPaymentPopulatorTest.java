@@ -142,11 +142,31 @@ public class StripeOrderPaymentPopulatorTest
 		assertNull(data.getStripePaymentInfo());
 	}
 
+	@Test
+	public void staleAuthorizationOfAReleasedPaymentIntentIsNotAccepted()
+	{
+		order.setPaymentTransactions(
+				List.of(transaction(PaymentTransactionType.AUTHORIZATION, TransactionStatus.ACCEPTED, "pi_released")));
+		record.setState(StripePaymentIntentState.PROCESSING);
+
+		final OrderData data = new OrderData();
+		populator.populate(order, data);
+
+		assertEquals("PENDING", data.getStripePaymentInfo().getPaymentStatus());
+	}
+
 	private static PaymentTransactionModel transaction(final PaymentTransactionType type, final TransactionStatus status)
+	{
+		return transaction(type, status, PI_ID);
+	}
+
+	private static PaymentTransactionModel transaction(final PaymentTransactionType type, final TransactionStatus status,
+			final String requestId)
 	{
 		final PaymentTransactionEntryModel entry = new PaymentTransactionEntryModel();
 		entry.setType(type);
 		entry.setTransactionStatus(status.name());
+		entry.setRequestId(requestId);
 		final PaymentTransactionModel transaction = new PaymentTransactionModel();
 		transaction.setEntries(List.of(entry));
 		return transaction;
