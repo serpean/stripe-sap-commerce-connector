@@ -139,6 +139,12 @@ export async function completeThreeDs(page: Page, outcome: 'complete' | 'fail'):
   throw new Error('The 3DS challenge did not appear or did not close');
 }
 
+/** Matches the storefront origin (the return URL of the provider pages); E2E_BASE_URL can differ from :4200. */
+function shopOriginPattern(): RegExp {
+  const host = new URL(process.env['E2E_BASE_URL'] ?? 'http://localhost:4200').host;
+  return new RegExp(host.replace(/\./g, '\\.'));
+}
+
 /**
  * Pays with Bancontact. On the Stripe test page the customer authorizes or fails the payment. With
  * returnToShop=false the browser never comes back: the return to the shop is blocked and the page is closed.
@@ -150,19 +156,21 @@ export async function payWithBancontact(
   returnToShop: boolean,
   onProviderPage?: () => Promise<void>
 ): Promise<void> {
+  // With more methods enabled, Bancontact sits in the overflow list of the Payment Element, not in a tab.
+  await choosePaymentMethod(page, 'bancontact', /bancontact/i);
   const element = paymentElement(page);
-  await element.getByRole('tab', { name: /bancontact/i }).or(element.getByText('Bancontact')).first().click();
   await element.locator('input[name="name"]').fill('E2E Stripe');
   await payButton(page).click();
   await page.waitForURL(/stripe\.com/, { timeout: 60_000 });
   if (onProviderPage) {
     await onProviderPage();
   }
+  const shopUrl = shopOriginPattern();
   if (!returnToShop) {
-    await page.route(/localhost:4200/, (route) => route.abort());
+    await page.route(shopUrl, (route) => route.abort());
   }
   const action = outcome === 'authorize' ? /authorize test payment/i : /fail test payment/i;
-  const leaving = page.waitForRequest(/localhost:4200/, { timeout: 30_000 });
+  const leaving = page.waitForRequest(shopUrl, { timeout: 30_000 });
   await page.getByRole('link', { name: action }).or(page.getByRole('button', { name: action })).first().click();
   if (!returnToShop) {
     await leaving;
@@ -200,4 +208,106 @@ export async function placeOrderWithBancontact(page: Page): Promise<CheckoutSess
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   await payWithBancontact(page, 'authorize', true);
   return { ...session, orderCode: await expectOrderConfirmation(page) };
+}
+
+/** Picks the payment method in the Payment Element: its tab, or the overflow list (a select) when there is no room. */
+export async function choosePaymentMethod(page: Page, value: string, tabName: RegExp): Promise<void> {
+  const element = paymentElement(page);
+  const tab = element.getByRole('tab', { name: tabName });
+  if (await tab.count()) {
+    await tab.first().click();
+  } else {
+    await element.locator(`select:has(option[value="${value}"])`).first().selectOption(value);
+  }
+}
+
+/** Clicks the Stripe test page button of the outcome, and waits for the browser to leave to the shop. */
+async function answerTestPage(page: Page, authorize: boolean): Promise<void> {
+  const action = authorize ? /authorize test payment/i : /fail test payment/i;
+  await page.getByRole('link', { name: action }).or(page.getByRole('button', { name: action })).first().click();
+}
+
+/**
+ * Pays with Klarna. Klarna reserves the money (requires_capture). In test mode the browser goes to the Klarna
+ * playground: a phone number, any 6-digit code (not 999999) and the confirmation of the payment plan. The page can be
+ * in Spanish. With 'decline' the customer closes the Klarna window, which brings the browser back to the shop.
+ */
+export async function payWithKlarna(page: Page, outcome: 'approve' | 'decline'): Promise<void> {
+  await choosePaymentMethod(page, 'klarna', /klarna/i);
+  await payButton(page).click();
+  await page.waitForURL(/klarna\.com/, { timeout: 60_000 });
+  const shopUrl = shopOriginPattern();
+  const phone = page.locator('input[name="phone"]');
+  await phone.fill('600000000');
+  await page.getByRole('button', { name: /continue|continuar/i }).click();
+  await page.locator('input[name="otp_field"]').pressSequentially('123456');
+  const confirmation = page.getByRole('button', { name: /^(continue|continuar|pay|pagar)/i });
+  await expect(confirmation.first()).toBeVisible({ timeout: 60_000 });
+  if (outcome === 'decline') {
+    // The close button (an X without a name) is the last button of the page; Klarna may ask to confirm.
+    await page.getByRole('button').last().click();
+    await page.getByRole('button', { name: /cancel|cancelar|yes|sí|sure|seguro/i }).first().click({ timeout: 5_000 }).catch(() => undefined);
+    return;
+  }
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline && !shopUrl.test(page.url())) {
+    // The page has two steps with the same button (plan, then confirmation); the offers load a moment after the page.
+    await confirmation.first().click({ timeout: 3_000 }).catch(() => undefined);
+    await page.waitForTimeout(2_000);
+  }
+}
+
+/** Pays with a redirect method (for example bizum or eps) that has the Stripe test page, and answers it. */
+export async function payWithRedirectMethod(page: Page, method: string, outcome: 'authorize' | 'fail'): Promise<void> {
+  await choosePaymentMethod(page, method, new RegExp(method, 'i'));
+  const element = paymentElement(page);
+  if (method === 'eps') {
+    await element.locator('select[name="bank"]').selectOption({ index: 1 });
+  }
+  const name = element.locator('input[name="name"]');
+  if (await name.isVisible().catch(() => false)) {
+    await name.fill('E2E Stripe');
+  }
+  const phone = element.locator('input[name="phoneNumber"]');
+  if (await phone.isVisible().catch(() => false)) {
+    await phone.fill('600000000');
+  }
+  await payButton(page).click();
+  // Some test methods (bizum) finish without a provider page: the browser goes straight back to the shop.
+  const onProviderPage = await page.waitForURL(/stripe\.com/, { timeout: 30_000 }).then(() => true, () => false);
+  if (onProviderPage) {
+    await answerTestPage(page, outcome === 'authorize');
+  }
+}
+
+/** Test IBANs of docs.stripe.com/testing#sepa-direct-debit. */
+export const SEPA_IBANS = {
+  succeedsAfterDelay: 'DE89370400440532013000',
+  fails: 'DE62370400440532013001',
+} as const;
+
+/** Pays with SEPA Direct Debit. The payment stays in processing: the customer comes back to the confirmation page. */
+export async function payWithSepa(page: Page, iban: string): Promise<void> {
+  await choosePaymentMethod(page, 'sepa_debit', /sepa/i);
+  const element = paymentElement(page);
+  // The country first: changing it redraws the address fields and can clear what was typed before.
+  await element.locator('select[name="country"][aria-label="Country or region"]').selectOption('DE');
+  await element.locator('input[name="iban"]').fill(iban);
+  await element.locator('input[name="email"]').fill('e2e-sepa@example.com');
+  await element.locator('input[name="name"]').fill('E2E Stripe');
+  await element.locator('input[name="addressLine1"]').fill('Hauptstrasse 1');
+  await element.locator('input[name="postalCode"]').fill('10115');
+  await element.locator('input[name="locality"]').fill('Berlin');
+  await expect(element.locator('input[name="iban"]')).toHaveValue(/DE\d\d/);
+  await expect(element.locator('input[name="email"]')).toHaveValue('e2e-sepa@example.com');
+  // The Payment Element reports the form as complete a moment after the last field; a click before that does nothing
+  // (no request, no message). Click again until Stripe gets the confirmation.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const confirmation = page.waitForRequest(/api\.stripe\.com\/v1\/payment_intents\/.*\/confirm/, { timeout: 8_000 });
+    await payButton(page).click();
+    if (await confirmation.then(() => true, () => false)) {
+      return;
+    }
+  }
+  throw new Error('The SEPA form was never confirmed at Stripe');
 }

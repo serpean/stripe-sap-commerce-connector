@@ -53,7 +53,33 @@ export interface PaymentIntent {
   capture_method: string;
   metadata: Record<string, string>;
   last_payment_error?: { code?: string; type?: string } | null;
+  payment_method_types?: string[];
+  amount_details?: AmountDetails | null;
   latest_charge?: { id: string; amount: number; amount_captured: number; amount_refunded: number; captured: boolean } | null;
+}
+
+export interface AmountDetails {
+  discount_amount?: number | null;
+  shipping?: { amount?: number | null } | null;
+  tax?: { total_tax_amount?: number | null } | null;
+  line_items?: { data: { product_name: string; quantity: number; unit_cost: number; product_code?: string | null }[] } | null;
+}
+
+/** The PaymentIntent with its amount details and line items (expand[]=amount_details.line_items). */
+export function retrievePaymentIntentWithLineItems(id: string): Promise<PaymentIntent> {
+  return stripeGet(`/payment_intents/${id}`, { 'expand[]': 'amount_details.line_items' });
+}
+
+/** A form POST to Stripe, for the checks that need a PaymentIntent that the connector did not create. */
+export async function stripePost(path: string, form: Record<string, string>): Promise<any> {
+  return withApi(async (api) => {
+    const response = await api.post(`${STRIPE_API}${path}`, { headers: { Authorization: `Bearer ${secretKey()}` }, form });
+    const body = await response.json();
+    if (!response.ok()) {
+      throw new Error(`Stripe POST ${path} failed: ${response.status()} ${body?.error?.message}`);
+    }
+    return body;
+  });
 }
 
 export function retrievePaymentIntent(id: string): Promise<PaymentIntent> {

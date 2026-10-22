@@ -5,6 +5,7 @@ import { setConfig } from './support/backend';
 export const TEST_TIMINGS: Record<string, string> = {
   'stripe.webhook.graceperiod.seconds': '20',
   'stripe.payment.pending.retry.seconds': '10',
+  'stripe.payment.pending.timeout.sepa_debit.seconds': '600',
   'stripe.capture.mode': 'manual',
 };
 

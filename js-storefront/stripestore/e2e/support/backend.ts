@@ -188,6 +188,14 @@ export async function getOrderCodesOfCustomer(customer: Customer): Promise<strin
   return rows.map(([code]) => code ?? '');
 }
 
+/** The stock the shop can still sell for the product: available minus reserved, summed over all stock levels. */
+export async function getAvailableStock(productCode: string): Promise<number> {
+  const rows = await flexibleSearch(
+    `SELECT SUM({s.available} - {s.reserved}) FROM {StockLevel AS s} WHERE {s.productCode} = ${literal(productCode)}`
+  );
+  return Number(rows[0]?.[0] ?? 0);
+}
+
 export interface PaymentIntentRecord {
   paymentIntentId: string;
   cartCode: string;
