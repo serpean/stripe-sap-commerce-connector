@@ -107,6 +107,8 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="i18nService" ref="i18nService"/>
         <property name="modelService" ref="modelService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
     </bean>
 
     <alias name="defaultStripePaymentIntentChecks" alias="stripePaymentIntentChecks"/>
