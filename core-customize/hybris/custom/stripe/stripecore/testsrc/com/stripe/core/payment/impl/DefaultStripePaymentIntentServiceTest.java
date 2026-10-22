@@ -630,7 +630,7 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
-	public void customerIsSentOnUpdate()
+	public void updateNeverSendsCustomer()
 	{
 		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
 		cartHasIntent("pi_1");
@@ -642,7 +642,30 @@ public class DefaultStripePaymentIntentServiceTest
 
 		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
 		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
-		assertEquals("cus_1", captor.getValue().toMap().get("customer"));
+		assertFalse(captor.getValue().toMap().containsKey("customer"));
+		verify(customerService, never()).customerIdFor(any());
+	}
+
+	@Test
+	public void customerServiceRuntimeFailureDoesNotBlockPayment()
+	{
+		when(customerService.customerIdFor(cart)).thenThrow(new IllegalStateException("boom"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertFalse(createdParams().toMap().containsKey("customer"));
+	}
+
+	@Test
+	public void createKeyHoldsCustomerId()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		verify(gateway).createPaymentIntent(any(), eq("cart-c1-g1-pi-1-cus-cus_1"));
 	}
 
 	@Test

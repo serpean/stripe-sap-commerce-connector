@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.customer.dao.StripeCustomerDao;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripeCustomerModel;
 import com.stripe.model.Customer;
 import com.stripe.param.CustomerUpdateParams;
@@ -67,6 +68,10 @@ public class DefaultStripeCustomerServiceTest
 			}
 			return null;
 		}).when(modelService).save(any());
+		org.mockito.Mockito.doAnswer(i -> {
+			stored.remove(i.getArgument(0));
+			return null;
+		}).when(modelService).remove(any(Object.class));
 		when(dao.find(any(), anyString())).thenAnswer(i -> stored.stream()
 				.filter(s -> s.getAccountKey().equals(i.getArgument(1))).findFirst());
 
@@ -220,5 +225,44 @@ public class DefaultStripeCustomerServiceTest
 		assertEquals("cus_2", replacement);
 		verify(modelService).remove(old);
 		verify(gateway).createCustomer(any(), org.mockito.ArgumentMatchers.endsWith("-replaces-cus_1"));
+	}
+
+	@Test
+	public void deletedStoredCustomerIsReplacedOnEmailSync()
+	{
+		service.customerIdFor(cart);
+		when(user.getContactEmail()).thenReturn("new@example.com");
+		when(gateway.updateCustomer(eq("cus_1"), any(), anyString()))
+				.thenThrow(new StripeGatewayException("missing", "resource_missing", false, false, null));
+
+		final Optional<String> id = service.customerIdFor(cart);
+
+		assertEquals(Optional.of("cus_2"), id);
+		verify(gateway).createCustomer(any(), org.mockito.ArgumentMatchers.endsWith("-replaces-cus_1"));
+		assertEquals(1, stored.size());
+		assertEquals("cus_2", stored.get(0).getStripeCustomerId());
+	}
+
+	@Test
+	public void emailUpdateFailureDoesNotLoseCustomerId()
+	{
+		when(gateway.updateCustomer(anyString(), any(), anyString()))
+				.thenThrow(new StripeGatewayException("down", "api_error", true, false, null));
+
+		assertEquals(Optional.of("cus_1"), service.customerIdFor(cart));
+		assertEquals(1, stored.size());
+	}
+
+	@Test
+	public void concurrentFirstCreateReusesStoredRow()
+	{
+		final StripeCustomerModel other = new StripeCustomerModel();
+		other.setAccountKey("acct_1:test");
+		other.setStripeCustomerId("cus_other");
+		when(dao.find(any(), anyString())).thenReturn(Optional.empty()).thenReturn(Optional.of(other));
+		org.mockito.Mockito.doThrow(new IllegalStateException("unique violation")).when(modelService)
+				.save(any(StripeCustomerModel.class));
+
+		assertEquals(Optional.of("cus_other"), service.customerIdFor(cart));
 	}
 }

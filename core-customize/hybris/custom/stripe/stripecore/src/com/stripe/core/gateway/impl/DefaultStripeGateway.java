@@ -5,6 +5,7 @@ import com.stripe.StripeClient;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.util.StripeDigests;
 import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.RateLimitException;
 import com.stripe.exception.SignatureVerificationException;
@@ -24,10 +25,6 @@ import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import com.stripe.param.RefundCreateParams;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -127,7 +124,7 @@ public class DefaultStripeGateway implements StripeGateway
 		{
 			throw new StripeGatewayException("Stripe secret key is not configured", "secret_key_missing", false, false, null);
 		}
-		final String cacheKey = sha256(secretKey);
+		final String cacheKey = StripeDigests.sha256Hex(secretKey);
 		final String cached = accountKeys.get(cacheKey);
 		if (cached != null)
 		{
@@ -139,18 +136,6 @@ public class DefaultStripeGateway implements StripeGateway
 		final String accountKey = account.getId() + mode;
 		accountKeys.put(cacheKey, accountKey);
 		return accountKey;
-	}
-
-	private static String sha256(final String value)
-	{
-		try
-		{
-			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-		}
-		catch (final NoSuchAlgorithmException e)
-		{
-			throw new IllegalStateException("SHA-256 is not available", e);
-		}
 	}
 
 	@Override

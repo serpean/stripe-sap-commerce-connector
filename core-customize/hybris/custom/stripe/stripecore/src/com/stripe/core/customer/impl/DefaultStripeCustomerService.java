@@ -4,7 +4,9 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.customer.dao.StripeCustomerDao;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripeCustomerModel;
+import com.stripe.core.util.StripeDigests;
 import com.stripe.model.Customer;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.CustomerUpdateParams;
@@ -13,20 +15,19 @@ import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.core.model.user.CustomerModel;
 import de.hybris.platform.core.model.user.UserModel;
 import de.hybris.platform.servicelayer.model.ModelService;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Default {@link StripeCustomerService}. Emails are never logged and never part of an idempotency key (a hash is).
  */
 public class DefaultStripeCustomerService implements StripeCustomerService
 {
+	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeCustomerService.class);
 	private static final int MAX_SYNCED_EMAILS = 10000;
 
 	private StripeGateway stripeGateway;
@@ -61,12 +62,17 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 		{
 			final Customer customer = stripeGateway.createCustomer(guestCreateParams(cart),
 					guestKey(cart) + "-replaces-" + missingStripeCustomerId);
-			syncGuestEmail(customer.getId(), user);
+			syncEmailBestEffort(customer.getId(), guestEmail(user));
 			return customer.getId();
 		}
-		final String accountKey = stripeGateway.retrieveAccountKey();
+		return replaceRegistered(user, stripeGateway.retrieveAccountKey(), missingStripeCustomerId);
+	}
+
+	private String replaceRegistered(final CustomerModel user, final String accountKey, final String missingId)
+	{
+		syncedEmails.remove(missingId);
 		stripeCustomerDao.find(user, accountKey).ifPresent(stored -> modelService.remove(stored));
-		return createAndStore(user, accountKey, registeredKey(user, accountKey) + "-replaces-" + missingStripeCustomerId);
+		return createAndStore(user, accountKey, registeredKey(user, accountKey) + "-replaces-" + missingId);
 	}
 
 	protected String registeredCustomerId(final CustomerModel user)
@@ -76,23 +82,53 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 		if (stored.isPresent())
 		{
 			final String id = stored.get().getStripeCustomerId();
-			updateEmailIfChanged(id, registeredEmail(user));
+			try
+			{
+				updateEmailIfChanged(id, registeredEmail(user));
+			}
+			catch (final StripeGatewayException e)
+			{
+				if (isMissing(e))
+				{
+					LOG.warn("Stripe customer {} is missing at Stripe: a new one is created", id);
+					return replaceRegistered(user, accountKey, id);
+				}
+				logEmailSyncFailure(e);
+			}
 			return id;
 		}
 		return createAndStore(user, accountKey, registeredKey(user, accountKey));
 	}
 
+	/**
+	 * Creates the Stripe Customer and stores it. When two requests create it at the same time, the stored row of the
+	 * other request is used. The email update is best effort: it never loses the customer id.
+	 */
 	private String createAndStore(final CustomerModel user, final String accountKey, final String idempotencyKey)
 	{
 		final Customer customer = stripeGateway.createCustomer(
 				CustomerCreateParams.builder().putMetadata("userPk", String.valueOf(user.getPk())).build(), idempotencyKey);
-		final StripeCustomerModel stored = modelService.create(StripeCustomerModel.class);
-		stored.setCustomer(user);
-		stored.setAccountKey(accountKey);
-		stored.setStripeCustomerId(customer.getId());
-		modelService.save(stored);
-		updateEmailIfChanged(customer.getId(), registeredEmail(user));
-		return customer.getId();
+		String id = customer.getId();
+		try
+		{
+			final StripeCustomerModel stored = modelService.create(StripeCustomerModel.class);
+			stored.setCustomer(user);
+			stored.setAccountKey(accountKey);
+			stored.setStripeCustomerId(id);
+			modelService.save(stored);
+		}
+		catch (final RuntimeException e)
+		{
+			final Optional<StripeCustomerModel> other = stripeCustomerDao.find(user, accountKey);
+			if (other.isEmpty())
+			{
+				throw e;
+			}
+			LOG.info("Stripe customer of user {} was stored by another request: it is used", user.getPk());
+			id = other.get().getStripeCustomerId();
+		}
+		syncEmailBestEffort(id, registeredEmail(user));
+		return id;
 	}
 
 	/**
@@ -102,8 +138,41 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 	protected String guestCustomerId(final CartModel cart, final CustomerModel user)
 	{
 		final Customer customer = stripeGateway.createCustomer(guestCreateParams(cart), guestKey(cart));
-		syncGuestEmail(customer.getId(), user);
+		try
+		{
+			updateEmailIfChanged(customer.getId(), guestEmail(user));
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (isMissing(e))
+			{
+				return replaceCustomer(cart, customer.getId());
+			}
+			logEmailSyncFailure(e);
+		}
 		return customer.getId();
+	}
+
+	private void syncEmailBestEffort(final String customerId, final String email)
+	{
+		try
+		{
+			updateEmailIfChanged(customerId, email);
+		}
+		catch (final StripeGatewayException e)
+		{
+			logEmailSyncFailure(e);
+		}
+	}
+
+	private void logEmailSyncFailure(final StripeGatewayException e)
+	{
+		LOG.warn("The email of a Stripe customer was not updated (code={})", e.getStripeCode());
+	}
+
+	private boolean isMissing(final StripeGatewayException e)
+	{
+		return "resource_missing".equals(e.getStripeCode());
 	}
 
 	private CustomerCreateParams guestCreateParams(final CartModel cart)
@@ -121,18 +190,13 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 		return "customer-" + user.getPk() + "-" + accountKey;
 	}
 
-	private void syncGuestEmail(final String customerId, final CustomerModel user)
-	{
-		updateEmailIfChanged(customerId, guestEmail(user));
-	}
-
 	private void updateEmailIfChanged(final String customerId, final String email)
 	{
 		if (email == null)
 		{
 			return;
 		}
-		final String hash = sha256(email);
+		final String hash = StripeDigests.sha256Hex(email);
 		if (hash.equals(syncedEmails.get(customerId)))
 		{
 			return;
@@ -148,7 +212,7 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 		{
 			syncedEmails.clear();
 		}
-		syncedEmails.put(customerId, sha256(email));
+		syncedEmails.put(customerId, StripeDigests.sha256Hex(email));
 	}
 
 	protected boolean isGuest(final UserModel user)
@@ -174,18 +238,6 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 	{
 		final String contact = StringUtils.trimToNull(user.getContactEmail());
 		return contact != null ? contact : StringUtils.trimToNull(user.getUid());
-	}
-
-	static String sha256(final String value)
-	{
-		try
-		{
-			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-		}
-		catch (final NoSuchAlgorithmException e)
-		{
-			throw new IllegalStateException("SHA-256 is not available", e);
-		}
 	}
 
 	public void setStripeGateway(final StripeGateway stripeGateway)

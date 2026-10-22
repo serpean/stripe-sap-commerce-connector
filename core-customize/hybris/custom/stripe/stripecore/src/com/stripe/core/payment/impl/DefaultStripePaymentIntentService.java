@@ -184,7 +184,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		PaymentIntent intent;
 		try
 		{
-			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, customerId, idempotencyKey);
+			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, customerId,
+					customerSuffix(idempotencyKey, customerId));
 		}
 		catch (final StripeGatewayException e)
 		{
@@ -194,7 +195,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 			}
 			final String replacement = replaceCustomer(cart, customerId);
 			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, replacement,
-					idempotencyKey + "-cus-" + replacement);
+					customerSuffix(idempotencyKey, replacement));
 		}
 
 		saveRecord(intent, cart, amount, currencyIso, StripePaymentIntentState.CREATED);
@@ -246,10 +247,10 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		{
 			return stripeCustomerService.customerIdFor(cart).orElse(null);
 		}
-		catch (final StripeGatewayException e)
+		catch (final RuntimeException e)
 		{
-			LOG.warn("No Stripe customer for cart {}: the payment intent is made without one (code={})", cart.getCode(),
-					e.getStripeCode());
+			LOG.warn("No Stripe customer for cart {}: the payment intent is made without one ({})", cart.getCode(),
+					e.getClass().getSimpleName());
 			return null;
 		}
 	}
@@ -319,22 +320,21 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
 				+ changed;
 		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
-		final String customerId = customerIdFor(cart);
 		PaymentIntent updated;
 		try
 		{
-			updated = updateWithLineItemsFallback(cart, existing, amount, currencyIso, lineItems, customerId,
-					customerSuffix(idempotencyKey, customerId));
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, lineItems),
+					idempotencyKey);
 		}
 		catch (final StripeGatewayException e)
 		{
-			if (customerId == null || !isMissingCustomer(e))
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
 			{
 				throw e;
 			}
-			final String replacement = replaceCustomer(cart, customerId);
-			updated = updateWithLineItemsFallback(cart, existing, amount, currencyIso, lineItems, replacement,
-					customerSuffix(idempotencyKey, replacement));
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, Map.of()),
+					idempotencyKey + "-nolines");
 		}
 
 		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
@@ -350,39 +350,15 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return customerId == null ? idempotencyKey : idempotencyKey + "-cus-" + customerId;
 	}
 
-	private PaymentIntent updateWithLineItemsFallback(final CartModel cart, final PaymentIntent existing, final long amount,
-			final String currencyIso, final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
-	{
-		try
-		{
-			return stripeGateway.updatePaymentIntent(existing.getId(),
-					buildUpdateParams(amount, currencyIso, lineItems, customerId), idempotencyKey);
-		}
-		catch (final StripeGatewayException e)
-		{
-			if (lineItems.isEmpty() || !isLineItemsRejection(e))
-			{
-				throw e;
-			}
-			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
-			return stripeGateway.updatePaymentIntent(existing.getId(),
-					buildUpdateParams(amount, currencyIso, Map.of(), customerId), idempotencyKey + "-nolines");
-		}
-	}
-
 	/**
 	 * Update parameters. Without line items, amount_details is cleared: Stripe keeps the old line items otherwise and
 	 * refuses a new amount that does not match them.
 	 */
 	protected PaymentIntentUpdateParams buildUpdateParams(final long amount, final String currencyIso,
-			final Map<String, Object> lineItems, final String customerId)
+			final Map<String, Object> lineItems)
 	{
 		final PaymentIntentUpdateParams.Builder builder = PaymentIntentUpdateParams.builder().setAmount(amount)
 				.setCurrency(currencyIso.toLowerCase());
-		if (customerId != null)
-		{
-			builder.setCustomer(customerId);
-		}
 		if (lineItems.isEmpty())
 		{
 			builder.putExtraParam("amount_details", "");
