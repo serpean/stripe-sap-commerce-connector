@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.testsupport.StripeLogCapture;
 import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
@@ -514,6 +515,48 @@ public class DefaultStripePaymentIntentServiceTest
 		assertFalse(options.containsKey("bancontact"));
 		assertFalse(options.containsKey("paypal"));
 		assertEquals("automatic", params.toMap().get("capture_method"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void manualCaptureForEveryConfiguredMethod()
+	{
+		final Set<String> twelve = Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay",
+				"klarna", "sequra", "scalapay", "billie", "mondu");
+		when(config.getManualCaptureMethods()).thenReturn(twelve);
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		final Map<String, Object> options = options(params);
+		for (final String type : twelve)
+		{
+			assertEquals(type, Map.of("capture_method", "manual"), options.get(type));
+		}
+		assertEquals(12, options.size());
+		assertFalse(options.containsKey("sepa_debit"));
+		assertFalse(options.containsKey("bancontact"));
+		final String form = com.stripe.net.FormEncoder.createQueryString(params.toMap());
+		assertTrue(form, form.contains("payment_method_options[sequra][capture_method]=manual"));
+		assertTrue(form, form.contains("payment_method_options[link][capture_method]=manual"));
+	}
+
+	@Test
+	public void unknownManualMethodIsIgnored()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card", "sepa_debit"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentIntentService.class))
+		{
+			service.prepareForCart(cart);
+
+			assertTrue(log.hasWarn("sepa_debit"));
+		}
+		final Map<String, Object> options = options(createdParams());
+		assertEquals(Map.of("capture_method", "manual"), options.get("card"));
+		assertFalse(options.containsKey("sepa_debit"));
 	}
 
 	@Test

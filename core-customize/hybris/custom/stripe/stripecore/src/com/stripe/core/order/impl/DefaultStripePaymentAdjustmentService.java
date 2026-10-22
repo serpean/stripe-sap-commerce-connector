@@ -46,6 +46,8 @@ import org.slf4j.LoggerFactory;
  * </ul>
  * An order without an accepted authorization and with a fully cancelled order and a pending payment record releases its
  * PaymentIntent ({@link #adjustToOrderTotal}).
+ * A REJECTED result of the refund or the void is final: it is logged as an ERROR and not retried. An ERROR result keeps
+ * the retry.
  * A repeated call does not refund twice: the net captured amount already subtracts the earlier refunds, and a canceled
  * PaymentIntent is not voided again.
  */
@@ -197,6 +199,12 @@ public class DefaultStripePaymentAdjustmentService implements StripePaymentAdjus
 					order.getCode(), transaction.getCode());
 			return true;
 		}
+		if (isRejected(refund))
+		{
+			LOG.error("Refund of {} {} of order {} (transaction {}) is rejected for good and not retried: {}", difference,
+					currencyIso, order.getCode(), transaction.getCode(), reasonOf(refund));
+			return true;
+		}
 		LOG.warn("Refund of {} {} of order {} (transaction {}) after a cancel failed: {} {}", difference, currencyIso,
 				order.getCode(), transaction.getCode(), statusOf(refund), detailsOf(refund));
 		return false;
@@ -208,6 +216,12 @@ public class DefaultStripePaymentAdjustmentService implements StripePaymentAdjus
 		if (isAccepted(cancel))
 		{
 			LOG.info("Released the authorization of order {} after a full cancel", order.getCode());
+			return true;
+		}
+		if (isRejected(cancel))
+		{
+			LOG.error("Release of the authorization of order {} is rejected for good and not retried: {}", order.getCode(),
+					reasonOf(cancel));
 			return true;
 		}
 		LOG.warn("Release of the authorization of order {} after a full cancel failed: {} {}", order.getCode(),
@@ -242,6 +256,20 @@ public class DefaultStripePaymentAdjustmentService implements StripePaymentAdjus
 	private static boolean isAccepted(final PaymentTransactionEntryModel entry)
 	{
 		return entry != null && TransactionStatus.ACCEPTED.name().equals(entry.getTransactionStatus());
+	}
+
+	private static boolean isRejected(final PaymentTransactionEntryModel entry)
+	{
+		return entry != null && TransactionStatus.REJECTED.name().equals(entry.getTransactionStatus());
+	}
+
+	/**
+	 * The reason of a rejected entry: "stripe:" and the code of Stripe when the command set it, else the status details.
+	 */
+	private static String reasonOf(final PaymentTransactionEntryModel entry)
+	{
+		final String token = entry.getRequestToken();
+		return token != null && token.startsWith("stripe:") ? token : detailsOf(entry);
 	}
 
 	private static String statusOf(final PaymentTransactionEntryModel entry)

@@ -77,13 +77,30 @@ public class StripeCaptureCommandTest
 		assertEquals(TransactionStatus.ERROR, retryable.getTransactionStatus());
 		assertEquals(TransactionStatusDetails.COMMUNICATION_PROBLEM, retryable.getTransactionStatusDetails());
 
-		doThrow(new StripeGatewayException("expired", "charge_expired_for_capture", false, false, null)).when(gateway)
+		doThrow(new StripeGatewayException("declined", "card_declined", false, false, null)).when(gateway)
 				.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
 
-		final CaptureResult permanent = command.perform(request());
+		final CaptureResult other = command.perform(request());
 
-		assertEquals(TransactionStatus.ERROR, permanent.getTransactionStatus());
-		assertEquals(TransactionStatusDetails.GENERAL_SYSTEM_ERROR, permanent.getTransactionStatusDetails());
+		assertEquals(TransactionStatus.ERROR, other.getTransactionStatus());
+		assertEquals(TransactionStatusDetails.GENERAL_SYSTEM_ERROR, other.getTransactionStatusDetails());
+	}
+
+	@Test
+	public void expiredAuthorizationIsRejectedNotRetried()
+	{
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));
+		for (final String code : new String[]
+		{ "charge_expired_for_capture", "capture_charge_authorization_expired" })
+		{
+			doThrow(new StripeGatewayException("expired", code, false, false, null)).when(gateway)
+					.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
+
+			final CaptureResult result = command.perform(request());
+
+			assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
+			assertEquals("stripe:" + code, result.getRequestToken());
+		}
 	}
 
 	private static CaptureRequest request()

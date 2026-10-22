@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.payment.StripeTransactionLookup;
 import com.stripe.model.Refund;
 import de.hybris.bootstrap.annotations.UnitTest;
@@ -70,6 +71,33 @@ public class StripeRefundCommandTest
 
 		assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
 		assertEquals("re_1", result.getRequestId());
+	}
+
+	@Test
+	public void refundWithPermanentStripeCodeIsRejected()
+	{
+		for (final String code : new String[]
+		{ "charge_disputed", "refund_disputed_payment" })
+		{
+			when(gateway.createRefund(anyString(), anyLong(), anyString()))
+					.thenThrow(new StripeGatewayException("no", code, false, false, null));
+
+			final RefundResult result = command.perform(request("txn-1-REFUND_FOLLOW_ON-1"));
+
+			assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
+			assertEquals("stripe:" + code, result.getRequestToken());
+		}
+	}
+
+	@Test
+	public void refundWithOtherStripeErrorIsError()
+	{
+		when(gateway.createRefund(anyString(), anyLong(), anyString()))
+				.thenThrow(new StripeGatewayException("no", "api_error", false, false, null));
+
+		final RefundResult result = command.perform(request("txn-1-REFUND_FOLLOW_ON-1"));
+
+		assertEquals(TransactionStatus.ERROR, result.getTransactionStatus());
 	}
 
 	@Test

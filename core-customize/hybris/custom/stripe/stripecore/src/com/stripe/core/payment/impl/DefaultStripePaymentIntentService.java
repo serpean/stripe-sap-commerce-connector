@@ -475,35 +475,40 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return builder.build();
 	}
 
+	/**
+	 * Asks for manual capture for each configured method. Methods with an options class in stripe-java use it; sequra,
+	 * scalapay and mondu have none, so their options go in as a nested extra parameter, which stripe-java encodes as
+	 * payment_method_options[type][capture_method]. Any other type is ignored with a WARN.
+	 */
 	protected PaymentIntentCreateParams.PaymentMethodOptions buildPaymentMethodOptions(final Set<String> manualMethods)
 	{
 		final PaymentIntentCreateParams.PaymentMethodOptions.Builder builder = PaymentIntentCreateParams.PaymentMethodOptions
 				.builder();
-		if (manualMethods.contains("card"))
+		for (final String method : manualMethods)
 		{
-			builder.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Card.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("paypal"))
-		{
-			builder.setPaypal(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("klarna"))
-		{
-			builder.setKlarna(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("affirm"))
-		{
-			builder.setAffirm(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("afterpay_clearpay"))
-		{
-			builder.setAfterpayClearpay(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.CaptureMethod.MANUAL)
-					.build());
+			switch (method)
+			{
+				case "card" -> builder.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Card.CaptureMethod.MANUAL).build());
+				case "link" -> builder.setLink(PaymentIntentCreateParams.PaymentMethodOptions.Link.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Link.CaptureMethod.MANUAL).build());
+				case "paypal" -> builder.setPaypal(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.CaptureMethod.MANUAL).build());
+				case "amazon_pay" -> builder.setAmazonPay(PaymentIntentCreateParams.PaymentMethodOptions.AmazonPay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.AmazonPay.CaptureMethod.MANUAL).build());
+				case "revolut_pay" -> builder.setRevolutPay(PaymentIntentCreateParams.PaymentMethodOptions.RevolutPay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.RevolutPay.CaptureMethod.MANUAL).build());
+				case "mobilepay" -> builder.setMobilepay(PaymentIntentCreateParams.PaymentMethodOptions.Mobilepay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Mobilepay.CaptureMethod.MANUAL).build());
+				case "satispay" -> builder.setSatispay(PaymentIntentCreateParams.PaymentMethodOptions.Satispay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Satispay.CaptureMethod.MANUAL).build());
+				case "klarna" -> builder.setKlarna(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
+				case "billie" -> builder.setBillie(PaymentIntentCreateParams.PaymentMethodOptions.Billie.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Billie.CaptureMethod.MANUAL).build());
+				case "sequra", "scalapay", "mondu" -> builder.putExtraParam(method, Map.of("capture_method", "manual"));
+				default -> LOG.warn("Payment method [{}] in the manual capture list is unknown: ignored", method);
+			}
 		}
 		return builder.build();
 	}

@@ -27,6 +27,15 @@ import java.util.Set;
 public abstract class AbstractStripeCommand
 {
 	private static final Logger LOG = LoggerFactory.getLogger(AbstractStripeCommand.class);
+	/**
+	 * Codes of Stripe that no retry can fix. Source: docs.stripe.com/error-codes (charge_expired_for_capture,
+	 * capture_charge_authorization_expired: the authorization expired; charge_disputed, refund_disputed_payment: the
+	 * charge is disputed). The page lists no code for a refund outside the window of the method, so such a refund is an
+	 * ERROR until Stripe documents one.
+	 */
+	static final Set<String> PERMANENT_CODES = Set.of("charge_expired_for_capture", "capture_charge_authorization_expired",
+			"charge_disputed", "refund_disputed_payment");
+	static final String PERMANENT_PREFIX = "stripe:";
 	private static final Set<String> ACCEPTED_REFUND_STATUSES = Set.of("succeeded", "pending", "requires_action");
 	private static final Set<String> REJECTED_REFUND_STATUSES = Set.of("failed", "canceled");
 
@@ -83,14 +92,20 @@ public abstract class AbstractStripeCommand
 	}
 
 	/**
-	 * Fills the result for an error of Stripe: ERROR with COMMUNICATION_PROBLEM when a retry can help, else
-	 * GENERAL_SYSTEM_ERROR.
+	 * Fills the result for an error of Stripe: a permanent code gives REJECTED, which is final; the enum of the details
+	 * has no room for the code, so the request token of the entry holds "stripe:" and the code. Any other error gives
+	 * ERROR with COMMUNICATION_PROBLEM when a retry can help, else GENERAL_SYSTEM_ERROR.
 	 */
 	protected <R extends AbstractResult> R error(final R result, final StripeGatewayException exception,
 			final AbstractRequest request)
 	{
 		LOG.warn("Stripe call failed for transaction [{}]: code [{}], retryable [{}]", request.getMerchantTransactionCode(),
 				exception.getStripeCode(), exception.isRetryable());
+		if (exception.getStripeCode() != null && PERMANENT_CODES.contains(exception.getStripeCode()))
+		{
+			result.setRequestToken(PERMANENT_PREFIX + exception.getStripeCode());
+			return fill(result, request, TransactionStatus.REJECTED, TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
+		}
 		return fill(result, request, TransactionStatus.ERROR, exception.isRetryable()
 				? TransactionStatusDetails.COMMUNICATION_PROBLEM : TransactionStatusDetails.GENERAL_SYSTEM_ERROR);
 	}
