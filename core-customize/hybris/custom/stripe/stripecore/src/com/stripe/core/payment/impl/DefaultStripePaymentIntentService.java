@@ -11,6 +11,7 @@ import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripeLineItemsBuilder;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
@@ -43,6 +44,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	private StripeOrderPlacementLockService stripeOrderPlacementLockService;
 	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
+	private StripeLineItemsBuilder stripeLineItemsBuilder;
 	private ModelService modelService;
 
 	@Override
@@ -239,9 +241,9 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final long changed = cart.getModifiedtime() == null ? 0L : cart.getModifiedtime().getTime();
 		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
 				+ changed;
-		final PaymentIntent updated = stripeGateway.updatePaymentIntent(existing.getId(),
-				PaymentIntentUpdateParams.builder().setAmount(amount).setCurrency(currencyIso.toLowerCase()).build(),
-				idempotencyKey);
+		final PaymentIntentUpdateParams params = PaymentIntentUpdateParams.builder().setAmount(amount)
+				.setCurrency(currencyIso.toLowerCase()).putAllExtraParam(stripeLineItemsBuilder.build(cart, amount)).build();
+		final PaymentIntent updated = stripeGateway.updatePaymentIntent(existing.getId(), params, idempotencyKey);
 
 		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
 			record.setAmount(amount);
@@ -263,7 +265,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				.putMetadata("cartCode", cart.getCode())
 				.putMetadata("baseSiteUid", siteUid(cart))
 				.putMetadata("userUid", userUid(cart))
-				.putMetadata("currencyIso", currencyIso);
+				.putMetadata("currencyIso", currencyIso)
+				.putAllExtraParam(stripeLineItemsBuilder.build(cart, amount));
 		if (manual)
 		{
 			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
@@ -359,6 +362,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public void setStripePaymentIntentRecordDao(final StripePaymentIntentRecordDao stripePaymentIntentRecordDao)
 	{
 		this.stripePaymentIntentRecordDao = stripePaymentIntentRecordDao;
+	}
+
+	public void setStripeLineItemsBuilder(final StripeLineItemsBuilder stripeLineItemsBuilder)
+	{
+		this.stripeLineItemsBuilder = stripeLineItemsBuilder;
 	}
 
 	public void setModelService(final ModelService modelService)

@@ -31,11 +31,17 @@
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
+    <alias name="defaultStripeLineItemsBuilder" alias="stripeLineItemsBuilder"/>
+    <bean id="defaultStripeLineItemsBuilder" class="com.stripe.core.payment.impl.DefaultStripeLineItemsBuilder">
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+    </bean>
+
     <alias name="defaultStripePaymentIntentService" alias="stripePaymentIntentService"/>
     <bean id="defaultStripePaymentIntentService" class="com.stripe.core.payment.impl.DefaultStripePaymentIntentService">
         <property name="stripeGateway" ref="stripeGateway"/>
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
         <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>

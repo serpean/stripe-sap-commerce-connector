@@ -28,6 +28,7 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripePaymentInProgressException;
+import com.stripe.core.payment.StripeLineItemsBuilder;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -58,6 +59,7 @@ public class DefaultStripePaymentIntentServiceTest
 	private StripeOrderPlacementLockService lockService;
 	private StripePaymentIntentRecordService recordService;
 	private StripeOrderAuthorizationService authorizationService;
+	private StripeLineItemsBuilder lineItemsBuilder;
 	private DefaultStripePaymentIntentService service;
 	private CartModel cart;
 
@@ -93,6 +95,9 @@ public class DefaultStripePaymentIntentServiceTest
 		service.setStripeOrderPlacementLockService(lockService);
 		service.setStripePaymentIntentRecordService(recordService);
 		service.setStripeOrderAuthorizationService(authorizationService);
+		lineItemsBuilder = mock(StripeLineItemsBuilder.class);
+		when(lineItemsBuilder.build(any(), anyLong())).thenReturn(Map.of());
+		service.setStripeLineItemsBuilder(lineItemsBuilder);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -191,6 +196,66 @@ public class DefaultStripePaymentIntentServiceTest
 		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
 		assertEquals(1200L, captor.getValue().toMap().get("amount"));
 		verify(gateway, never()).createPaymentIntent(any(), anyString());
+	}
+
+	@Test
+	public void createSendsLineItems()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), params.toMap().get("amount_details"));
+		assertEquals(1200L, params.toMap().get("amount"));
+	}
+
+	@Test
+	public void createWithoutLineItemsKeepsTheAmount()
+	{
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		assertFalse(params.toMap().containsKey("amount_details"));
+		assertEquals(1200L, params.toMap().get("amount"));
+	}
+
+	@Test
+	public void updateSendsLineItems()
+	{
+		cartHasIntent("pi_1");
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), captor.getValue().toMap().get("amount_details"));
+		assertEquals(1200L, captor.getValue().toMap().get("amount"));
+	}
+
+	@Test
+	public void updateWithoutLineItemsKeepsTheAmount()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertFalse(captor.getValue().toMap().containsKey("amount_details"));
+		assertEquals(1200L, captor.getValue().toMap().get("amount"));
 	}
 
 	@Test
