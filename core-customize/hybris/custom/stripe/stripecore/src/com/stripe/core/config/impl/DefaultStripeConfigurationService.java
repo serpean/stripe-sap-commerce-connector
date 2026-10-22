@@ -34,7 +34,7 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String STATEMENT_DESCRIPTOR = "stripe.statement.descriptor";
 	private static final String DESCRIPTOR_SUFFIX = "stripe.descriptor.suffix";
 
-	private static final String DEFAULT_MANUAL_METHODS = "card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu";
+	private static final String DEFAULT_MANUAL_METHODS = "card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie";
 	private static final long DEFAULT_GRACE_PERIOD_SECONDS = 300L;
 	private static final long DEFAULT_PENDING_TIMEOUT_SECONDS = 86400L;
 	private static final Map<String, Long> DEFAULT_METHOD_TIMEOUT_SECONDS = Map.of(

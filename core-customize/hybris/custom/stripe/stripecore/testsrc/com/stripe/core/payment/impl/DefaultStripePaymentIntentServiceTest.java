@@ -2,6 +2,7 @@ package com.stripe.core.payment.impl;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -275,6 +276,52 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
+	public void unknownPaymentMethodOptionIsDroppedAndRetried()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card", "sequra", "scalapay"));
+		final StripeGatewayException unknown = new StripeGatewayException("Stripe call failed", "parameter_unknown", false,
+				false, new com.stripe.exception.InvalidRequestException("Received unknown parameter: payment_method_options[sequra]",
+						"payment_method_options[sequra]", "req_1", "parameter_unknown", 400, null));
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1"))).thenThrow(unknown);
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1-without-sequra")))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		final StripeIntentData data;
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentIntentService.class))
+		{
+			data = service.prepareForCart(cart);
+
+			assertTrue(log.hasWarn("sequra"));
+		}
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertTrue(options(captor.getAllValues().get(0)).containsKey("sequra"));
+		final Map<String, Object> retried = options(captor.getAllValues().get(1));
+		assertFalse(retried.containsKey("sequra"));
+		assertEquals(Map.of("capture_method", "manual"), retried.get("card"));
+		assertEquals(Map.of("capture_method", "manual"), retried.get("scalapay"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void otherUnknownParameterIsNotRetried()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card"));
+		final StripeGatewayException unknown = new StripeGatewayException("Stripe call failed", "parameter_unknown", false,
+				false, new com.stripe.exception.InvalidRequestException("Received unknown parameter: foo", "foo", "req_1",
+						"parameter_unknown", 400, null));
+		when(gateway.createPaymentIntent(any(), anyString())).thenThrow(unknown);
+
+		final StripeGatewayException thrown = org.junit.Assert.assertThrows(StripeGatewayException.class,
+				() -> service.prepareForCart(cart));
+
+		assertSame(unknown, thrown);
+		verify(gateway, times(1)).createPaymentIntent(any(), anyString());
+	}
+
+	@Test
 	public void createRetriesWithoutLineItemsWhenStripeRejectsThem()
 	{
 		when(lineItemsBuilder.build(cart, 1200L))
@@ -521,20 +568,21 @@ public class DefaultStripePaymentIntentServiceTest
 	@SuppressWarnings("unchecked")
 	public void manualCaptureForEveryConfiguredMethod()
 	{
-		final Set<String> twelve = Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay",
-				"klarna", "sequra", "scalapay", "billie", "mondu");
-		when(config.getManualCaptureMethods()).thenReturn(twelve);
+		final Set<String> eleven = Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay",
+				"klarna", "sequra", "scalapay", "billie");
+		when(config.getManualCaptureMethods()).thenReturn(eleven);
 		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
 
 		service.prepareForCart(cart);
 
 		final PaymentIntentCreateParams params = createdParams();
 		final Map<String, Object> options = options(params);
-		for (final String type : twelve)
+		for (final String type : eleven)
 		{
 			assertEquals(type, Map.of("capture_method", "manual"), options.get(type));
 		}
-		assertEquals(12, options.size());
+		assertEquals(11, options.size());
+		assertFalse(options.containsKey("mondu"));
 		assertFalse(options.containsKey("sepa_debit"));
 		assertFalse(options.containsKey("bancontact"));
 		final String form = com.stripe.net.FormEncoder.createQueryString(params.toMap());

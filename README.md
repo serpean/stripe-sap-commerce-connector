@@ -116,7 +116,7 @@ Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for examp
 | `stripe.publishable.key` | empty | Stripe publishable key (`pk_...`). The backend serves it to the storefront. |
 | `stripe.webhook.secret` | empty | Webhook signing secret (`whsec_...`) |
 | `stripe.capture.mode` | `manual` | `manual` or `automatic` |
-| `stripe.capture.manual.methods` | `card,paypal,klarna` | Payment methods that support manual capture, comma-separated. Other methods are captured at once. |
+| `stripe.capture.manual.methods` | `card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie` | Payment methods that support manual capture, comma-separated. Other methods are captured at once. |
 | `stripe.statement.descriptor` | empty | Statement descriptor |
 | `stripe.descriptor.suffix` | empty | Statement descriptor suffix |
 | `stripe.webhook.graceperiod.seconds` | `300` | Wait before the webhook places an order. It counts from the time of the Stripe event. |
@@ -164,6 +164,7 @@ Rules:
 | `automatic` | Stripe captures at once. The order process finds the payment captured. |
 
 - Only the methods in `stripe.capture.manual.methods` use manual capture. In manual mode the PaymentIntent is created with automatic capture, and only these methods get `capture_method=manual`. Methods without manual capture (for example Bancontact) are always captured at once.
+- If Stripe does not know the manual capture option of a method in the list (`parameter_unknown` on `payment_method_options[<method>]`), the PaymentIntent is created again without that option and a WARN names the method. Mondu is not in the default list for this reason.
 - **A card authorization expires after 7 days at Stripe.** Ship and capture before that, or the money is released.
 
 ## After purchase

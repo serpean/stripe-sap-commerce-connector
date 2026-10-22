@@ -135,7 +135,7 @@ El proyecto ha fallado, aunque todo lo demás funcione, si:
 
 ### 7.5 Reserva por método
 
-- La lista por defecto de `stripe.capture.manual.methods` pasa a incluir todos los métodos de la sección 3 que admiten reserva en una cuenta de España: `card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu`. Se quitan `affirm` y `afterpay_clearpay`.
+- La lista por defecto de `stripe.capture.manual.methods` pasa a incluir todos los métodos de la sección 3 que admiten reserva en una cuenta de España: `card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie`. Se quitan `affirm` y `afterpay_clearpay`. Mondu no está en la lista: Stripe responde `parameter_unknown` a `payment_method_options[mondu]` (comprobado en modo test el 2026-10-22).
 - `buildPaymentMethodOptions` pide la reserva para cada método de la lista que tenga opción `capture_method` en `stripe-java` 30.0.0. Si algún método no la tiene en esa versión, el constructor lo anota y ese método se cobra al momento.
 - **Fecha límite de captura** (*decisión del diseñador*). Cuando Stripe la da (`capture_before` en el cargo), el conector la guarda en `StripePaymentInfo`. Una captura que falla porque la reserva caducó da un error claro en el log y en la transacción, sin reintentos sin fin. Detectar reservas a punto de caducar sigue fuera del proyecto.
 

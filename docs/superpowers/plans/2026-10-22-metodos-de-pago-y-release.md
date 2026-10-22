@@ -19,7 +19,7 @@
 - Nunca se matan procesos que no haya arrancado la propia tarea. Antes de un `kill`, `ps -p <pid> -o command=`.
 - Propiedades nuevas (todas con override por sitio `.<baseSiteUid>` al final):
   - `stripe.payment.pending.timeout.<tipo>.seconds`; defaults en `stripecore/project.properties`: `stripe.payment.pending.timeout.sepa_debit.seconds=864000`, `stripe.payment.pending.timeout.multibanco.seconds=1036800`, `stripe.payment.pending.timeout.customer_balance.seconds=1209600`. Sin propiedad por tipo → `stripe.payment.pending.timeout.seconds` (86400).
-  - `stripe.capture.manual.methods=card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu`.
+  - `stripe.capture.manual.methods=card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie`.
   - `stripe.customer.create=true` (crear `Customer` de Stripe en cada PaymentIntent; *decisión del plan*: sin `Customer` Stripe no ofrece la transferencia).
   - `stripe.cashbalance.refund.delay.seconds=3600` (espera antes de devolver saldo sin pedido).
 - Grupos (spec, sección 3): métodos de pago diferido (grupo E) = `multibanco`, `customer_balance`. Tipos de `next_action` que significan "instrucciones emitidas": `multibanco_display_details`, `display_bank_transfer_instructions`.
@@ -54,7 +54,7 @@
   - `DefaultStripeConfigurationServiceTest.pendingTimeoutPerMethod`: con `stripe.payment.pending.timeout.sepa_debit.seconds=864000` → `getPendingPaymentTimeout("sepa_debit") == Duration.ofSeconds(864000)`.
   - `.pendingTimeoutPerMethodFallsBackToGlobal`: `getPendingPaymentTimeout("card") == Duration.ofSeconds(86400)`; `getPendingPaymentTimeout(null)` igual.
   - `.pendingTimeoutPerMethodSiteOverride`: `...sepa_debit.seconds.electronics-spa=60` con sitio `electronics-spa` → 60 s.
-  - `.defaultManualMethods`: sin propiedad → `{card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu}`.
+  - `.defaultManualMethods`: sin propiedad → `{card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie}`.
   - `.customerAndCashBalanceDefaults`: `isCustomerCreationEnabled()==true`, `getCashBalanceRefundDelay()==Duration.ofSeconds(3600)`.
   - `StripePaymentMethodGroupsTest.groups`: `isDeferred("multibanco")`, `isDeferred("customer_balance")`, `!isDeferred("sepa_debit")`, `!isDeferred(null)`; `isInstructionsAction("multibanco_display_details")`, `isInstructionsAction("display_bank_transfer_instructions")`, `!isInstructionsAction("redirect_to_url")`, `!isInstructionsAction("use_stripe_sdk")`.
 - [ ] **Step 2:** `ant unittests -Dtestclasses.extensions=stripecore -Dtestclasses.annotations=unittests -Dtestclasses.packages=com.stripe.core.config.*,com.stripe.core.payment.*`. Esperado: FAIL.

@@ -27,6 +27,7 @@ import com.stripe.param.PaymentIntentUpdateParams;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.model.ModelService;
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -276,8 +277,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	{
 		try
 		{
-			return stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, lineItems, customerId),
-					idempotencyKey);
+			return createWithOptionsFallback(cart, amount, currencyIso, lineItems, customerId, idempotencyKey);
 		}
 		catch (final StripeGatewayException e)
 		{
@@ -286,9 +286,57 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				throw e;
 			}
 			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is created without them", cart.getCode());
-			return stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, Map.of(), customerId),
-					idempotencyKey + "-nolines");
+			return createWithOptionsFallback(cart, amount, currencyIso, Map.of(), customerId, idempotencyKey + "-nolines");
 		}
+	}
+
+	/**
+	 * Creates the PaymentIntent. When Stripe does not know the manual capture option of one payment method (the account
+	 * or the API version has no such option), the PaymentIntent is created once more without that option: a method in
+	 * the manual capture list never blocks the payment. The second call has its own stable idempotency key.
+	 */
+	private PaymentIntent createWithOptionsFallback(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
+	{
+		try
+		{
+			return stripeGateway.createPaymentIntent(
+					buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of()), idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			final String method = unknownPaymentMethodOption(e);
+			if (method == null)
+			{
+				throw e;
+			}
+			LOG.warn("Stripe does not know the manual capture option of payment method [{}] (property "
+					+ "stripe.capture.manual.methods): the payment intent of cart {} is created without it", method,
+					cart.getCode());
+			return stripeGateway.createPaymentIntent(
+					buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of(method)),
+					idempotencyKey + "-without-" + method);
+		}
+	}
+
+	/**
+	 * The payment method whose {@code payment_method_options} Stripe does not know ({@code parameter_unknown} on
+	 * {@code payment_method_options[<method>]...}), or null for any other error.
+	 */
+	protected String unknownPaymentMethodOption(final StripeGatewayException e)
+	{
+		if (!"parameter_unknown".equals(e.getStripeCode()) || !(e.getCause() instanceof InvalidRequestException))
+		{
+			return null;
+		}
+		final String param = ((InvalidRequestException) e.getCause()).getParam();
+		final String prefix = "payment_method_options[";
+		if (!StringUtils.startsWith(param, prefix))
+		{
+			return null;
+		}
+		final String method = StringUtils.substringBefore(param.substring(prefix.length()), "]");
+		return StringUtils.isBlank(method) ? null : method;
 	}
 
 	/**
@@ -447,6 +495,16 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
 			final Map<String, Object> lineItems, final String customerId)
 	{
+		return buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of());
+	}
+
+	/**
+	 * @param skippedManualMethods
+	 *           payment methods of the manual capture list whose option is not sent (Stripe does not know it)
+	 */
+	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final Set<String> skippedManualMethods)
+	{
 		final boolean manual = stripeConfigurationService.getCaptureMode() == StripeCaptureMode.MANUAL;
 		final PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
 				.setAmount(amount)
@@ -465,7 +523,9 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		}
 		if (manual)
 		{
-			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
+			final Set<String> manualMethods = new LinkedHashSet<>(stripeConfigurationService.getManualCaptureMethods());
+			manualMethods.removeAll(skippedManualMethods);
+			builder.setPaymentMethodOptions(buildPaymentMethodOptions(manualMethods));
 		}
 		final String suffix = stripeConfigurationService.getStatementDescriptorSuffix();
 		if (StringUtils.isNotBlank(suffix))
@@ -476,9 +536,10 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	}
 
 	/**
-	 * Asks for manual capture for each configured method. Methods with an options class in stripe-java use it; sequra,
-	 * scalapay and mondu have none, so their options go in as a nested extra parameter, which stripe-java encodes as
-	 * payment_method_options[type][capture_method]. Any other type is ignored with a WARN.
+	 * Asks for manual capture for each configured method. Methods with an options class in stripe-java use it; sequra
+	 * and scalapay have none, so their options go in as a nested extra parameter, which stripe-java encodes as
+	 * payment_method_options[type][capture_method]. Any other type is ignored with a WARN. Mondu is not supported:
+	 * Stripe answers parameter_unknown for payment_method_options[mondu].
 	 */
 	protected PaymentIntentCreateParams.PaymentMethodOptions buildPaymentMethodOptions(final Set<String> manualMethods)
 	{
@@ -506,7 +567,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
 				case "billie" -> builder.setBillie(PaymentIntentCreateParams.PaymentMethodOptions.Billie.builder()
 						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Billie.CaptureMethod.MANUAL).build());
-				case "sequra", "scalapay", "mondu" -> builder.putExtraParam(method, Map.of("capture_method", "manual"));
+				case "sequra", "scalapay" -> builder.putExtraParam(method, Map.of("capture_method", "manual"));
 				default -> LOG.warn("Payment method [{}] in the manual capture list is unknown: ignored", method);
 			}
 		}

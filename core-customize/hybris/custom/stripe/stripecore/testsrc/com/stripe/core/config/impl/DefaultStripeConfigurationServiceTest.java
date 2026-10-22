@@ -62,7 +62,7 @@ public class DefaultStripeConfigurationServiceTest
 		assertEquals(StripeCaptureMode.MANUAL, service.getCaptureMode());
 		final Set<String> methods = service.getManualCaptureMethods();
 		assertEquals(Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay", "klarna", "sequra",
-				"scalapay", "billie", "mondu"), methods);
+				"scalapay", "billie"), methods);
 		assertEquals(Duration.ofSeconds(300), service.getWebhookGracePeriod());
 		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout());
 		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay());
@@ -96,7 +96,7 @@ public class DefaultStripeConfigurationServiceTest
 	public void defaultManualMethods()
 	{
 		assertEquals(Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay", "klarna", "sequra",
-				"scalapay", "billie", "mondu"), service.getManualCaptureMethods());
+				"scalapay", "billie"), service.getManualCaptureMethods());
 	}
 
 	@Test
