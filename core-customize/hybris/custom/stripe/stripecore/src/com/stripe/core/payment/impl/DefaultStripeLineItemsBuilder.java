@@ -58,6 +58,10 @@ public class DefaultStripeLineItemsBuilder implements StripeLineItemsBuilder
 				return skip(order, "an entry has no price or quantity");
 			}
 			final long unitCost = stripeAmountConverter.toMinorUnits(BigDecimal.valueOf(entry.getBasePrice()), currencyIso);
+			if (unitCost < 0)
+			{
+				return skip(order, "an entry has a negative price");
+			}
 			final Map<String, Object> line = new LinkedHashMap<>();
 			line.put("product_name", productName(entry));
 			line.put("quantity", entry.getQuantity());
@@ -72,7 +76,7 @@ public class DefaultStripeLineItemsBuilder implements StripeLineItemsBuilder
 		final long tax = net && order.getTotalTax() != null
 				? stripeAmountConverter.toMinorUnits(BigDecimal.valueOf(order.getTotalTax()), currencyIso) : 0L;
 		final long discount = gross + shipping + tax - amountMinor;
-		if (shipping < 0 || discount < 0 || discount > gross)
+		if (shipping < 0 || tax < 0 || discount < 0 || discount > gross)
 		{
 			return skip(order, "lines " + gross + ", shipping " + shipping + ", tax " + tax + " do not fit amount " + amountMinor);
 		}

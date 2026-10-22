@@ -236,6 +236,18 @@ public class DefaultStripeLineItemsBuilderTest
 	}
 
 	@Test
+	public void negativeUnitCostReturnsEmpty()
+	{
+		entries.set(0, entry("Mug", -10.0, 2, 20.0));
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeLineItemsBuilder.class))
+		{
+			assertTrue(builder.build(cart, 2999L).isEmpty());
+			assertTrue(log.hasWarn("c1"));
+		}
+	}
+
+	@Test
 	public void emptyCartReturnsEmpty()
 	{
 		entries.clear();

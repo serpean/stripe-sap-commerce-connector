@@ -7,6 +7,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -27,8 +28,8 @@ import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
-import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripeLineItemsBuilder;
+import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -243,7 +244,7 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
-	public void updateWithoutLineItemsKeepsTheAmount()
+	public void updateWithEmptyLineItemsClearsAmountDetails()
 	{
 		cartHasIntent("pi_1");
 		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
@@ -254,8 +255,72 @@ public class DefaultStripePaymentIntentServiceTest
 
 		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
 		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
-		assertFalse(captor.getValue().toMap().containsKey("amount_details"));
+		assertEquals("", captor.getValue().toMap().get("amount_details"));
 		assertEquals(1200L, captor.getValue().toMap().get("amount"));
+	}
+
+	private StripeGatewayException lineItemsRejection()
+	{
+		return new StripeGatewayException("Stripe call failed", "amount_details_amount_mismatch", false, false, null);
+	}
+
+	@Test
+	public void createRetriesWithoutLineItemsWhenStripeRejectsThem()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1"))).thenThrow(lineItemsRejection());
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1-nolines")))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertTrue(captor.getAllValues().get(0).toMap().containsKey("amount_details"));
+		assertFalse(captor.getAllValues().get(1).toMap().containsKey("amount_details"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void updateRetriesWithoutLineItemsWhenStripeRejectsThem()
+	{
+		cartHasIntent("pi_1");
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(eq("pi_1"), any(), argThat(key -> !key.endsWith("-nolines"))))
+				.thenThrow(lineItemsRejection());
+		when(gateway.updatePaymentIntent(eq("pi_1"), any(), argThat(key -> key.endsWith("-nolines"))))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway, times(2)).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), captor.getAllValues().get(0).toMap().get("amount_details"));
+		assertEquals("", captor.getAllValues().get(1).toMap().get("amount_details"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void otherStripeErrorsOnCreateAreNotRetried()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("Stripe call failed", "api_error", true, false, null));
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("expected StripeGatewayException");
+		}
+		catch (final StripeGatewayException expected)
+		{
+			verify(gateway, times(1)).createPaymentIntent(any(), anyString());
+		}
 	}
 
 	@Test

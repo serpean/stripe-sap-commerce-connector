@@ -6,6 +6,7 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
@@ -16,11 +17,13 @@ import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.model.Charge;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.model.ModelService;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
@@ -174,8 +177,22 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final int created = stripePaymentIntentRecordDao.countByCartCode(cart.getCode());
 		final String idempotencyKey = "cart-" + cart.getCode() + "-" + cart.getGuid() + "-pi-" + (created + 1);
 
-		final PaymentIntent intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso),
-				idempotencyKey);
+		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		PaymentIntent intent;
+		try
+		{
+			intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, lineItems), idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is created without them", cart.getCode());
+			intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, Map.of()),
+					idempotencyKey + "-nolines");
+		}
 
 		saveRecord(intent, cart, amount, currencyIso, StripePaymentIntentState.CREATED);
 
@@ -241,9 +258,23 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final long changed = cart.getModifiedtime() == null ? 0L : cart.getModifiedtime().getTime();
 		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
 				+ changed;
-		final PaymentIntentUpdateParams params = PaymentIntentUpdateParams.builder().setAmount(amount)
-				.setCurrency(currencyIso.toLowerCase()).putAllExtraParam(stripeLineItemsBuilder.build(cart, amount)).build();
-		final PaymentIntent updated = stripeGateway.updatePaymentIntent(existing.getId(), params, idempotencyKey);
+		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		PaymentIntent updated;
+		try
+		{
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, lineItems),
+					idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, Map.of()),
+					idempotencyKey + "-nolines");
+		}
 
 		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
 			record.setAmount(amount);
@@ -253,7 +284,46 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return updated;
 	}
 
+	/**
+	 * Update parameters. Without line items, amount_details is cleared: Stripe keeps the old line items otherwise and
+	 * refuses a new amount that does not match them.
+	 */
+	protected PaymentIntentUpdateParams buildUpdateParams(final long amount, final String currencyIso,
+			final Map<String, Object> lineItems)
+	{
+		final PaymentIntentUpdateParams.Builder builder = PaymentIntentUpdateParams.builder().setAmount(amount)
+				.setCurrency(currencyIso.toLowerCase());
+		if (lineItems.isEmpty())
+		{
+			builder.putExtraParam("amount_details", "");
+		}
+		else
+		{
+			builder.putAllExtraParam(lineItems);
+		}
+		return builder.build();
+	}
+
+	/**
+	 * True when Stripe refused the request because of the amount_details parameters.
+	 */
+	protected boolean isLineItemsRejection(final StripeGatewayException e)
+	{
+		if (e.getStripeCode() != null && e.getStripeCode().startsWith("amount_details"))
+		{
+			return true;
+		}
+		return e.getCause() instanceof InvalidRequestException
+				&& StringUtils.startsWith(((InvalidRequestException) e.getCause()).getParam(), "amount_details");
+	}
+
 	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso)
+	{
+		return buildCreateParams(cart, amount, currencyIso, stripeLineItemsBuilder.build(cart, amount));
+	}
+
+	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems)
 	{
 		final boolean manual = stripeConfigurationService.getCaptureMode() == StripeCaptureMode.MANUAL;
 		final PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
@@ -266,7 +336,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				.putMetadata("baseSiteUid", siteUid(cart))
 				.putMetadata("userUid", userUid(cart))
 				.putMetadata("currencyIso", currencyIso)
-				.putAllExtraParam(stripeLineItemsBuilder.build(cart, amount));
+				.putAllExtraParam(lineItems);
 		if (manual)
 		{
 			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
