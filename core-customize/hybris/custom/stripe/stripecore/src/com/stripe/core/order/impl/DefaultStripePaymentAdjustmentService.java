@@ -101,8 +101,9 @@ public class DefaultStripePaymentAdjustmentService implements StripePaymentAdjus
 			case AUTHORIZED:
 				return target != 0L || voidAuthorization(order, authorized.get().authorization());
 			case PROCESSING:
-				LOG.info("Payment intent {} of order {} is processing: the payment is adjusted when it is final",
-						paymentIntentId, order.getCode());
+			case AWAITING_FUNDS:
+				LOG.info("Payment intent {} of order {} is pending ({}): the payment is adjusted when it is final",
+						paymentIntentId, order.getCode(), status);
 				return true;
 			default:
 				LOG.info("Payment intent {} of order {} has status {}: no Stripe payment to adjust", paymentIntentId,

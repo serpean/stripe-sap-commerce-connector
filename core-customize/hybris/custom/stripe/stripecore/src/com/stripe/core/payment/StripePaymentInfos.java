@@ -14,6 +14,19 @@ public final class StripePaymentInfos
 	}
 
 	/**
+	 * @return the payment method type (for example {@code multibanco}) of the Stripe payment info of the order, or null when
+	 *         the order is not paid with Stripe or the type is not known
+	 */
+	public static String paymentMethodType(final AbstractOrderModel order)
+	{
+		if (order != null && order.getPaymentInfo() instanceof StripePaymentInfoModel paymentInfo)
+		{
+			return StringUtils.trimToNull(paymentInfo.getPaymentMethodType());
+		}
+		return null;
+	}
+
+	/**
 	 * @return the PaymentIntent id of the Stripe payment info of the order, or null when the order is not paid with Stripe
 	 */
 	public static String paymentIntentId(final AbstractOrderModel order)

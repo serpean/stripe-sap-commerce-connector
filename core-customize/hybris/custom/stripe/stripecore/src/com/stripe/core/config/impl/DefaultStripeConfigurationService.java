@@ -30,6 +30,7 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String CUSTOMER_CREATION = "stripe.customer.create";
 	private static final String CASH_BALANCE_REFUND_DELAY = "stripe.cashbalance.refund.delay.seconds";
 	private static final String PENDING_RETRY = "stripe.payment.pending.retry.seconds";
+	private static final String PENDING_RETRY_PREFIX = "stripe.payment.pending.retry.";
 	private static final String STATEMENT_DESCRIPTOR = "stripe.statement.descriptor";
 	private static final String DESCRIPTOR_SUFFIX = "stripe.descriptor.suffix";
 
@@ -42,6 +43,9 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 			"customer_balance", 1209600L);
 	private static final long DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS = 3600L;
 	private static final long DEFAULT_PENDING_RETRY_SECONDS = 300L;
+	private static final Map<String, Long> DEFAULT_METHOD_RETRY_SECONDS = Map.of(
+			"multibanco", 3600L,
+			"customer_balance", 3600L);
 
 	private ConfigurationService configurationService;
 	private BaseSiteService baseSiteService;
@@ -126,6 +130,19 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	public Duration getPendingPaymentRetryDelay()
 	{
 		return readSeconds(PENDING_RETRY, DEFAULT_PENDING_RETRY_SECONDS);
+	}
+
+	@Override
+	public Duration getPendingPaymentRetryDelay(final String paymentMethodType)
+	{
+		final Duration global = getPendingPaymentRetryDelay();
+		if (StringUtils.isBlank(paymentMethodType))
+		{
+			return global;
+		}
+		final String type = paymentMethodType.trim();
+		return readSeconds(PENDING_RETRY_PREFIX + type + PENDING_TIMEOUT_SUFFIX,
+				DEFAULT_METHOD_RETRY_SECONDS.getOrDefault(type, global.getSeconds()));
 	}
 
 	@Override

@@ -116,6 +116,18 @@ public class DefaultStripeConfigurationServiceTest
 	}
 
 	@Test
+	public void pendingRetryPerMethod()
+	{
+		assertEquals(Duration.ofSeconds(3600), service.getPendingPaymentRetryDelay("multibanco"));
+		assertEquals(Duration.ofSeconds(3600), service.getPendingPaymentRetryDelay("customer_balance"));
+		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay("sepa_debit"));
+		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay(null));
+		configuration.setProperty("stripe.payment.pending.retry.multibanco.seconds", "7200");
+		configuration.setProperty("stripe.payment.pending.retry.multibanco.seconds.electronics-spa", "60");
+		assertEquals(Duration.ofSeconds(60), service.getPendingPaymentRetryDelay("multibanco"));
+	}
+
+	@Test
 	public void customerCreationCanBeDisabled()
 	{
 		configuration.setProperty("stripe.customer.create", "false");

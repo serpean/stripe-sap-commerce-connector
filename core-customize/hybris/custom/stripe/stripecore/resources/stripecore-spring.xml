@@ -142,6 +142,17 @@
         <property name="stripeSiteContext" ref="stripeSiteContext"/>
     </bean>
 
+    <!-- Partial cancel is denied while the payment is pending. Merged into the cancel service SAP uses (orderCancelService). -->
+    <alias name="defaultStripePendingPaymentCancelDenialStrategy" alias="stripePendingPaymentCancelDenialStrategy"/>
+    <bean id="defaultStripePendingPaymentCancelDenialStrategy"
+          class="com.stripe.core.order.StripePendingPaymentCancelDenialStrategy">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+    </bean>
+    <bean id="stripeCancelDenialStrategiesMergeDirective" depends-on="orderCancelService" parent="listMergeDirective">
+        <property name="add" ref="stripePendingPaymentCancelDenialStrategy"/>
+        <property name="listPropertyDescriptor" value="cancelDenialStrategies"/>
+    </bean>
+
     <alias name="defaultStripeOrderCancellationService" alias="stripeOrderCancellationService"/>
     <bean id="defaultStripeOrderCancellationService"
           class="com.stripe.core.order.impl.DefaultStripeOrderCancellationService">

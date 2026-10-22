@@ -122,6 +122,7 @@ Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for examp
 | `stripe.webhook.graceperiod.seconds` | `300` | Wait before the webhook places an order. It counts from the time of the Stripe event. |
 | `stripe.payment.pending.timeout.seconds` | `86400` | A pending payment older than this cancels the order |
 | `stripe.payment.pending.retry.seconds` | `300` | Delay between checks of a pending payment |
+| `stripe.payment.pending.retry.<type>.seconds` | `3600` for `multibanco` and `customer_balance` | Delay between checks, per payment method type (falls back to the global value) |
 
 ## Installing on SAP Commerce Cloud
 
