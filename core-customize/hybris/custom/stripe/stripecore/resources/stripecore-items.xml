@@ -14,6 +14,7 @@
             <value code="FAILED"/>
             <value code="CANCELED"/>
             <value code="REFUNDED"/>
+            <value code="AWAITING_FUNDS"/>
         </enumtype>
         <enumtype code="StripeWebhookEventState" dynamic="true">
             <value code="RECEIVED"/>
@@ -55,6 +56,31 @@
                         <modifiers optional="true"/>
                     </attribute>
                     <attribute qualifier="cardExpYear" type="java.lang.Integer">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="instructionsUrl" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="paymentReference" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="instructionsExpireAt" type="java.util.Date">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="amountRemaining" type="java.lang.Long">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                        <description>Amount in minor units.</description>
+                    </attribute>
+                    <attribute qualifier="sepaMandateId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="true"/>
+                    </attribute>
+                    <attribute qualifier="captureBefore" type="java.util.Date">
                         <persistence type="property"/>
                         <modifiers optional="true"/>
                     </attribute>
@@ -172,6 +198,36 @@
                 <indexes>
                     <index name="eventIdx" unique="true">
                         <key attribute="eventId"/>
+                    </index>
+                </indexes>
+            </itemtype>
+
+            <itemtype code="StripeCustomer" extends="GenericItem" autocreate="true" generate="true">
+                <description>
+                    Stripe Customer of a SAP customer, one per Stripe account key.
+                </description>
+                <deployment table="stripe_customer" typecode="29103"/>
+                <attributes>
+                    <attribute qualifier="customer" type="Customer">
+                        <persistence type="property"/>
+                        <modifiers optional="false" initial="true"/>
+                    </attribute>
+                    <attribute qualifier="accountKey" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="false" initial="true"/>
+                    </attribute>
+                    <attribute qualifier="stripeCustomerId" type="java.lang.String">
+                        <persistence type="property"/>
+                        <modifiers optional="false"/>
+                    </attribute>
+                </attributes>
+                <indexes>
+                    <index name="customerAccountIdx" unique="true">
+                        <key attribute="customer"/>
+                        <key attribute="accountKey"/>
+                    </index>
+                    <index name="stripeCustomerIdx">
+                        <key attribute="stripeCustomerId"/>
                     </index>
                 </indexes>
             </itemtype>

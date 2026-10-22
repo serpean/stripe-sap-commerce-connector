@@ -53,6 +53,11 @@
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
+    <alias name="defaultStripeCustomerDao" alias="stripeCustomerDao"/>
+    <bean id="defaultStripeCustomerDao" class="com.stripe.core.customer.dao.impl.DefaultStripeCustomerDao">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
     <alias name="stripeCommercePaymentAuthorizationStrategy" alias="commercePaymentAuthorizationStrategy"/>
     <bean id="stripeCommercePaymentAuthorizationStrategy"
           class="com.stripe.core.order.StripeCommercePaymentAuthorizationStrategy"
