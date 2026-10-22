@@ -107,6 +107,32 @@ public class DefaultStripeConfigurationServiceTest
 	}
 
 	@Test
+	public void deferredMethodDefaults()
+	{
+		assertEquals(Duration.ofSeconds(1036800), service.getPendingPaymentTimeout("multibanco"));
+		assertEquals(Duration.ofSeconds(1209600), service.getPendingPaymentTimeout("customer_balance"));
+		assertEquals(Duration.ofSeconds(864000), service.getPendingPaymentTimeout("sepa_debit"));
+		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout("card"));
+	}
+
+	@Test
+	public void customerCreationCanBeDisabled()
+	{
+		configuration.setProperty("stripe.customer.create", "false");
+
+		assertEquals(false, service.isCustomerCreationEnabled());
+	}
+
+	@Test
+	public void customerCreationSiteOverride()
+	{
+		configuration.setProperty("stripe.customer.create", "true");
+		configuration.setProperty("stripe.customer.create.electronics-spa", "false");
+
+		assertEquals(false, service.isCustomerCreationEnabled());
+	}
+
+	@Test
 	public void readsOnEveryCall()
 	{
 		configuration.setProperty("stripe.secret.key", "sk_test_one");

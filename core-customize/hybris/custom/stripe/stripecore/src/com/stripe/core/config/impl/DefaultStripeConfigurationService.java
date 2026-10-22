@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -26,7 +27,7 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String PENDING_TIMEOUT = "stripe.payment.pending.timeout.seconds";
 	private static final String PENDING_TIMEOUT_PREFIX = "stripe.payment.pending.timeout.";
 	private static final String PENDING_TIMEOUT_SUFFIX = ".seconds";
-	private static final String CUSTOMER_CREATION = "stripe.customer.creation.enabled";
+	private static final String CUSTOMER_CREATION = "stripe.customer.create";
 	private static final String CASH_BALANCE_REFUND_DELAY = "stripe.cashbalance.refund.delay.seconds";
 	private static final String PENDING_RETRY = "stripe.payment.pending.retry.seconds";
 	private static final String STATEMENT_DESCRIPTOR = "stripe.statement.descriptor";
@@ -35,6 +36,10 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String DEFAULT_MANUAL_METHODS = "card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu";
 	private static final long DEFAULT_GRACE_PERIOD_SECONDS = 300L;
 	private static final long DEFAULT_PENDING_TIMEOUT_SECONDS = 86400L;
+	private static final Map<String, Long> DEFAULT_METHOD_TIMEOUT_SECONDS = Map.of(
+			"sepa_debit", 864000L,
+			"multibanco", 1036800L,
+			"customer_balance", 1209600L);
 	private static final long DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS = 3600L;
 	private static final long DEFAULT_PENDING_RETRY_SECONDS = 300L;
 
@@ -100,7 +105,9 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 		{
 			return global;
 		}
-		return readSeconds(PENDING_TIMEOUT_PREFIX + paymentMethodType.trim() + PENDING_TIMEOUT_SUFFIX, global.getSeconds());
+		final String type = paymentMethodType.trim();
+		return readSeconds(PENDING_TIMEOUT_PREFIX + type + PENDING_TIMEOUT_SUFFIX,
+				DEFAULT_METHOD_TIMEOUT_SECONDS.getOrDefault(type, global.getSeconds()));
 	}
 
 	@Override
