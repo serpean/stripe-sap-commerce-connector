@@ -29,7 +29,8 @@ import org.slf4j.LoggerFactory;
  * Stripe checks that the line items of a PaymentIntent add up to the amount to capture, and line items cannot be
  * removed at capture. A capture of less than the PaymentIntent amount therefore sends new {@code amount_details}: the
  * lines of the order when the order total is the amount to capture, else one line "Order &lt;code&gt;" for the whole
- * amount. The line items never change the amount captured.
+ * amount. Discount, shipping and tax that the new details do not set are cleared, because Stripe keeps the old values
+ * otherwise. The line items never change the amount captured.
  */
 public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 {
@@ -105,8 +106,14 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 	 */
 	protected Map<String, Object> amountDetailsForCapture(final PaymentIntent paymentIntent, final long amount)
 	{
-		if (paymentIntent.getAmount() == null || amount >= paymentIntent.getAmount() || !hasLineItems(paymentIntent))
+		if (paymentIntent.getAmount() == null || amount >= paymentIntent.getAmount())
 		{
+			return Map.of();
+		}
+		if (!hasLineItems(paymentIntent))
+		{
+			LOG.info("Capture of [{}] of PaymentIntent [{}] sends no line items: the PaymentIntent has none", amount,
+					paymentIntent.getId());
 			return Map.of();
 		}
 		final Optional<AbstractOrderModel> order = orderOf(paymentIntent.getId());
@@ -117,7 +124,9 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 			{
 				@SuppressWarnings("unchecked")
 				final Map<String, Object> details = (Map<String, Object>) built;
-				return details;
+				LOG.info("Capture of [{}] of PaymentIntent [{}] sends the lines of order [{}]", amount, paymentIntent.getId(),
+						order.get().getCode());
+				return withUnsetTotals(details);
 			}
 		}
 		final String orderCode = order.map(AbstractOrderModel::getCode).orElse(paymentIntent.getId());
@@ -127,7 +136,21 @@ public abstract class AbstractStripeCaptureCommand extends AbstractStripeCommand
 		line.put("product_name", "Order " + orderCode);
 		line.put("quantity", 1L);
 		line.put("unit_cost", amount);
-		return Map.of("line_items", List.of(line));
+		return withUnsetTotals(Map.of("line_items", List.of(line)));
+	}
+
+	/**
+	 * Stripe keeps the discount, shipping and tax of the PaymentIntent when the capture does not send them, and adds them
+	 * to the new lines. Each one that the capture does not set is cleared with an empty value (a discount of 0 is
+	 * refused).
+	 */
+	private static Map<String, Object> withUnsetTotals(final Map<String, Object> amountDetails)
+	{
+		final Map<String, Object> details = new LinkedHashMap<>(amountDetails);
+		details.putIfAbsent("discount_amount", "");
+		details.putIfAbsent("shipping", "");
+		details.putIfAbsent("tax", "");
+		return details;
 	}
 
 	/**

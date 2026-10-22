@@ -9,6 +9,7 @@ import com.stripe.core.util.StripeDigests;
 import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.RateLimitException;
 import com.stripe.exception.SignatureVerificationException;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.CashBalance;
@@ -248,8 +249,9 @@ public class DefaultStripeGateway implements StripeGateway
 		}
 		catch (final StripeException e)
 		{
-			LOG.warn("Stripe call {} failed: code={}, status={}, requestId={}", operation, e.getCode(), e.getStatusCode(),
-					e.getRequestId());
+			final String param = e instanceof InvalidRequestException ? ((InvalidRequestException) e).getParam() : null;
+			LOG.warn("Stripe call {} failed: code={}, param={}, status={}, requestId={}", operation, e.getCode(), param,
+					e.getStatusCode(), e.getRequestId());
 			throw new StripeGatewayException("Stripe call " + operation + " failed", e.getCode(), isRetryable(e), false, e);
 		}
 	}

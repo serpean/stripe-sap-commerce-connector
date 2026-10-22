@@ -75,7 +75,10 @@ public class StripePartialCaptureCommandTest
 		final CaptureResult result = command.perform(request(new BigDecimal("10.00")));
 
 		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
-		verify(gateway).capturePaymentIntent(PI_ID, 1000L, orderLines, KEY);
+		final Map<String, Object> sent = new java.util.LinkedHashMap<>(orderLines);
+		sent.put("discount_amount", "");
+		sent.put("tax", "");
+		verify(gateway).capturePaymentIntent(PI_ID, 1000L, sent, KEY);
 		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyString());
 	}
 
@@ -92,7 +95,8 @@ public class StripePartialCaptureCommandTest
 
 		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
 		verify(gateway).capturePaymentIntent(PI_ID, 1000L,
-				Map.of("line_items", List.of(Map.of("product_name", "Order 00004182", "quantity", 1L, "unit_cost", 1000L))), KEY);
+				Map.of("line_items", List.of(Map.of("product_name", "Order 00004182", "quantity", 1L, "unit_cost", 1000L)),
+						"discount_amount", "", "shipping", "", "tax", ""), KEY);
 		verify(lineItemsBuilder, never()).build(any(), anyLong());
 	}
 
