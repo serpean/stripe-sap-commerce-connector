@@ -5,12 +5,17 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.facades.data.StripePaymentInfoData;
 import de.hybris.bootstrap.annotations.UnitTest;
+import de.hybris.platform.commercefacades.product.PriceDataFactory;
+import de.hybris.platform.commercefacades.product.data.PriceData;
+import de.hybris.platform.commercefacades.product.data.PriceDataType;
+import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.commercefacades.order.data.CartData;
 import de.hybris.platform.commercefacades.order.data.OrderData;
 import de.hybris.platform.core.model.order.CartModel;
@@ -20,6 +25,8 @@ import de.hybris.platform.payment.dto.TransactionStatus;
 import de.hybris.platform.payment.enums.PaymentTransactionType;
 import de.hybris.platform.payment.model.PaymentTransactionEntryModel;
 import de.hybris.platform.payment.model.PaymentTransactionModel;
+import java.math.BigDecimal;
+import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 import org.junit.Before;
@@ -35,6 +42,8 @@ public class StripeOrderPaymentPopulatorTest
 	private StripePaymentInfoModel paymentInfo;
 	private StripePaymentIntentRecordModel record;
 	private OrderModel order;
+	private PriceDataFactory priceDataFactory;
+	private CurrencyModel currency;
 
 	@Before
 	public void setUp()
@@ -42,6 +51,13 @@ public class StripeOrderPaymentPopulatorTest
 		recordDao = mock(StripePaymentIntentRecordDao.class);
 		populator = new StripeOrderPaymentPopulator();
 		populator.setStripePaymentIntentRecordDao(recordDao);
+		priceDataFactory = mock(PriceDataFactory.class);
+		populator.setPriceDataFactory(priceDataFactory);
+		final StripeAmountConverter amountConverter = mock(StripeAmountConverter.class);
+		when(amountConverter.fromMinorUnits(5100L, "EUR")).thenReturn(new BigDecimal("51.00"));
+		populator.setStripeAmountConverter(amountConverter);
+		currency = new CurrencyModel();
+		currency.setIsocode("EUR");
 
 		paymentInfo = new StripePaymentInfoModel();
 		paymentInfo.setStripePaymentIntentId(PI_ID);
@@ -52,6 +68,48 @@ public class StripeOrderPaymentPopulatorTest
 		order = new OrderModel();
 		order.setPaymentInfo(paymentInfo);
 		order.setPaymentTransactions(List.of());
+		order.setCurrency(currency);
+	}
+
+	@Test
+	public void copiesInstructionsAndMarksPending()
+	{
+		final Date expiry = new Date(1793275200000L);
+		paymentInfo.setPaymentMethodType("customer_balance");
+		paymentInfo.setInstructionsUrl("https://payments.stripe.com/bank_transfers/instructions/test_1");
+		paymentInfo.setPaymentReference("QHJ7RZ2MXN4P");
+		paymentInfo.setInstructionsExpireAt(expiry);
+		paymentInfo.setAmountRemaining(5100L);
+		record.setState(StripePaymentIntentState.AWAITING_FUNDS);
+		final PriceData price = new PriceData();
+		price.setFormattedValue("€51.00");
+		when(priceDataFactory.create(PriceDataType.BUY, new BigDecimal("51.00"), currency)).thenReturn(price);
+
+		final OrderData data = new OrderData();
+		populator.populate(order, data);
+
+		final StripePaymentInfoData stripe = data.getStripePaymentInfo();
+		assertEquals("PENDING", stripe.getPaymentStatus());
+		assertEquals("https://payments.stripe.com/bank_transfers/instructions/test_1", stripe.getInstructionsUrl());
+		assertEquals("QHJ7RZ2MXN4P", stripe.getPaymentReference());
+		assertEquals(expiry, stripe.getInstructionsExpireAt());
+		assertEquals("€51.00", stripe.getAmountRemaining());
+	}
+
+	@Test
+	public void amountRemainingIsNotShownOncePaid()
+	{
+		paymentInfo.setPaymentReference("QHJ7RZ2MXN4P");
+		paymentInfo.setAmountRemaining(5100L);
+		order.setPaymentTransactions(List.of(transaction(PaymentTransactionType.AUTHORIZATION, TransactionStatus.ACCEPTED)));
+		record.setState(StripePaymentIntentState.CAPTURED);
+
+		final OrderData data = new OrderData();
+		populator.populate(order, data);
+
+		assertEquals("ACCEPTED", data.getStripePaymentInfo().getPaymentStatus());
+		assertEquals("QHJ7RZ2MXN4P", data.getStripePaymentInfo().getPaymentReference());
+		assertNull(data.getStripePaymentInfo().getAmountRemaining());
 	}
 
 	@Test

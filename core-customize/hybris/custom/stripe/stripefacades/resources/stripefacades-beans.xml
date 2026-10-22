@@ -14,6 +14,18 @@
 		<property name="paymentStatus" type="String">
 			<description>ACCEPTED, PENDING or FAILED. Empty while the payment has no result.</description>
 		</property>
+		<property name="instructionsUrl" type="String">
+			<description>Stripe page with the payment instructions of a voucher or a bank transfer.</description>
+		</property>
+		<property name="paymentReference" type="String">
+			<description>Reference that the customer gives with a voucher or bank transfer payment.</description>
+		</property>
+		<property name="instructionsExpireAt" type="java.util.Date">
+			<description>End of the period in which the customer can pay the voucher.</description>
+		</property>
+		<property name="amountRemaining" type="String">
+			<description>Amount still to pay by bank transfer, formatted in the currency of the order. Only while the payment is PENDING.</description>
+		</property>
 	</bean>
 
 	<bean class="de.hybris.platform.commercefacades.order.data.AbstractOrderData">

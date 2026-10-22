@@ -19,12 +19,14 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.impl.DefaultStripePaymentDetailsCopier;
 import com.stripe.core.site.StripeSiteContext;
 import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.core.webhook.StripeWebhookException;
@@ -51,6 +53,8 @@ public class DefaultStripePaymentIntentEventHandlerTest
 	private static final String PI_ID = "pi_456";
 	private static final String SUCCEEDED = "payment_intent.succeeded";
 	private static final String FAILED = "payment_intent.payment_failed";
+	private static final String REQUIRES_ACTION = "payment_intent.requires_action";
+	private static final String PARTIALLY_FUNDED = "payment_intent.partially_funded";
 	private static final PK RECORD_PK = PK.fromLong(42L);
 	private static final Instant NOW = Instant.parse("2026-10-20T10:00:00Z");
 
@@ -97,6 +101,9 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		handler.setTimeService(timeService);
 		siteContext = StripeSiteContextMocks.direct();
 		handler.setStripeSiteContext(siteContext);
+		final DefaultStripePaymentDetailsCopier detailsCopier = new DefaultStripePaymentDetailsCopier();
+		detailsCopier.setModelService(modelService);
+		handler.setStripePaymentDetailsCopier(detailsCopier);
 
 		eventObject = new PaymentIntent();
 		eventObject.setId(PI_ID);
@@ -348,6 +355,103 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(SUCCEEDED, eventObject, eventCreated));
 
 		verifyNoInteractions(paymentIntentService);
+	}
+
+	@Test
+	public void requiresActionWithVoucherPlacesOrderAfterGracePeriod()
+	{
+		withInstructions(eventObject, "multibanco_display_details");
+		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
+		try
+		{
+			handler.handle(REQUIRES_ACTION, eventObject, NOW.minusSeconds(60));
+			fail("expected RetryLaterException");
+		}
+		catch (final RetryLaterException e)
+		{
+			assertEquals(Duration.ofSeconds(240).toMillis(), e.getDelay());
+		}
+		verifyNoInteractions(placementService);
+
+		final PaymentIntent live = withInstructions(givenLive("requires_action"), "multibanco_display_details");
+		when(placementService.placeOrderFor(live)).thenReturn(Optional.of(new OrderModel()));
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(REQUIRES_ACTION, eventObject, NOW.minusSeconds(400)));
+
+		verify(placementService).placeOrderFor(live);
+	}
+
+	@Test
+	public void requiresActionForThreeDsIsIgnored()
+	{
+		withInstructions(eventObject, "use_stripe_sdk");
+		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
+
+		assertEquals(StripeWebhookOutcome.IGNORED, handler.handle(REQUIRES_ACTION, eventObject, NOW.minusSeconds(400)));
+
+		verifyNoInteractions(placementService, gateway, recordDao);
+	}
+
+	@Test
+	public void requiresActionWithInstructionsOfPlacedOrderRecordsAwaitingFunds()
+	{
+		withInstructions(eventObject, "display_bank_transfer_instructions");
+		final StripePaymentIntentRecordModel record = givenRecord(new OrderModel(), StripePaymentIntentState.CREATED,
+				Duration.ofHours(1));
+		withInstructions(givenLive("requires_action"), "display_bank_transfer_instructions");
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(REQUIRES_ACTION, eventObject, eventCreated));
+
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, record.getState());
+		verifyNoInteractions(placementService);
+		verify(authorizationService, never()).authorizePendingOrder(any(), any());
+	}
+
+	@Test
+	public void partiallyFundedUpdatesAmountRemaining()
+	{
+		final StripePaymentInfoModel orderPaymentInfo = new StripePaymentInfoModel();
+		orderPaymentInfo.setAmountRemaining(12100L);
+		final OrderModel order = new OrderModel();
+		order.setPaymentInfo(orderPaymentInfo);
+		final StripePaymentIntentRecordModel record = givenRecord(order, StripePaymentIntentState.AWAITING_FUNDS,
+				Duration.ofHours(1));
+		final PaymentIntent live = withInstructions(givenLive("requires_action"), "display_bank_transfer_instructions");
+		live.getNextAction().getDisplayBankTransferInstructions().setAmountRemaining(5100L);
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(PARTIALLY_FUNDED, eventObject, eventCreated));
+
+		assertEquals(Long.valueOf(5100L), orderPaymentInfo.getAmountRemaining());
+		verify(modelService).save(orderPaymentInfo);
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, record.getState());
+		verify(modelService, never()).save(record);
+		verifyNoInteractions(placementService, cancellationService, paymentIntentService);
+		verify(authorizationService, never()).authorizePendingOrder(any(), any());
+	}
+
+	@Test
+	public void partiallyFundedWithoutOrderPlacesItAfterGracePeriod()
+	{
+		givenRecord(null, StripePaymentIntentState.CREATED, Duration.ofHours(1));
+		final PaymentIntent live = withInstructions(givenLive("requires_action"), "display_bank_transfer_instructions");
+		when(placementService.placeOrderFor(live)).thenReturn(Optional.of(new OrderModel()));
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(PARTIALLY_FUNDED, eventObject, NOW.minusSeconds(400)));
+
+		verify(placementService).placeOrderFor(live);
+	}
+
+	private static PaymentIntent withInstructions(final PaymentIntent paymentIntent, final String nextActionType)
+	{
+		paymentIntent.setStatus("requires_action");
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType(nextActionType);
+		if ("display_bank_transfer_instructions".equals(nextActionType))
+		{
+			nextAction.setDisplayBankTransferInstructions(new PaymentIntent.NextAction.DisplayBankTransferInstructions());
+		}
+		paymentIntent.setNextAction(nextAction);
+		return paymentIntent;
 	}
 
 	private StripePaymentIntentRecordModel givenRecord(final OrderModel order, final StripePaymentIntentState state,

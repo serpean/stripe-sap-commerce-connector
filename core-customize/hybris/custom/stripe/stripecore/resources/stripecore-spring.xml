@@ -113,9 +113,15 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
+    <alias name="defaultStripePaymentDetailsCopier" alias="stripePaymentDetailsCopier"/>
+    <bean id="defaultStripePaymentDetailsCopier" class="com.stripe.core.payment.impl.DefaultStripePaymentDetailsCopier">
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <!-- Deprecated since 3.1.0: use stripePaymentDetailsCopier. -->
     <alias name="defaultStripePaymentInfoUpdater" alias="stripePaymentInfoUpdater"/>
     <bean id="defaultStripePaymentInfoUpdater" class="com.stripe.core.payment.StripePaymentInfoUpdater">
-        <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
     </bean>
 
     <alias name="defaultStripeOrderPlacementService" alias="stripeOrderPlacementService"/>
@@ -129,7 +135,7 @@
         <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="modelService" ref="modelService"/>
-        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
         <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
         <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
@@ -161,6 +167,7 @@
         <property name="modelService" ref="modelService"/>
         <property name="timeService" ref="timeService"/>
         <property name="stripeSiteContext" ref="stripeSiteContext"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
     </bean>
 
     <alias name="defaultStripeRefundEventHandler" alias="stripeRefundEventHandler"/>

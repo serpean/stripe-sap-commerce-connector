@@ -92,7 +92,7 @@ public class DefaultStripePaymentAdjustmentService implements StripePaymentAdjus
 					order.getCode(), paymentIntentId);
 			return true;
 		}
-		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(paymentIntent.getStatus());
+		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(paymentIntent);
 		final long target = targetAmount(order);
 		switch (status)
 		{

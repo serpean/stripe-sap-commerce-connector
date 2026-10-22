@@ -215,7 +215,7 @@ public class StripeAwaitPaymentCheckOrderAction extends AbstractSimpleDecisionAc
 	{
 		try
 		{
-			return StripePaymentIntentStatus.of(paymentIntent.getStatus());
+			return StripePaymentIntentStatus.of(paymentIntent);
 		}
 		catch (final IllegalArgumentException e)
 		{

@@ -89,7 +89,7 @@ public class DefaultStripePaymentIntentRecordService implements StripePaymentInt
 	{
 		try
 		{
-			switch (StripePaymentIntentStatus.of(stripeGateway.retrievePaymentIntent(paymentIntentId).getStatus()))
+			switch (StripePaymentIntentStatus.of(stripeGateway.retrievePaymentIntent(paymentIntentId)))
 			{
 				case AUTHORIZED:
 					return StripePaymentIntentState.AUTHORIZED;
@@ -97,6 +97,8 @@ public class DefaultStripePaymentIntentRecordService implements StripePaymentInt
 					return StripePaymentIntentState.CAPTURED;
 				case PROCESSING:
 					return StripePaymentIntentState.PROCESSING;
+				case AWAITING_FUNDS:
+					return StripePaymentIntentState.AWAITING_FUNDS;
 				case FAILED:
 					return StripePaymentIntentState.FAILED;
 				case CANCELED:

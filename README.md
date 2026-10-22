@@ -93,7 +93,7 @@ ant clean all
 ant updatesystem
 ```
 
-6. In the Stripe Dashboard, add a webhook endpoint `https://<host>/occ/v2/<baseSiteUid>/payments/stripe/webhook`. Send at least these events: `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Put the signing secret in `stripe.webhook.secret`.
+6. In the Stripe Dashboard, add a webhook endpoint `https://<host>/occ/v2/<baseSiteUid>/payments/stripe/webhook`. Send at least these events: `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.requires_action`, `payment_intent.partially_funded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Put the signing secret in `stripe.webhook.secret`.
 
 ## Configuration
 
@@ -185,7 +185,7 @@ The connector wraps the standard SAP order process. It works with OMS (`yacceler
 - **Signature:** the connector checks the `Stripe-Signature` header with `stripe.webhook.secret`. A bad or missing signature gives 400. A signed payload without an id is also refused.
 - **Idempotent intake:** the event is stored once (`StripeWebhookEvent`, unique by Stripe event id). A repeated event does not run twice.
 - **Processing:** the intake saves the event and schedules a SAP `Task` in one transaction. The task runner (`stripeWebhookEventTaskRunner`) processes it.
-- **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Other events are ignored.
+- **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.requires_action`, `payment_intent.partially_funded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Other events are ignored.
 - **Retries:** a failure that can pass is retried after 30 s, 2 min, 8 min, and 30 min. After 5 attempts the event is `FAILED` with `lastError`, and an ERROR is logged.
 - **Recovery:** when Stripe sends a `FAILED` event again (a resend from the Stripe Dashboard or the Stripe CLI), the connector sets it to `RECEIVED`, clears `attempts` and `lastError`, and processes it again. See [Operations runbook](#operations-runbook).
 - **Unreadable events** (the payload cannot be read) fail at once with no retry.

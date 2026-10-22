@@ -17,6 +17,7 @@ import com.stripe.core.payment.StripeLineItemsBuilder;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.Charge;
 import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.PaymentIntent;
@@ -24,6 +25,7 @@ import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.model.ModelService;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -38,8 +40,14 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripePaymentIntentService.class);
 
-	private static final Set<String> EDITABLE_STATUSES = Set.of("requires_payment_method", "requires_confirmation",
-			"requires_action");
+	/**
+	 * Statuses in which the PaymentIntent holds no money and has issued nothing to the customer, so its amount can
+	 * change: requires_payment_method (FAILED), requires_confirmation and requires_action without payment instructions
+	 * (REQUIRES_ACTION). A PaymentIntent that issued a voucher or bank transfer instructions (AWAITING_FUNDS) is not
+	 * changed: the customer may pay the old amount, so it is released and replaced like a confirmed one.
+	 */
+	private static final Set<StripePaymentIntentStatus> EDITABLE_STATUSES = EnumSet.of(StripePaymentIntentStatus.FAILED,
+			StripePaymentIntentStatus.REQUIRES_ACTION);
 
 	private StripeGateway stripeGateway;
 	private StripeConfigurationService stripeConfigurationService;
@@ -66,7 +74,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 
 		final PaymentIntent existing = stripeGateway.retrievePaymentIntent(existingId);
 		ensureRecord(existing, cart);
-		if ("canceled".equals(existing.getStatus()))
+		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(existing);
+		if (status == StripePaymentIntentStatus.CANCELED)
 		{
 			releaseFunds(existingId, "cart " + cart.getCode() + " had a canceled payment intent");
 			stripeOrderAuthorizationService.removeAuthorizations(cart, existingId);
@@ -78,11 +87,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		{
 			return toData(existing);
 		}
-		if (EDITABLE_STATUSES.contains(existing.getStatus()))
+		if (EDITABLE_STATUSES.contains(status))
 		{
 			return toData(update(cart, existing, amount, currencyIso));
 		}
-		if ("processing".equals(existing.getStatus()))
+		if (status == StripePaymentIntentStatus.PROCESSING)
 		{
 			throw new StripePaymentInProgressException(existingId);
 		}
@@ -91,7 +100,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	}
 
 	/**
-	 * Releases a confirmed PaymentIntent (authorized or captured) of a cart that changed. An order may be placed for it
+	 * Releases a confirmed PaymentIntent (authorized, captured, or with issued payment instructions) of a cart that
+	 * changed. An order may be placed for it
 	 * at the same time (for example in another browser tab), so the release happens only under its order placement
 	 * lock and only when no order exists for it. Otherwise nothing changes and the customer is told that the payment is
 	 * in progress. The lock stays after the release: the PaymentIntent is never used for an order again. When Stripe
@@ -278,7 +288,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	{
 		if (stripePaymentIntentRecordDao.findByPaymentIntentId(intent.getId()).isEmpty())
 		{
-			saveRecord(intent, cart, intent.getAmount(), intent.getCurrency().toUpperCase(), stateOf(intent.getStatus()));
+			saveRecord(intent, cart, intent.getAmount(), intent.getCurrency().toUpperCase(), stateOf(intent));
 		}
 	}
 
@@ -296,17 +306,19 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		modelService.save(record);
 	}
 
-	private StripePaymentIntentState stateOf(final String stripeStatus)
+	private StripePaymentIntentState stateOf(final PaymentIntent intent)
 	{
-		switch (stripeStatus)
+		switch (StripePaymentIntentStatus.of(intent))
 		{
-			case "requires_capture":
+			case AUTHORIZED:
 				return StripePaymentIntentState.AUTHORIZED;
-			case "succeeded":
+			case CAPTURED:
 				return StripePaymentIntentState.CAPTURED;
-			case "processing":
+			case PROCESSING:
 				return StripePaymentIntentState.PROCESSING;
-			case "canceled":
+			case AWAITING_FUNDS:
+				return StripePaymentIntentState.AWAITING_FUNDS;
+			case CANCELED:
 				return StripePaymentIntentState.CANCELED;
 			default:
 				return StripePaymentIntentState.CREATED;

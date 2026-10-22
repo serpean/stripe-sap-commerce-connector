@@ -22,7 +22,7 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
-        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
         <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
         <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
@@ -55,6 +55,8 @@
     <bean id="defaultStripeOrderPaymentPopulator"
           class="com.stripe.facades.order.converters.populators.StripeOrderPaymentPopulator">
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="priceDataFactory" ref="priceDataFactory"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
     <bean parent="modifyPopulatorList">

@@ -156,6 +156,8 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 			case "payment_intent.succeeded":
 			case "payment_intent.amount_capturable_updated":
 			case "payment_intent.processing":
+			case "payment_intent.requires_action":
+			case "payment_intent.partially_funded":
 			case "payment_intent.payment_failed":
 			case "payment_intent.canceled":
 				final Event stripeEvent = parse(event);

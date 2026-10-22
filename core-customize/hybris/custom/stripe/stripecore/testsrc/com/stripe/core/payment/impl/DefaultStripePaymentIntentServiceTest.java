@@ -358,6 +358,78 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
+	public void intentWithIssuedInstructionsIsReplacedNotUpdated()
+	{
+		cartHasIntent("pi_old");
+		final PaymentIntent voucher = withInstructions(intent("pi_old", "requires_action", 1000));
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(voucher);
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_new", "requires_payment_method", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+		verify(lockService).tryAcquire("pi_old");
+		verify(recordService).findLiveOrder("pi_old");
+		verify(gateway).cancelPaymentIntent(eq("pi_old"), eq("release-pi_old-cancel"));
+		verify(authorizationService).removeAuthorizations(cart, "pi_old");
+		assertEquals("pi_new", data.getPaymentIntentId());
+		assertEquals("pi_new", ((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+	}
+
+	@Test
+	public void intentWithIssuedInstructionsAndAnOrderIsNotReleased()
+	{
+		cartHasIntent("pi_old");
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(withInstructions(intent("pi_old", "requires_action", 1000)));
+		when(recordService.findLiveOrder("pi_old")).thenReturn(Optional.of(new OrderModel()));
+
+		assertPaymentInProgress();
+
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+	}
+
+	@Test
+	public void missingRecordOfIntentWithIssuedInstructionsIsAwaitingFunds()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(withInstructions(intent("pi_1", "requires_action", 1200)));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<StripePaymentIntentRecordModel> captor = ArgumentCaptor
+				.forClass(StripePaymentIntentRecordModel.class);
+		verify(modelService).save(captor.capture());
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, captor.getValue().getState());
+	}
+
+	@Test
+	public void threeDsIntentIsStillUpdated()
+	{
+		cartHasIntent("pi_1");
+		final PaymentIntent threeDs = intent("pi_1", "requires_action", 1000);
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("use_stripe_sdk");
+		threeDs.setNextAction(nextAction);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(threeDs);
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString())).thenReturn(intent("pi_1", "requires_action", 1200));
+
+		service.prepareForCart(cart);
+
+		verify(gateway).updatePaymentIntent(eq("pi_1"), any(), anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+	}
+
+	private static PaymentIntent withInstructions(final PaymentIntent intent)
+	{
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("multibanco_display_details");
+		intent.setNextAction(nextAction);
+		return intent;
+	}
+
+	@Test
 	public void cartChangeInAnotherTabDoesNotReleaseWhileTheOrderIsPlaced()
 	{
 		cartHasIntent("pi_old");

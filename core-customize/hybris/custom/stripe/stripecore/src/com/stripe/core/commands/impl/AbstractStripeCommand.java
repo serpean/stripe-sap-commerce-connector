@@ -63,7 +63,7 @@ public abstract class AbstractStripeCommand
 	{
 		try
 		{
-			return Optional.of(StripePaymentIntentStatus.of(paymentIntent.getStatus()));
+			return Optional.of(StripePaymentIntentStatus.of(paymentIntent));
 		}
 		catch (final IllegalArgumentException e)
 		{

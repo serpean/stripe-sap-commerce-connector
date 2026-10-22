@@ -2,40 +2,33 @@ package com.stripe.core.payment;
 
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.model.PaymentIntent;
-import com.stripe.model.PaymentMethod;
-import de.hybris.platform.servicelayer.model.ModelService;
 
 /**
- * Copies the display data of the payment method of a PaymentIntent to its Stripe payment info: type, id and, for a
- * card, brand, last 4 digits and expiry. The PaymentIntent must have its payment_method expanded; without it, nothing
- * changes. No full card number or secret is ever available or copied.
+ * Copies the display data of a PaymentIntent to its Stripe payment info.
+ *
+ * @deprecated since 3.1.0, use {@link StripePaymentDetailsCopier} (bean {@code stripePaymentDetailsCopier}). This class
+ *             only calls it and stays for compatibility with 3.0.0.
  */
+@Deprecated(since = "3.1.0")
 public class StripePaymentInfoUpdater
 {
-	private ModelService modelService;
+	private StripePaymentDetailsCopier stripePaymentDetailsCopier;
 
 	public void copyPaymentMethod(final StripePaymentInfoModel paymentInfo, final PaymentIntent paymentIntent)
 	{
-		final PaymentMethod method = paymentIntent.getPaymentMethodObject();
-		if (method == null)
-		{
-			return;
-		}
-		paymentInfo.setPaymentMethodType(method.getType());
-		paymentInfo.setPaymentMethodId(method.getId());
-		final PaymentMethod.Card card = method.getCard();
-		if (card != null)
-		{
-			paymentInfo.setCardBrand(card.getBrand());
-			paymentInfo.setCardLast4(card.getLast4());
-			paymentInfo.setCardExpMonth(card.getExpMonth() == null ? null : Math.toIntExact(card.getExpMonth()));
-			paymentInfo.setCardExpYear(card.getExpYear() == null ? null : Math.toIntExact(card.getExpYear()));
-		}
-		modelService.save(paymentInfo);
+		stripePaymentDetailsCopier.copy(paymentIntent, paymentInfo);
 	}
 
-	public void setModelService(final ModelService modelService)
+	/**
+	 * Not used any more: the copier saves the payment info. Kept so that 3.0.0 bean definitions still load.
+	 */
+	public void setModelService(final de.hybris.platform.servicelayer.model.ModelService modelService)
 	{
-		this.modelService = modelService;
+		// the copier saves the payment info
+	}
+
+	public void setStripePaymentDetailsCopier(final StripePaymentDetailsCopier stripePaymentDetailsCopier)
+	{
+		this.stripePaymentDetailsCopier = stripePaymentDetailsCopier;
 	}
 }

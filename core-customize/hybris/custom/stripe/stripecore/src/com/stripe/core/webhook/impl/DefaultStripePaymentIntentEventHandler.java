@@ -4,10 +4,12 @@ import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementService;
+import com.stripe.core.payment.StripePaymentDetailsCopier;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.site.StripeSiteContext;
@@ -35,10 +37,14 @@ import org.slf4j.LoggerFactory;
  * Default {@link StripePaymentIntentEventHandler}. It acts on the current state of the PaymentIntent at Stripe, not on
  * the state in the event, so a late or repeated event does no harm.
  * <ul>
- * <li>Confirmation events (succeeded, amount_capturable_updated, processing): authorizes the pending order, or, when
- * there is no order after the grace period, places it from the server. When the funds were already released, it does
- * nothing. When the order was cancelled before the payment succeeded, or the authorization of the order is rejected
- * (for example, the amounts differ), the order is cancelled and the funds are released.</li>
+ * <li>Confirmation events (succeeded, amount_capturable_updated, processing, requires_action, partially_funded):
+ * authorizes the pending order, or, when there is no order after the grace period, places it from the server. A
+ * requires_action event counts only when the PaymentIntent issued payment instructions (voucher or bank transfer,
+ * AWAITING_FUNDS); any other requires_action (3D Secure, redirect) is ignored. A partially_funded event of a placed
+ * order that still waits for the money only copies the amount still to pay to the payment info of the order; the
+ * state does not change. When the funds were already released, it does nothing. When the order was cancelled before
+ * the payment succeeded, or the authorization of the order is rejected (for example, the amounts differ), the order
+ * is cancelled and the funds are released.</li>
  * <li>Failure events (payment_failed, canceled): cancels the pending order.</li>
  * </ul>
  * An event for a PaymentIntent without a record (not created by this shop) is ignored. The record row is locked first,
@@ -52,13 +58,17 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripePaymentIntentEventHandler.class);
 
+	static final String REQUIRES_ACTION = "payment_intent.requires_action";
+	static final String PARTIALLY_FUNDED = "payment_intent.partially_funded";
+
 	private static final Set<String> CONFIRMATION_EVENTS = Set.of("payment_intent.succeeded",
-			"payment_intent.amount_capturable_updated", "payment_intent.processing");
+			"payment_intent.amount_capturable_updated", "payment_intent.processing", REQUIRES_ACTION, PARTIALLY_FUNDED);
 	private static final Set<String> FAILURE_EVENTS = Set.of("payment_intent.payment_failed", "payment_intent.canceled");
 	private static final Set<StripePaymentIntentStatus> PAID = EnumSet.of(StripePaymentIntentStatus.AUTHORIZED,
 			StripePaymentIntentStatus.CAPTURED);
 	private static final Set<StripePaymentIntentStatus> ALIVE = EnumSet.of(StripePaymentIntentStatus.AUTHORIZED,
-			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING);
+			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING,
+			StripePaymentIntentStatus.AWAITING_FUNDS);
 	private static final Set<StripePaymentIntentStatus> DEAD = EnumSet.of(StripePaymentIntentStatus.FAILED,
 			StripePaymentIntentStatus.CANCELED);
 	private static final Set<StripePaymentIntentState> FUNDS_RELEASED = Set.of(StripePaymentIntentState.CANCELED,
@@ -73,6 +83,7 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	private StripeOrderPlacementService stripeOrderPlacementService;
 	private StripeOrderCancellationService stripeOrderCancellationService;
 	private ModelService modelService;
+	private StripePaymentDetailsCopier stripePaymentDetailsCopier;
 	private StripeSiteContext stripeSiteContext;
 	private TimeService timeService;
 
@@ -83,6 +94,12 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 		final boolean confirmation = CONFIRMATION_EVENTS.contains(eventType);
 		if (!confirmation && !FAILURE_EVENTS.contains(eventType))
 		{
+			return StripeWebhookOutcome.IGNORED;
+		}
+		if (REQUIRES_ACTION.equals(eventType) && !issuedInstructions(paymentIntent))
+		{
+			LOG.debug("Event {} of payment intent {} is not for payment instructions: ignored", eventType,
+					paymentIntent.getId());
 			return StripeWebhookOutcome.IGNORED;
 		}
 		final String paymentIntentId = paymentIntent.getId();
@@ -96,11 +113,12 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 		}
 		StripeRowLocks.lockAndRefresh(modelService, record.get());
 		return stripeSiteContext.runInSite(record.get().getBaseSiteUid(),
-				() -> confirmation ? onConfirmation(record.get(), eventCreated) : onFailure(eventType, record.get()));
+				() -> confirmation ? onConfirmation(eventType, record.get(), eventCreated)
+						: onFailure(eventType, record.get()));
 	}
 
-	private StripeWebhookOutcome onConfirmation(final StripePaymentIntentRecordModel record, final Instant eventCreated)
-			throws RetryLaterException
+	private StripeWebhookOutcome onConfirmation(final String eventType, final StripePaymentIntentRecordModel record,
+			final Instant eventCreated) throws RetryLaterException
 	{
 		final String paymentIntentId = record.getPaymentIntentId();
 		if (FUNDS_RELEASED.contains(record.getState()))
@@ -126,6 +144,10 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 
 		final PaymentIntent live = stripeGateway.retrievePaymentIntent(paymentIntentId);
 		final StripePaymentIntentStatus status = statusOf(live);
+		if (PARTIALLY_FUNDED.equals(eventType) && status == StripePaymentIntentStatus.AWAITING_FUNDS)
+		{
+			return updateAmountRemaining(order.get(), live);
+		}
 		if (PAID.contains(status) && OrderStatus.CANCELLED.equals(order.get().getStatus())
 				&& !stripeOrderAuthorizationService.hasAcceptedAuthorization(order.get(), paymentIntentId))
 		{
@@ -145,6 +167,33 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 		updateState(record, status);
 		LOG.info("Payment intent {} of order {} has status {}", paymentIntentId, order.get().getCode(), status);
 		return StripeWebhookOutcome.PROCESSED;
+	}
+
+	/**
+	 * Copies the payment details of the live PaymentIntent, with the amount still to pay, to the payment info of the
+	 * order. The record state and the order status do not change: the payment is still pending.
+	 */
+	private StripeWebhookOutcome updateAmountRemaining(final OrderModel order, final PaymentIntent live)
+	{
+		if (order.getPaymentInfo() instanceof StripePaymentInfoModel paymentInfo)
+		{
+			requireDetailsCopier().copy(live, paymentInfo);
+			LOG.info("Payment intent {} of order {} is partly paid: {} minor units remain", live.getId(),
+					order.getCode(), paymentInfo.getAmountRemaining());
+		}
+		return StripeWebhookOutcome.PROCESSED;
+	}
+
+	private static boolean issuedInstructions(final PaymentIntent paymentIntent)
+	{
+		try
+		{
+			return StripePaymentIntentStatus.of(paymentIntent) == StripePaymentIntentStatus.AWAITING_FUNDS;
+		}
+		catch (final IllegalArgumentException e)
+		{
+			return false;
+		}
 	}
 
 	private StripeWebhookOutcome onFailure(final String eventType, final StripePaymentIntentRecordModel record)
@@ -257,6 +306,8 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 				return StripePaymentIntentState.CAPTURED;
 			case PROCESSING:
 				return StripePaymentIntentState.PROCESSING;
+			case AWAITING_FUNDS:
+				return StripePaymentIntentState.AWAITING_FUNDS;
 			case FAILED:
 				return StripePaymentIntentState.FAILED;
 			case CANCELED:
@@ -270,7 +321,7 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	{
 		try
 		{
-			return StripePaymentIntentStatus.of(paymentIntent.getStatus());
+			return StripePaymentIntentStatus.of(paymentIntent);
 		}
 		catch (final IllegalArgumentException e)
 		{
@@ -285,6 +336,15 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 			throw new IllegalStateException("No StripeOrderPlacementService is configured");
 		}
 		return stripeOrderPlacementService;
+	}
+
+	private StripePaymentDetailsCopier requireDetailsCopier()
+	{
+		if (stripePaymentDetailsCopier == null)
+		{
+			throw new IllegalStateException("No StripePaymentDetailsCopier is configured");
+		}
+		return stripePaymentDetailsCopier;
 	}
 
 	private StripeOrderCancellationService requireCancellationService()
@@ -349,5 +409,10 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	public void setStripeSiteContext(final StripeSiteContext stripeSiteContext)
 	{
 		this.stripeSiteContext = stripeSiteContext;
+	}
+
+	public void setStripePaymentDetailsCopier(final StripePaymentDetailsCopier stripePaymentDetailsCopier)
+	{
+		this.stripePaymentDetailsCopier = stripePaymentDetailsCopier;
 	}
 }
