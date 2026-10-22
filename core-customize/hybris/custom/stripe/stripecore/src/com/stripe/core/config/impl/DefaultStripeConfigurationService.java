@@ -24,13 +24,18 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String MANUAL_METHODS = "stripe.capture.manual.methods";
 	private static final String GRACE_PERIOD = "stripe.webhook.graceperiod.seconds";
 	private static final String PENDING_TIMEOUT = "stripe.payment.pending.timeout.seconds";
+	private static final String PENDING_TIMEOUT_PREFIX = "stripe.payment.pending.timeout.";
+	private static final String PENDING_TIMEOUT_SUFFIX = ".seconds";
+	private static final String CUSTOMER_CREATION = "stripe.customer.creation.enabled";
+	private static final String CASH_BALANCE_REFUND_DELAY = "stripe.cashbalance.refund.delay.seconds";
 	private static final String PENDING_RETRY = "stripe.payment.pending.retry.seconds";
 	private static final String STATEMENT_DESCRIPTOR = "stripe.statement.descriptor";
 	private static final String DESCRIPTOR_SUFFIX = "stripe.descriptor.suffix";
 
-	private static final String DEFAULT_MANUAL_METHODS = "card,paypal,klarna";
+	private static final String DEFAULT_MANUAL_METHODS = "card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie,mondu";
 	private static final long DEFAULT_GRACE_PERIOD_SECONDS = 300L;
 	private static final long DEFAULT_PENDING_TIMEOUT_SECONDS = 86400L;
+	private static final long DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS = 3600L;
 	private static final long DEFAULT_PENDING_RETRY_SECONDS = 300L;
 
 	private ConfigurationService configurationService;
@@ -85,6 +90,29 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	public Duration getPendingPaymentTimeout()
 	{
 		return readSeconds(PENDING_TIMEOUT, DEFAULT_PENDING_TIMEOUT_SECONDS);
+	}
+
+	@Override
+	public Duration getPendingPaymentTimeout(final String paymentMethodType)
+	{
+		final Duration global = getPendingPaymentTimeout();
+		if (StringUtils.isBlank(paymentMethodType))
+		{
+			return global;
+		}
+		return readSeconds(PENDING_TIMEOUT_PREFIX + paymentMethodType.trim() + PENDING_TIMEOUT_SUFFIX, global.getSeconds());
+	}
+
+	@Override
+	public boolean isCustomerCreationEnabled()
+	{
+		return !"false".equalsIgnoreCase(readString(CUSTOMER_CREATION, "true").trim());
+	}
+
+	@Override
+	public Duration getCashBalanceRefundDelay()
+	{
+		return readSeconds(CASH_BALANCE_REFUND_DELAY, DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS);
 	}
 
 	@Override
