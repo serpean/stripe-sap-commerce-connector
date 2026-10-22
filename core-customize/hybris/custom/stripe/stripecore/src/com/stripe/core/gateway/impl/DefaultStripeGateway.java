@@ -9,18 +9,28 @@ import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.RateLimitException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
+import com.stripe.model.Account;
+import com.stripe.model.Customer;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.Webhook;
+import com.stripe.param.CustomerCreateParams;
+import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCaptureParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import com.stripe.param.RefundCreateParams;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +46,9 @@ public class DefaultStripeGateway implements StripeGateway
 	private static final Set<String> RETRYABLE_CODES = Set.of("idempotency_key_in_use", "lock_timeout");
 
 	private StripeConfigurationService stripeConfigurationService;
+
+	/** Account key by SHA-256 of the secret key. The secret key itself is never kept. */
+	private final Map<String, String> accountKeys = new ConcurrentHashMap<>();
 
 	@Override
 	public PaymentIntent createPaymentIntent(final PaymentIntentCreateParams params, final String idempotencyKey)
@@ -90,6 +103,54 @@ public class DefaultStripeGateway implements StripeGateway
 				.setAmount(amount)
 				.build();
 		return call("create_refund", () -> client.v1().refunds().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Customer createCustomer(final CustomerCreateParams params, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("create_customer", () -> client.v1().customers().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Customer updateCustomer(final String id, final CustomerUpdateParams params, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("update_customer", () -> client.v1().customers().update(id, params, options(idempotencyKey)));
+	}
+
+	@Override
+	public String retrieveAccountKey()
+	{
+		final String secretKey = stripeConfigurationService.getSecretKey();
+		if (StringUtils.isBlank(secretKey))
+		{
+			throw new StripeGatewayException("Stripe secret key is not configured", "secret_key_missing", false, false, null);
+		}
+		final String cacheKey = sha256(secretKey);
+		final String cached = accountKeys.get(cacheKey);
+		if (cached != null)
+		{
+			return cached;
+		}
+		final StripeClient client = newClient();
+		final Account account = call("retrieve_account", () -> client.v1().accounts().retrieveCurrent());
+		final String mode = secretKey.startsWith("sk_live_") || secretKey.startsWith("rk_live_") ? ":live" : ":test";
+		final String accountKey = account.getId() + mode;
+		accountKeys.put(cacheKey, accountKey);
+		return accountKey;
+	}
+
+	private static String sha256(final String value)
+	{
+		try
+		{
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (final NoSuchAlgorithmException e)
+		{
+			throw new IllegalStateException("SHA-256 is not available", e);
+		}
 	}
 
 	@Override

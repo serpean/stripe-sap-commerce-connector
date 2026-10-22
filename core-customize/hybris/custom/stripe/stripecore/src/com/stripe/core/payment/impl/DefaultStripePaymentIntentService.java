@@ -3,6 +3,7 @@ package com.stripe.core.payment.impl;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
@@ -48,6 +49,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 	private StripeLineItemsBuilder stripeLineItemsBuilder;
+	private StripeCustomerService stripeCustomerService;
 	private ModelService modelService;
 
 	@Override
@@ -178,20 +180,21 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final String idempotencyKey = "cart-" + cart.getCode() + "-" + cart.getGuid() + "-pi-" + (created + 1);
 
 		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		final String customerId = customerIdFor(cart);
 		PaymentIntent intent;
 		try
 		{
-			intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, lineItems), idempotencyKey);
+			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, customerId, idempotencyKey);
 		}
 		catch (final StripeGatewayException e)
 		{
-			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			if (customerId == null || !isMissingCustomer(e))
 			{
 				throw e;
 			}
-			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is created without them", cart.getCode());
-			intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, Map.of()),
-					idempotencyKey + "-nolines");
+			final String replacement = replaceCustomer(cart, customerId);
+			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, replacement,
+					idempotencyKey + "-cus-" + replacement);
 		}
 
 		saveRecord(intent, cart, amount, currencyIso, StripePaymentIntentState.CREATED);
@@ -211,6 +214,63 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 			modelService.remove(previous);
 		}
 		return intent;
+	}
+
+	private PaymentIntent createWithLineItemsFallback(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
+	{
+		try
+		{
+			return stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, lineItems, customerId),
+					idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is created without them", cart.getCode());
+			return stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso, Map.of(), customerId),
+					idempotencyKey + "-nolines");
+		}
+	}
+
+	/**
+	 * The Stripe Customer of the cart user. A failure here never blocks the payment: the PaymentIntent is made without a
+	 * customer (a method that needs a customer is then refused by Stripe).
+	 */
+	protected String customerIdFor(final CartModel cart)
+	{
+		try
+		{
+			return stripeCustomerService.customerIdFor(cart).orElse(null);
+		}
+		catch (final StripeGatewayException e)
+		{
+			LOG.warn("No Stripe customer for cart {}: the payment intent is made without one (code={})", cart.getCode(),
+					e.getStripeCode());
+			return null;
+		}
+	}
+
+	private String replaceCustomer(final CartModel cart, final String missingCustomerId)
+	{
+		LOG.warn("Stripe customer {} of cart {} is missing at Stripe: a new one is created", missingCustomerId, cart.getCode());
+		return stripeCustomerService.replaceCustomer(cart, missingCustomerId);
+	}
+
+	/**
+	 * True when Stripe says that the customer of the request does not exist.
+	 */
+	protected boolean isMissingCustomer(final StripeGatewayException e)
+	{
+		if (!"resource_missing".equals(e.getStripeCode()))
+		{
+			return false;
+		}
+		return !(e.getCause() instanceof InvalidRequestException)
+				|| "customer".equals(((InvalidRequestException) e.getCause()).getParam());
 	}
 
 	protected void ensureRecord(final PaymentIntent intent, final CartModel cart)
@@ -259,21 +319,22 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
 				+ changed;
 		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		final String customerId = customerIdFor(cart);
 		PaymentIntent updated;
 		try
 		{
-			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, lineItems),
-					idempotencyKey);
+			updated = updateWithLineItemsFallback(cart, existing, amount, currencyIso, lineItems, customerId,
+					customerSuffix(idempotencyKey, customerId));
 		}
 		catch (final StripeGatewayException e)
 		{
-			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			if (customerId == null || !isMissingCustomer(e))
 			{
 				throw e;
 			}
-			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
-			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, Map.of()),
-					idempotencyKey + "-nolines");
+			final String replacement = replaceCustomer(cart, customerId);
+			updated = updateWithLineItemsFallback(cart, existing, amount, currencyIso, lineItems, replacement,
+					customerSuffix(idempotencyKey, replacement));
 		}
 
 		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
@@ -284,15 +345,44 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return updated;
 	}
 
+	private String customerSuffix(final String idempotencyKey, final String customerId)
+	{
+		return customerId == null ? idempotencyKey : idempotencyKey + "-cus-" + customerId;
+	}
+
+	private PaymentIntent updateWithLineItemsFallback(final CartModel cart, final PaymentIntent existing, final long amount,
+			final String currencyIso, final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
+	{
+		try
+		{
+			return stripeGateway.updatePaymentIntent(existing.getId(),
+					buildUpdateParams(amount, currencyIso, lineItems, customerId), idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
+			return stripeGateway.updatePaymentIntent(existing.getId(),
+					buildUpdateParams(amount, currencyIso, Map.of(), customerId), idempotencyKey + "-nolines");
+		}
+	}
+
 	/**
 	 * Update parameters. Without line items, amount_details is cleared: Stripe keeps the old line items otherwise and
 	 * refuses a new amount that does not match them.
 	 */
 	protected PaymentIntentUpdateParams buildUpdateParams(final long amount, final String currencyIso,
-			final Map<String, Object> lineItems)
+			final Map<String, Object> lineItems, final String customerId)
 	{
 		final PaymentIntentUpdateParams.Builder builder = PaymentIntentUpdateParams.builder().setAmount(amount)
 				.setCurrency(currencyIso.toLowerCase());
+		if (customerId != null)
+		{
+			builder.setCustomer(customerId);
+		}
 		if (lineItems.isEmpty())
 		{
 			builder.putExtraParam("amount_details", "");
@@ -319,11 +409,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 
 	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso)
 	{
-		return buildCreateParams(cart, amount, currencyIso, stripeLineItemsBuilder.build(cart, amount));
+		return buildCreateParams(cart, amount, currencyIso, stripeLineItemsBuilder.build(cart, amount), null);
 	}
 
 	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
-			final Map<String, Object> lineItems)
+			final Map<String, Object> lineItems, final String customerId)
 	{
 		final boolean manual = stripeConfigurationService.getCaptureMode() == StripeCaptureMode.MANUAL;
 		final PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
@@ -337,6 +427,10 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				.putMetadata("userUid", userUid(cart))
 				.putMetadata("currencyIso", currencyIso)
 				.putAllExtraParam(lineItems);
+		if (customerId != null)
+		{
+			builder.setCustomer(customerId);
+		}
 		if (manual)
 		{
 			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
@@ -437,6 +531,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public void setStripeLineItemsBuilder(final StripeLineItemsBuilder stripeLineItemsBuilder)
 	{
 		this.stripeLineItemsBuilder = stripeLineItemsBuilder;
+	}
+
+	public void setStripeCustomerService(final StripeCustomerService stripeCustomerService)
+	{
+		this.stripeCustomerService = stripeCustomerService;
 	}
 
 	public void setModelService(final ModelService modelService)

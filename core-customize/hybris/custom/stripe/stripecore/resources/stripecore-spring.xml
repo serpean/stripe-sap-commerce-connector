@@ -42,11 +42,20 @@
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
+        <property name="stripeCustomerService" ref="stripeCustomerService"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
         <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
         <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+    </bean>
+
+    <alias name="defaultStripeCustomerService" alias="stripeCustomerService"/>
+    <bean id="defaultStripeCustomerService" class="com.stripe.core.customer.impl.DefaultStripeCustomerService">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="stripeCustomerDao" ref="stripeCustomerDao"/>
+        <property name="modelService" ref="modelService"/>
     </bean>
 
     <alias name="defaultStripeTransactionLookup" alias="stripeTransactionLookup"/>

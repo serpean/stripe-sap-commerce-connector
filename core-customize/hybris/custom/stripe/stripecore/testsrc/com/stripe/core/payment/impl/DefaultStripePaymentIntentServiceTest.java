@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
@@ -61,6 +62,7 @@ public class DefaultStripePaymentIntentServiceTest
 	private StripePaymentIntentRecordService recordService;
 	private StripeOrderAuthorizationService authorizationService;
 	private StripeLineItemsBuilder lineItemsBuilder;
+	private StripeCustomerService customerService;
 	private DefaultStripePaymentIntentService service;
 	private CartModel cart;
 
@@ -99,6 +101,9 @@ public class DefaultStripePaymentIntentServiceTest
 		lineItemsBuilder = mock(StripeLineItemsBuilder.class);
 		when(lineItemsBuilder.build(any(), anyLong())).thenReturn(Map.of());
 		service.setStripeLineItemsBuilder(lineItemsBuilder);
+		customerService = mock(StripeCustomerService.class);
+		when(customerService.customerIdFor(any())).thenReturn(Optional.empty());
+		service.setStripeCustomerService(customerService);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -611,5 +616,82 @@ public class DefaultStripePaymentIntentServiceTest
 		assertEquals("pi_1", captor.getValue().getPaymentIntentId());
 		assertEquals(StripePaymentIntentState.AUTHORIZED, captor.getValue().getState());
 		assertEquals(Long.valueOf(1200), captor.getValue().getAmount());
+	}
+
+	@Test
+	public void customerIsSentOnCreate()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertEquals("cus_1", createdParams().toMap().get("customer"));
+	}
+
+	@Test
+	public void customerIsSentOnUpdate()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 900));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals("cus_1", captor.getValue().toMap().get("customer"));
+	}
+
+	@Test
+	public void customerFailureDoesNotBlockPayment()
+	{
+		when(customerService.customerIdFor(cart))
+				.thenThrow(new StripeGatewayException("down", "api_connection_error", true, false, null));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertFalse(createdParams().toMap().containsKey("customer"));
+	}
+
+	@Test
+	public void missingStripeCustomerIsRecreated()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_old"));
+		when(customerService.replaceCustomer(cart, "cus_old")).thenReturn("cus_new");
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("missing", "resource_missing", false, false, null))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertEquals("cus_old", captor.getAllValues().get(0).toMap().get("customer"));
+		assertEquals("cus_new", captor.getAllValues().get(1).toMap().get("customer"));
+		verify(customerService).replaceCustomer(cart, "cus_old");
+	}
+
+	@Test
+	public void missingStripeCustomerIsRecreatedOnlyOnce()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_old"));
+		when(customerService.replaceCustomer(cart, "cus_old")).thenReturn("cus_new");
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("missing", "resource_missing", false, false, null));
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("The second failure must be thrown");
+		}
+		catch (final StripeGatewayException e)
+		{
+			assertEquals("resource_missing", e.getStripeCode());
+		}
+		verify(gateway, times(2)).createPaymentIntent(any(), anyString());
 	}
 }
