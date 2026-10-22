@@ -5,6 +5,7 @@
  */
 
 import { ChangeDetectionStrategy, Component, Optional } from '@angular/core';
+import { Order } from '@spartacus/order/root';
 import { OutletContextData } from '@spartacus/storefront';
 import { Observable, of } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -25,7 +26,7 @@ import { StripePaymentInfo } from 'sap-commerce-stripe-payment/root';
 export class StripePaymentInstructionsComponent {
   info$: Observable<StripePaymentInfo | undefined>;
 
-  constructor(@Optional() protected outletContext: OutletContextData<any>) {
+  constructor(@Optional() protected outletContext: OutletContextData<{ item: Order }>) {
     this.info$ = (this.outletContext?.context$ ?? of(undefined)).pipe(
       map((context) => {
         const info: StripePaymentInfo | undefined =

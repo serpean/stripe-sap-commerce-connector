@@ -15,11 +15,6 @@ export interface StripePaymentResult {
   error?: string;
   /** The cart now has a new PaymentIntent: mount it and let the customer pay again. */
   newClientSecret?: string;
-  /**
-   * False when the customer must still act on the PaymentIntent (for example
-   * a pending authentication): the order must not be placed yet.
-   */
-  placeOrder?: boolean;
 }
 
 export interface StripeConfigResponse {

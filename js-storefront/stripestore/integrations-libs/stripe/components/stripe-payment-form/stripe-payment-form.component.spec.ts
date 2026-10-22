@@ -138,24 +138,13 @@ describe('StripePaymentFormComponent', () => {
     });
 
     it('sends the cart email as billing email', () => {
-      stripeService.confirmPayment.and.returnValue(of({ placeOrder: true, intent: {} }));
+      stripeService.confirmPayment.and.returnValue(of({ intent: {} }));
 
       component.submit();
 
       expect(stripeService.confirmPayment.calls.mostRecent().args[3]).toBe(
         'ana@example.com'
       );
-    });
-
-    it('does not place the order when the service says the customer must still act', () => {
-      stripeService.confirmPayment.and.returnValue(
-        of({ placeOrder: false, error: 'stripePayment.genericError', intent: {} })
-      );
-
-      component.submit();
-
-      expect(stripeService.placeOrder).not.toHaveBeenCalled();
-      expect(component.error).toBe('stripePayment.genericError');
     });
 
     it('mounts the new PaymentIntent and lets the customer pay again when the client secret changed', () => {
@@ -263,6 +252,20 @@ describe('StripePaymentFormComponent', () => {
         'guest@example.com'
       );
     });
+  });
+
+  describe('billing email', () => {
+    ['', 'anonymous'].forEach((uid) =>
+      it(`${uid ? 'anonymous uid' : 'empty email'} confirms without billing email`, () => {
+        setup({}, of({}), undefined, false, uid);
+        stripeService.confirmPayment.and.returnValue(of({ intent: {} }));
+
+        component.submit();
+
+        expect(stripeService.confirmPayment).toHaveBeenCalled();
+        expect(stripeService.confirmPayment.calls.mostRecent().args[3]).toBeUndefined();
+      })
+    );
   });
 
   describe('failures and re-entry', () => {

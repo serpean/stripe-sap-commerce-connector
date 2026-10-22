@@ -162,14 +162,13 @@ describe('StripePaymentService', () => {
 
           service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
             expect(result.error).toBeUndefined();
-            expect(result.placeOrder).toBeTrue();
             expect(result.intent?.status).toBe('requires_action');
             done();
           });
         })
     );
 
-    it('3DS requires_action is not placed', (done) => {
+    it('non-instruction requires_action is left to the server', (done) => {
       occService.ensureIntent.and.returnValue(
         of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
       );
@@ -184,8 +183,8 @@ describe('StripePaymentService', () => {
       const service = createService();
 
       service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
-        expect(result.placeOrder).toBeFalse();
-        expect(result.error).toBe('stripePayment.genericError');
+        expect(result.error).toBeUndefined();
+        expect(result.intent?.status).toBe('requires_action');
         done();
       });
     });

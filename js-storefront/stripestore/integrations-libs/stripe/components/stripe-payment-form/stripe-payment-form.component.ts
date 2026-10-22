@@ -9,6 +9,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  inject,
   OnDestroy,
   OnInit,
   ViewChild,
@@ -59,6 +60,7 @@ export class StripePaymentFormComponent
   protected stripeSetup = false;
   protected placingOrder = false;
   protected isReturningFromRedirect = false;
+  protected activeCartFacade = inject(ActiveCartFacade);
 
   constructor(
     protected stripeService: StripePaymentService,
@@ -68,8 +70,7 @@ export class StripePaymentFormComponent
     protected routingService: RoutingService,
     protected route: ActivatedRoute,
     protected router: Router,
-    protected changeDetector: ChangeDetectorRef,
-    protected activeCartFacade: ActiveCartFacade
+    protected changeDetector: ChangeDetectorRef
   ) {
     this.subscription.add(
       this.checkoutFlowOrchestrator
@@ -117,8 +118,6 @@ export class StripePaymentFormComponent
     this.elements = this.stripe.elements(options);
     this.paymentElement = this.elements.create('payment', {
       layout: 'tabs',
-      // The email is sent in confirmPayment from the cart.
-      fields: { billingDetails: { email: 'never' } },
     });
     this.paymentElement.mount(this.paymentElementRef.nativeElement);
   }
@@ -216,10 +215,6 @@ export class StripePaymentFormComponent
               this.changeDetector.markForCheck();
               return;
             }
-            if (result.placeOrder === false) {
-              this.changeDetector.markForCheck();
-              return;
-            }
             this.translation
               .translate('stripePayment.success')
               .pipe(take(1))
@@ -245,7 +240,8 @@ export class StripePaymentFormComponent
       return undefined;
     }
     const separator = uid.indexOf('|');
-    return separator >= 0 ? uid.substring(separator + 1) : uid;
+    const email = separator >= 0 ? uid.substring(separator + 1) : uid;
+    return email.includes('@') && email !== 'anonymous' ? email : undefined;
   }
 
   ngOnDestroy(): void {

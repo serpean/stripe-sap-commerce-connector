@@ -129,7 +129,6 @@ export class StripePaymentService {
         elements,
         confirmParams: {
           return_url: this.currentUrl(),
-          // The Payment Element hides the email field: Multibanco needs it.
           ...(billingEmail
             ? { payment_method_data: { billing_details: { email: billingEmail } } }
             : {}),
@@ -146,29 +145,8 @@ export class StripePaymentService {
         if (!paymentIntent) {
           return { error: 'stripePayment.noPaymentIntent' };
         }
-        const intent = this.mapPaymentIntent(paymentIntent);
-        if (
-          paymentIntent.status === 'requires_action' &&
-          !this.isInstructionsAction(paymentIntent)
-        ) {
-          // The customer must still act (for example, authenticate): do not place the order.
-          return {
-            intent,
-            placeOrder: false,
-            error: 'stripePayment.genericError',
-          };
-        }
-        return { intent, placeOrder: true };
+        return { intent: this.mapPaymentIntent(paymentIntent) };
       }),
-    );
-  }
-
-  /** A voucher or bank transfer: the customer pays later, so the order is placed now. */
-  protected isInstructionsAction(paymentIntent: PaymentIntent): boolean {
-    const type = paymentIntent.next_action?.type;
-    return (
-      type === 'multibanco_display_details' ||
-      type === 'display_bank_transfer_instructions'
     );
   }
 
