@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
@@ -63,6 +64,7 @@ public class DefaultStripePaymentIntentServiceTest
 	private StripeOrderAuthorizationService authorizationService;
 	private StripeLineItemsBuilder lineItemsBuilder;
 	private StripeCustomerService customerService;
+	private StripeCashBalanceService cashBalanceService;
 	private DefaultStripePaymentIntentService service;
 	private CartModel cart;
 
@@ -104,6 +106,8 @@ public class DefaultStripePaymentIntentServiceTest
 		customerService = mock(StripeCustomerService.class);
 		when(customerService.customerIdFor(any())).thenReturn(Optional.empty());
 		service.setStripeCustomerService(customerService);
+		cashBalanceService = mock(StripeCashBalanceService.class);
+		service.setStripeCashBalanceService(cashBalanceService);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -620,6 +624,54 @@ public class DefaultStripePaymentIntentServiceTest
 		verify(gateway).cancelPaymentIntent("pi_1", "release-pi_1-cancel");
 		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
 		assertEquals(StripePaymentIntentState.CANCELED, record.getState());
+	}
+
+	@Test
+	public void cancellingTransferIntentSchedulesRefundCheck()
+	{
+		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
+		transfer.setCustomer("cus_1");
+		transfer.setCurrency("eur");
+		transfer.setPaymentMethodTypes(java.util.List.of("customer_balance"));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(gateway).cancelPaymentIntent("pi_1", "release-pi_1-cancel");
+		verify(cashBalanceService).scheduleRefundCheck("cus_1", "eur");
+	}
+
+	@Test
+	public void schedulingFailureNeverBreaksTheCancel()
+	{
+		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
+		transfer.setCustomer("cus_1");
+		transfer.setCurrency("eur");
+		transfer.setPaymentMethodTypes(java.util.List.of("customer_balance"));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
+		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
+		doThrow(new IllegalStateException("db down")).when(cashBalanceService).scheduleRefundCheck(anyString(), anyString());
+
+		service.releaseFunds("pi_1", "test");
+
+		assertEquals(StripePaymentIntentState.CANCELED, record.getState());
+	}
+
+	@Test
+	public void cancellingCardIntentSchedulesNothing()
+	{
+		final PaymentIntent card = intent("pi_1", "requires_capture", 1000);
+		card.setCustomer("cus_1");
+		card.setCurrency("eur");
+		card.setPaymentMethodTypes(java.util.List.of("card"));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(card);
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(cashBalanceService, never()).scheduleRefundCheck(anyString(), anyString());
 	}
 
 	@Test

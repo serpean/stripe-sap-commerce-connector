@@ -41,6 +41,12 @@ public interface StripeGateway
 	long retrieveCashBalance(String customerId, String currency);
 
 	/**
+	 * The id of the newest cash balance transaction of the customer, or null when there is none. The id names the
+	 * funds of the balance: new funds or a returned payment give a new id.
+	 */
+	String retrieveLatestCashBalanceTransactionId(String customerId);
+
+	/**
 	 * Refunds the customer cash balance to the customer ({@code origin=customer_balance}). Stripe asks the customer for
 	 * bank details by email.
 	 */

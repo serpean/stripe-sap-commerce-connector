@@ -54,6 +54,7 @@ public class DefaultStripeCashBalanceServiceTest
 		when(timeService.getCurrentTime()).thenReturn(new Date(1_000_000L));
 		when(searchService.<TaskModel>search(any(FlexibleSearchQuery.class))).thenReturn(searchResult);
 		when(searchResult.getResult()).thenReturn(List.of());
+		when(gateway.retrieveLatestCashBalanceTransactionId(anyString())).thenReturn("cbtxn_1");
 		when(modelService.create(TaskModel.class)).thenAnswer(invocation -> new TaskModel());
 
 		service = new DefaultStripeCashBalanceService();
@@ -73,7 +74,7 @@ public class DefaultStripeCashBalanceServiceTest
 
 		service.refundUnappliedBalance(CUSTOMER, "eur");
 
-		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-5000");
+		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-cbtxn_1-5000");
 	}
 
 	@Test
@@ -90,6 +91,51 @@ public class DefaultStripeCashBalanceServiceTest
 	}
 
 	@Test
+	public void keptBalanceSchedulesFollowUpCheck()
+	{
+		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(5000L);
+		when(gateway.listOpenPaymentIntents(CUSTOMER))
+				.thenReturn(List.of(paymentIntent("display_bank_transfer_instructions")));
+		final TaskModel created = mock(TaskModel.class);
+		when(modelService.create(TaskModel.class)).thenReturn(created);
+
+		service.refundUnappliedBalance(CUSTOMER, "eur");
+
+		verify(created).setContext("cash-refund-check:cus_1:eur");
+		verify(created).setExecutionDate(new Date(1_000_000L + 3_600_000L));
+		verify(taskService).scheduleTask(created);
+	}
+
+	@Test
+	public void refundKeyChangesWhenNewFundsArriveWithSameAmount()
+	{
+		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(1234L);
+		when(gateway.listOpenPaymentIntents(CUSTOMER)).thenReturn(List.of());
+		when(gateway.retrieveLatestCashBalanceTransactionId(CUSTOMER)).thenReturn("cbtxn_1", "cbtxn_2");
+
+		service.refundUnappliedBalance(CUSTOMER, "eur");
+		service.refundUnappliedBalance(CUSTOMER, "eur");
+
+		final ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+		verify(gateway, times(2)).createCashBalanceRefund(any(), org.mockito.ArgumentMatchers.eq(1234L), any(),
+				keys.capture());
+		org.junit.Assert.assertNotEquals(keys.getAllValues().get(0), keys.getAllValues().get(1));
+	}
+
+	@Test
+	public void openTransferInOtherCurrencyDoesNotKeepBalance()
+	{
+		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(5000L);
+		final PaymentIntent usd = paymentIntent("display_bank_transfer_instructions");
+		usd.setCurrency("usd");
+		when(gateway.listOpenPaymentIntents(CUSTOMER)).thenReturn(List.of(usd));
+
+		service.refundUnappliedBalance(CUSTOMER, "eur");
+
+		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-cbtxn_1-5000");
+	}
+
+	@Test
 	public void refundsBalanceWhenOnlyVoucherPaymentIsOpen()
 	{
 		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(5000L);
@@ -97,7 +143,7 @@ public class DefaultStripeCashBalanceServiceTest
 
 		service.refundUnappliedBalance(CUSTOMER, "eur");
 
-		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-5000");
+		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-cbtxn_1-5000");
 	}
 
 	@Test
@@ -116,6 +162,7 @@ public class DefaultStripeCashBalanceServiceTest
 	public void refundKeyIsStablePerBalanceAmount()
 	{
 		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(1234L);
+		when(gateway.retrieveLatestCashBalanceTransactionId(CUSTOMER)).thenReturn("cbtxn_1");
 		when(gateway.listOpenPaymentIntents(CUSTOMER)).thenReturn(List.of());
 
 		service.refundUnappliedBalance(CUSTOMER, "eur");
@@ -146,6 +193,7 @@ public class DefaultStripeCashBalanceServiceTest
 	{
 		final TaskModel pending = new TaskModel();
 		pending.setContext("cash-refund-check:cus_1:eur");
+		pending.setExecutionDate(new Date(9_000_000L));
 		when(searchResult.getResult()).thenReturn(List.of(pending));
 
 		service.scheduleRefundCheck(CUSTOMER, "eur");
@@ -159,6 +207,7 @@ public class DefaultStripeCashBalanceServiceTest
 	{
 		final PaymentIntent paymentIntent = new PaymentIntent();
 		paymentIntent.setStatus("requires_action");
+		paymentIntent.setCurrency("eur");
 		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
 		nextAction.setType(nextActionType);
 		paymentIntent.setNextAction(nextAction);

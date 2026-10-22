@@ -3,6 +3,7 @@ package com.stripe.core.payment.impl;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
@@ -58,6 +59,7 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
 	private StripeLineItemsBuilder stripeLineItemsBuilder;
 	private StripeCustomerService stripeCustomerService;
+	private StripeCashBalanceService stripeCashBalanceService;
 	private ModelService modelService;
 
 	@Override
@@ -160,6 +162,30 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				stripeGateway.cancelPaymentIntent(paymentIntentId, "release-" + paymentIntentId + "-cancel");
 			}
 			updateRecordState(paymentIntentId, StripePaymentIntentState.CANCELED);
+			scheduleCashBalanceCheck(intent);
+		}
+	}
+
+	/**
+	 * A cancelled bank transfer PaymentIntent returns the money it received to the cash balance of the customer, and
+	 * Stripe sends no event for it. A check of the balance is planned, so that money without an order is refunded. A
+	 * failure to plan never breaks the cancel.
+	 */
+	private void scheduleCashBalanceCheck(final PaymentIntent intent)
+	{
+		if (StringUtils.isBlank(intent.getCustomer()) || StringUtils.isBlank(intent.getCurrency())
+				|| intent.getPaymentMethodTypes() == null || !intent.getPaymentMethodTypes().contains("customer_balance"))
+		{
+			return;
+		}
+		try
+		{
+			stripeCashBalanceService.scheduleRefundCheck(intent.getCustomer(), intent.getCurrency());
+		}
+		catch (final RuntimeException e)
+		{
+			LOG.warn("Cash balance check of Stripe customer {} is not planned after the cancel of {}: {}",
+					intent.getCustomer(), intent.getId(), e.getMessage());
 		}
 	}
 
@@ -519,6 +545,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public void setStripeLineItemsBuilder(final StripeLineItemsBuilder stripeLineItemsBuilder)
 	{
 		this.stripeLineItemsBuilder = stripeLineItemsBuilder;
+	}
+
+	public void setStripeCashBalanceService(final StripeCashBalanceService stripeCashBalanceService)
+	{
+		this.stripeCashBalanceService = stripeCashBalanceService;
 	}
 
 	public void setStripeCustomerService(final StripeCustomerService stripeCustomerService)

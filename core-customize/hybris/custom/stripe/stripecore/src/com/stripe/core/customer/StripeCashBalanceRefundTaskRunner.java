@@ -1,6 +1,7 @@
 package com.stripe.core.customer;
 
 import com.stripe.core.customer.impl.DefaultStripeCashBalanceService;
+import com.stripe.core.gateway.StripeGatewayException;
 import de.hybris.platform.task.RetryLaterException;
 import de.hybris.platform.task.TaskModel;
 import de.hybris.platform.task.TaskRunner;
@@ -12,7 +13,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Checks the cash balance of one Stripe customer and currency (the context of the task, text
- * {@code cash-refund-check:<customer>:<currency>}) and refunds what no open bank transfer can use. A Stripe error gives
+ * {@code cash-refund-check:<customer>:<currency>}) and refunds what no open bank transfer can use. A non-retryable Stripe error ends the task at once with an ERROR that names the Stripe code. Another error gives
  * a {@link RetryLaterException} after 30 s, 2 min, 8 min and 30 min. After the fifth failed attempt the runner logs an
  * ERROR and stops. The refund key holds the balance, so a retry never refunds twice.
  */
@@ -41,6 +42,12 @@ public class StripeCashBalanceRefundTaskRunner implements TaskRunner<TaskModel>
 		}
 		catch (final RuntimeException e)
 		{
+			if (e instanceof StripeGatewayException gatewayError && !gatewayError.isRetryable())
+			{
+				LOG.error("Cash balance of Stripe customer {} ({}) is not refunded: Stripe error {}. "
+						+ "No retries; check the customer in Stripe", parts[0], parts[1], gatewayError.getStripeCode());
+				return;
+			}
 			final int attempt = (task.getRetry() == null ? 0 : task.getRetry()) + 1;
 			if (attempt >= MAX_ATTEMPTS)
 			{

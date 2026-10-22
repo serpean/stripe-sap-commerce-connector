@@ -13,11 +13,13 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.CashBalance;
 import com.stripe.model.Customer;
+import com.stripe.model.CustomerCashBalanceTransaction;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.Webhook;
+import com.stripe.param.CustomerCashBalanceTransactionListParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCancelParams;
@@ -130,6 +132,17 @@ public class DefaultStripeGateway implements StripeGateway
 		final Map<String, Long> available = balance.getAvailable();
 		final Long amount = available == null ? null : available.get(currency.toLowerCase(Locale.ROOT));
 		return amount == null ? 0L : amount;
+	}
+
+	@Override
+	public String retrieveLatestCashBalanceTransactionId(final String customerId)
+	{
+		final StripeClient client = newClient();
+		final CustomerCashBalanceTransactionListParams params = CustomerCashBalanceTransactionListParams.builder()
+				.setLimit(1L).build();
+		return call("list_cash_balance_transactions",
+				() -> client.v1().customers().cashBalanceTransactions().list(customerId, params).getData().stream()
+						.findFirst().map(CustomerCashBalanceTransaction::getId).orElse(null));
 	}
 
 	@Override

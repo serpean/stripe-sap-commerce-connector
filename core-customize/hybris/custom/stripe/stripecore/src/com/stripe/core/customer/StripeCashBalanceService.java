@@ -15,8 +15,10 @@ public interface StripeCashBalanceService
 
 	/**
 	 * Refunds the available balance of the customer in this currency, unless the customer has an open bank transfer
-	 * that Stripe can still apply the money to. Does nothing when the balance is zero. The refund key holds the amount,
-	 * so a repeated call refunds the same balance only once.
+	 * that Stripe can still apply the money to in this currency. Does nothing when the balance is zero. When the balance is
+	 * kept, a new check is planned: Stripe sends no event when a cancelled transfer returns money to the balance. The
+	 * refund key holds the latest cash balance transaction and the amount, so a repeated call refunds the same funds only
+	 * once and new funds of the same amount get a new key.
 	 */
 	void refundUnappliedBalance(String customerId, String currency);
 }

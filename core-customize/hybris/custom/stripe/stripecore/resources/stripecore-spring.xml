@@ -43,6 +43,7 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
         <property name="stripeCustomerService" ref="stripeCustomerService"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
         <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>

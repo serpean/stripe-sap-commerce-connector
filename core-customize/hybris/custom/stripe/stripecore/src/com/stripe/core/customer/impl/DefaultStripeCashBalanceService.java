@@ -35,7 +35,7 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeCashBalanceService.class);
 	private static final String BANK_TRANSFER_INSTRUCTIONS = "display_bank_transfer_instructions";
 	private static final String PENDING_TASKS = "SELECT {pk} FROM {Task} WHERE {runnerBean} = ?runner "
-			+ "AND ({failed} IS NULL OR {failed} = ?notFailed)";
+			+ "AND ({failed} IS NULL OR {failed} = ?notFailed) AND {executionDate} > ?now";
 
 	private StripeGateway stripeGateway;
 	private StripeConfigurationService stripeConfigurationService;
@@ -71,20 +71,24 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 			LOG.info("Stripe customer {} has no cash balance in {}: nothing to refund", customerId, currency);
 			return;
 		}
-		if (hasOpenBankTransfer(customerId))
+		if (hasOpenBankTransfer(customerId, currency))
 		{
-			LOG.info("Stripe customer {} has an open bank transfer: the cash balance of {} {} is kept", customerId, balance,
-					currency);
+			LOG.info("Stripe customer {} has an open bank transfer: the cash balance of {} {} is kept; checked again later",
+					customerId, balance, currency);
+			scheduleRefundCheck(customerId, currency);
 			return;
 		}
-		final String key = refundKey(customerId, currency, balance);
+		final String latestTransaction = stripeGateway.retrieveLatestCashBalanceTransactionId(customerId);
+		final String key = refundKey(customerId, currency, latestTransaction, balance);
 		stripeGateway.createCashBalanceRefund(customerId, balance, currency, key);
 		LOG.info("Refunded the cash balance of Stripe customer {}: {} {} minor units", customerId, balance, currency);
 	}
 
-	static String refundKey(final String customerId, final String currency, final long balance)
+	static String refundKey(final String customerId, final String currency, final String latestTransactionId,
+			final long balance)
 	{
-		return "cash-refund-" + customerId + "-" + currency.toLowerCase(Locale.ROOT) + "-" + balance;
+		return "cash-refund-" + customerId + "-" + currency.toLowerCase(Locale.ROOT) + "-" + latestTransactionId + "-"
+				+ balance;
 	}
 
 	public static String contextOf(final String customerId, final String currency)
@@ -92,10 +96,11 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 		return CONTEXT_PREFIX + customerId + ":" + currency.toLowerCase(Locale.ROOT);
 	}
 
-	private boolean hasOpenBankTransfer(final String customerId)
+	private boolean hasOpenBankTransfer(final String customerId, final String currency)
 	{
 		final List<PaymentIntent> open = stripeGateway.listOpenPaymentIntents(customerId);
-		return open != null && open.stream().anyMatch(DefaultStripeCashBalanceService::isBankTransferAwaitingFunds);
+		return open != null && open.stream().anyMatch(
+				paymentIntent -> currency.equalsIgnoreCase(paymentIntent.getCurrency()) && isBankTransferAwaitingFunds(paymentIntent));
 	}
 
 	private static boolean isBankTransferAwaitingFunds(final PaymentIntent paymentIntent)
@@ -105,11 +110,16 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 				&& BANK_TRANSFER_INSTRUCTIONS.equals(paymentIntent.getNextAction().getType());
 	}
 
+	/**
+	 * A check is pending when it is planned for later. A task that is running now is due, so it does not count: the
+	 * follow-up of a kept balance can be planned from inside the running check.
+	 */
 	private boolean hasPendingCheck(final String key)
 	{
 		final FlexibleSearchQuery query = new FlexibleSearchQuery(PENDING_TASKS);
 		query.addQueryParameter("runner", REFUND_RUNNER_BEAN);
 		query.addQueryParameter("notFailed", Boolean.FALSE);
+		query.addQueryParameter("now", timeService.getCurrentTime());
 		final List<TaskModel> tasks = flexibleSearchService.<TaskModel>search(query).getResult();
 		return tasks.stream().anyMatch(task -> key.equals(task.getContext()));
 	}

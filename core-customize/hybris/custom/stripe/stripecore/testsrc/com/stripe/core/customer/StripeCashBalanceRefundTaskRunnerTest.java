@@ -41,6 +41,17 @@ public class StripeCashBalanceRefundTaskRunnerTest
 	}
 
 	@Test
+	public void nonRetryableStripeErrorEndsAtOnce() throws Exception
+	{
+		doThrow(new StripeGatewayException("x", "email_invalid", false, false, null)).when(service)
+				.refundUnappliedBalance("cus_1", "eur");
+
+		runner.run(taskService, task);
+
+		verify(service).refundUnappliedBalance("cus_1", "eur");
+	}
+
+	@Test
 	public void failureRetriesWithBackoffAndStopsAfterFiveAttempts()
 	{
 		doThrow(new StripeGatewayException("x", "api_error", true, false, null)).when(service)
