@@ -5,4 +5,5 @@
  */
 
 export * from './stripe-payment-form/index';
+export * from './stripe-payment-instructions/index';
 export * from './stripe-payment-components.module';

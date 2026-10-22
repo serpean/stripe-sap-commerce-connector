@@ -1,0 +1,20 @@
+.cx-stripe-instructions {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--cx-color-light, #d3d6db);
+
+  dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0 0 1rem;
+  }
+
+  dt {
+    font-weight: 600;
+  }
+
+  dd {
+    margin: 0;
+  }
+}

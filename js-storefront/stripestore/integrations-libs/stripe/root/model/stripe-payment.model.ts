@@ -15,6 +15,11 @@ export interface StripePaymentResult {
   error?: string;
   /** The cart now has a new PaymentIntent: mount it and let the customer pay again. */
   newClientSecret?: string;
+  /**
+   * False when the customer must still act on the PaymentIntent (for example
+   * a pending authentication): the order must not be placed yet.
+   */
+  placeOrder?: boolean;
 }
 
 export interface StripeConfigResponse {
@@ -34,9 +39,17 @@ export interface StripePaymentInfo {
   paymentMethodType?: string;
   cardBrand?: string;
   cardLast4?: string;
-  cardExpMonth?: string;
-  cardExpYear?: string;
+  cardExpMonth?: number;
+  cardExpYear?: number;
   paymentStatus?: StripePaymentStatus;
+  /** Hosted page with the voucher or bank transfer instructions. */
+  instructionsUrl?: string;
+  /** Payment reference. Multibanco: "<entity> <reference>". */
+  paymentReference?: string;
+  /** ISO date after which the payment instructions expire. */
+  instructionsExpireAt?: string;
+  /** Formatted amount still to pay, with currency. */
+  amountRemaining?: string;
 }
 
 // Module augmentation for Spartacus OccEndpoints

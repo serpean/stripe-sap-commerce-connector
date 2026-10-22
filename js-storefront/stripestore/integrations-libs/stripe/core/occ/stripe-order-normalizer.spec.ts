@@ -11,8 +11,8 @@ describe('StripeOrderNormalizer', () => {
         paymentMethodType: 'card',
         cardBrand: 'visa',
         cardLast4: '4242',
-        cardExpMonth: '12',
-        cardExpYear: '2030',
+        cardExpMonth: 12,
+        cardExpYear: 2030,
         paymentStatus: 'ACCEPTED',
       },
     };

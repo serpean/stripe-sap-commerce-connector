@@ -20,8 +20,8 @@ export class StripeOrderNormalizer implements Converter<Order, Order> {
         ...result.paymentInfo,
         cardType: { name: info.cardBrand },
         cardNumber: `${MASK}${info.cardLast4}`,
-        expiryMonth: info.cardExpMonth,
-        expiryYear: info.cardExpYear,
+        expiryMonth: info.cardExpMonth?.toString(),
+        expiryYear: info.cardExpYear?.toString(),
       };
     }
     return result;

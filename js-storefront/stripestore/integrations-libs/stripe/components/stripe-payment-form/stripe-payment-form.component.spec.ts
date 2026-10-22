@@ -19,6 +19,7 @@ import {
   RoutingService,
   TranslationService,
 } from '@spartacus/core';
+import { ActiveCartFacade } from '@spartacus/cart/base/root';
 import { Stripe } from '@stripe/stripe-js';
 import { Order } from '@spartacus/order/root';
 import { Observable, Subject, mergeMap, of, throwError, timer } from 'rxjs';
@@ -60,7 +61,8 @@ describe('StripePaymentFormComponent', () => {
     queryParams: Record<string, string> = {},
     placeOrderResult: Observable<unknown> = of({}),
     stripe$: Observable<Stripe | null> | undefined = undefined,
-    onPush = false
+    onPush = false,
+    cartUid = 'ana@example.com'
   ): void {
     paymentElement = {
       mount: jasmine.createSpy('mount'),
@@ -94,6 +96,10 @@ describe('StripePaymentFormComponent', () => {
         {
           provide: CheckoutFlowOrchestratorService,
           useValue: { getPaymentProvider: () => of('STRIPE') },
+        },
+        {
+          provide: ActiveCartFacade,
+          useValue: { getActive: () => of({ user: { uid: cartUid } }) },
         },
         { provide: ActivatedRoute, useValue: { queryParams: of(queryParams) } },
         { provide: Router, useValue: { navigate: jasmine.createSpy('navigate') } },
@@ -129,6 +135,27 @@ describe('StripePaymentFormComponent', () => {
       expect(routingService.go).toHaveBeenCalledWith({
         cxRoute: 'orderConfirmation',
       });
+    });
+
+    it('sends the cart email as billing email', () => {
+      stripeService.confirmPayment.and.returnValue(of({ placeOrder: true, intent: {} }));
+
+      component.submit();
+
+      expect(stripeService.confirmPayment.calls.mostRecent().args[3]).toBe(
+        'ana@example.com'
+      );
+    });
+
+    it('does not place the order when the service says the customer must still act', () => {
+      stripeService.confirmPayment.and.returnValue(
+        of({ placeOrder: false, error: 'stripePayment.genericError', intent: {} })
+      );
+
+      component.submit();
+
+      expect(stripeService.placeOrder).not.toHaveBeenCalled();
+      expect(component.error).toBe('stripePayment.genericError');
     });
 
     it('mounts the new PaymentIntent and lets the customer pay again when the client secret changed', () => {
@@ -222,6 +249,19 @@ describe('StripePaymentFormComponent', () => {
 
       expect(component.error).toBe('Card declined');
       expect(stripeService.placeOrder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('guest checkout', () => {
+    it('sends the guest email without the guid prefix', () => {
+      setup({}, of({}), undefined, false, '8f2a-11ee|guest@example.com');
+      stripeService.confirmPayment.and.returnValue(of({ intent: {} }));
+
+      component.submit();
+
+      expect(stripeService.confirmPayment.calls.mostRecent().args[3]).toBe(
+        'guest@example.com'
+      );
     });
   });
 

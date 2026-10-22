@@ -14,6 +14,7 @@ import {
   ViewChild,
 } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
+import { ActiveCartFacade } from '@spartacus/cart/base/root';
 import { CheckoutFlowOrchestratorService } from '@spartacus/checkout/base/components';
 import {
   GlobalMessageService,
@@ -27,7 +28,7 @@ import {
   StripePaymentElement,
   StripeElementsOptions,
 } from '@stripe/stripe-js';
-import { Subscription, take } from 'rxjs';
+import { Subscription, mergeMap, take } from 'rxjs';
 import {
   StripePaymentService,
   getStripeErrorReason,
@@ -67,7 +68,8 @@ export class StripePaymentFormComponent
     protected routingService: RoutingService,
     protected route: ActivatedRoute,
     protected router: Router,
-    protected changeDetector: ChangeDetectorRef
+    protected changeDetector: ChangeDetectorRef,
+    protected activeCartFacade: ActiveCartFacade
   ) {
     this.subscription.add(
       this.checkoutFlowOrchestrator
@@ -115,6 +117,8 @@ export class StripePaymentFormComponent
     this.elements = this.stripe.elements(options);
     this.paymentElement = this.elements.create('payment', {
       layout: 'tabs',
+      // The email is sent in confirmPayment from the cart.
+      fields: { billingDetails: { email: 'never' } },
     });
     this.paymentElement.mount(this.paymentElementRef.nativeElement);
   }
@@ -185,9 +189,21 @@ export class StripePaymentFormComponent
     }
     this.isLoading = true;
     this.error = undefined;
+    const { stripe, elements, clientSecret } = this;
     this.subscription.add(
-      this.stripeService
-        .confirmPayment(this.stripe, this.elements, this.clientSecret)
+      this.activeCartFacade
+        .getActive()
+        .pipe(
+          take(1),
+          mergeMap((cart) =>
+            this.stripeService.confirmPayment(
+              stripe,
+              elements,
+              clientSecret,
+              this.billingEmail(cart?.user?.uid)
+            )
+          )
+        )
         .subscribe({
           next: (result) => {
             this.isLoading = false;
@@ -197,6 +213,10 @@ export class StripePaymentFormComponent
             }
             if (result.error) {
               this.error = result.error;
+              this.changeDetector.markForCheck();
+              return;
+            }
+            if (result.placeOrder === false) {
               this.changeDetector.markForCheck();
               return;
             }
@@ -217,6 +237,15 @@ export class StripePaymentFormComponent
           },
         })
     );
+  }
+
+  /** The cart user id is the email; for a guest it is "<guid>|<email>". */
+  protected billingEmail(uid?: string): string | undefined {
+    if (!uid) {
+      return undefined;
+    }
+    const separator = uid.indexOf('|');
+    return separator >= 0 ? uid.substring(separator + 1) : uid;
   }
 
   ngOnDestroy(): void {

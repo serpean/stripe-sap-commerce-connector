@@ -3,10 +3,10 @@
   "version": "3.0.0",
   "license": "Apache-2.0",
   "description": "Stripe Payment integration library for SAP Commerce Spartacus",
-  "homepage": "https://github.com/SAP-samples/sap-commerce-stripe-payment",
+  "homepage": "https://github.com/serpean/stripe-sap-commerce-connector",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SAP-samples/sap-commerce-stripe-payment.git"
+    "url": "https://github.com/serpean/stripe-sap-commerce-connector"
   },
   "keywords": [
     "spartacus",
