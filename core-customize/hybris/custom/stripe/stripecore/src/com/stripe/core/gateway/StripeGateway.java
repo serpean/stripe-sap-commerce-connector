@@ -8,6 +8,7 @@ import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
+import java.util.List;
 
 /**
  * The only door to the Stripe API. Each method throws {@link StripeGatewayException} on error.
@@ -33,6 +34,23 @@ public interface StripeGateway
 	Customer createCustomer(CustomerCreateParams params, String idempotencyKey);
 
 	Customer updateCustomer(String id, CustomerUpdateParams params, String idempotencyKey);
+
+	/**
+	 * The available cash balance of the customer in this currency, in minor units (0 when there is none).
+	 */
+	long retrieveCashBalance(String customerId, String currency);
+
+	/**
+	 * Refunds the customer cash balance to the customer ({@code origin=customer_balance}). Stripe asks the customer for
+	 * bank details by email.
+	 */
+	Refund createCashBalanceRefund(String customerId, long amount, String currency, String idempotencyKey);
+
+	/**
+	 * The PaymentIntents of the customer with status requires_action, requires_confirmation or processing. Stripe lists
+	 * the newest 100 PaymentIntents of the customer; the gateway filters them by status.
+	 */
+	List<PaymentIntent> listOpenPaymentIntents(String customerId);
 
 	/**
 	 * The id of the Stripe account of the secret key plus {@code ":live"} or {@code ":test"}. The gateway asks Stripe

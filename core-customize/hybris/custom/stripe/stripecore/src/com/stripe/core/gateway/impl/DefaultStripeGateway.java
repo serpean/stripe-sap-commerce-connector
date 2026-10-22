@@ -11,6 +11,7 @@ import com.stripe.exception.RateLimitException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
+import com.stripe.model.CashBalance;
 import com.stripe.model.Customer;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
@@ -22,9 +23,12 @@ import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCaptureParams;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.PaymentIntentListParams;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import com.stripe.param.RefundCreateParams;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,6 +44,8 @@ public class DefaultStripeGateway implements StripeGateway
 	private static final int MAX_NETWORK_RETRIES = 2;
 	private static final int HTTP_SERVER_ERROR = 500;
 	private static final int HTTP_CONFLICT = 409;
+	private static final Long OPEN_PAYMENT_INTENT_LIMIT = 100L;
+	private static final Set<String> OPEN_STATUSES = Set.of("requires_action", "requires_confirmation", "processing");
 	private static final Set<String> RETRYABLE_CODES = Set.of("idempotency_key_in_use", "lock_timeout");
 
 	private StripeConfigurationService stripeConfigurationService;
@@ -114,6 +120,43 @@ public class DefaultStripeGateway implements StripeGateway
 	{
 		final StripeClient client = newClient();
 		return call("update_customer", () -> client.v1().customers().update(id, params, options(idempotencyKey)));
+	}
+
+	@Override
+	public long retrieveCashBalance(final String customerId, final String currency)
+	{
+		final StripeClient client = newClient();
+		final CashBalance balance = call("retrieve_cash_balance", () -> client.v1().customers().cashBalance().retrieve(customerId));
+		final Map<String, Long> available = balance.getAvailable();
+		final Long amount = available == null ? null : available.get(currency.toLowerCase(Locale.ROOT));
+		return amount == null ? 0L : amount;
+	}
+
+	@Override
+	public Refund createCashBalanceRefund(final String customerId, final long amount, final String currency,
+			final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		final RefundCreateParams params = RefundCreateParams.builder()
+				.setCustomer(customerId)
+				.setOrigin(RefundCreateParams.Origin.CUSTOMER_BALANCE)
+				.setAmount(amount)
+				.setCurrency(currency.toLowerCase(Locale.ROOT))
+				.build();
+		return call("create_cash_balance_refund", () -> client.v1().refunds().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public List<PaymentIntent> listOpenPaymentIntents(final String customerId)
+	{
+		final StripeClient client = newClient();
+		final PaymentIntentListParams params = PaymentIntentListParams.builder()
+				.setCustomer(customerId)
+				.setLimit(OPEN_PAYMENT_INTENT_LIMIT)
+				.build();
+		return call("list_payment_intents", () -> client.v1().paymentIntents().list(params).getData().stream()
+				.filter(paymentIntent -> OPEN_STATUSES.contains(paymentIntent.getStatus()))
+				.toList());
 	}
 
 	@Override

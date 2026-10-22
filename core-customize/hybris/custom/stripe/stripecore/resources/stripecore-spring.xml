@@ -192,6 +192,22 @@
         <property name="timeService" ref="timeService"/>
         <property name="stripePaymentIntentEventHandler" ref="stripePaymentIntentEventHandler"/>
         <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
+    </bean>
+
+    <!-- Bank transfer money that Stripe holds as cash balance and no open transfer can use is refunded. -->
+    <alias name="defaultStripeCashBalanceService" alias="stripeCashBalanceService"/>
+    <bean id="defaultStripeCashBalanceService" class="com.stripe.core.customer.impl.DefaultStripeCashBalanceService">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="modelService" ref="modelService"/>
+        <property name="taskService" ref="taskService"/>
+        <property name="timeService" ref="timeService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
+    <bean id="stripeCashBalanceRefundTaskRunner" class="com.stripe.core.customer.StripeCashBalanceRefundTaskRunner">
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
     </bean>
 
     <!-- Order process: replaces the SAP beans checkOrderAction and takePaymentAction (by name, whichever extension

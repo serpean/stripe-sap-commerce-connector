@@ -4,7 +4,9 @@ import com.google.gson.JsonParseException;
 import com.stripe.core.enums.StripeWebhookEventState;
 import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripeWebhookEventModel;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.exception.EventDataObjectDeserializationException;
+import com.stripe.model.CashBalance;
 import com.stripe.model.Event;
 import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
@@ -57,6 +59,7 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 	private TimeService timeService;
 	private StripePaymentIntentEventHandler stripePaymentIntentEventHandler;
 	private StripeRefundEventHandler stripeRefundEventHandler;
+	private StripeCashBalanceService stripeCashBalanceService;
 
 	@Override
 	public void run(final TaskService taskService, final TaskModel task) throws RetryLaterException
@@ -172,6 +175,22 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 			case "charge.refunded":
 			case "refund.updated":
 				return stripeRefundEventHandler.handle(dataObjectOf(event, parse(event)));
+			case "cash_balance.funds_available":
+				final StripeObject cashBalance = dataObjectOf(event, parse(event));
+				if (cashBalance instanceof CashBalance balance && StringUtils.isNotBlank(balance.getCustomer()))
+				{
+					if (balance.getAvailable() != null)
+					{
+						balance.getAvailable().forEach((currency, amount) -> {
+							if (amount != null && amount > 0L)
+							{
+								stripeCashBalanceService.scheduleRefundCheck(balance.getCustomer(), currency);
+							}
+						});
+					}
+					return StripeWebhookOutcome.PROCESSED;
+				}
+				throw new StripeWebhookException("Event " + event.getEventId() + " holds no cash balance", false);
 			default:
 				LOG.debug("Stripe webhook {} has type {}: ignored", event.getEventId(), type);
 				return StripeWebhookOutcome.IGNORED;
@@ -277,6 +296,11 @@ public class StripeWebhookEventTaskRunner implements TaskRunner<TaskModel>
 	public void setStripePaymentIntentEventHandler(final StripePaymentIntentEventHandler stripePaymentIntentEventHandler)
 	{
 		this.stripePaymentIntentEventHandler = stripePaymentIntentEventHandler;
+	}
+
+	public void setStripeCashBalanceService(final StripeCashBalanceService stripeCashBalanceService)
+	{
+		this.stripeCashBalanceService = stripeCashBalanceService;
 	}
 
 	public void setStripeRefundEventHandler(final StripeRefundEventHandler stripeRefundEventHandler)
