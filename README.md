@@ -172,7 +172,7 @@ Rules:
 The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`).
 
 - **Capture.** `takePaymentAction` captures the current order total. If the order changed, the total is lower than the authorized amount, and Stripe releases the rest.
-- **Partial capture.** The same action captures a part of the authorized amount.
+- **Partial capture.** The same action captures a part of the authorized amount. When the PaymentIntent has line items, the capture sends line items that add up to the captured amount: the order lines when the order total is that amount, else one line "Order <code>". The line items never change the captured amount.
 - **Cancel.** The cancel strategy reads the live PaymentIntent, not only the SAP entries:
   - authorized and the new total is 0: the authorization is voided;
   - authorized and the new total is above 0: nothing happens now, and the capture takes the current total;

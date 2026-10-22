@@ -19,10 +19,16 @@
     </bean>
 
     <bean id="stripeCaptureCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripeCaptureCommand"/>
+          class="com.stripe.core.commands.impl.StripeCaptureCommand">
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+        <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
+    </bean>
 
     <bean id="stripePartialCaptureCommand" parent="abstractStripeCommand"
-          class="com.stripe.core.commands.impl.StripePartialCaptureCommand"/>
+          class="com.stripe.core.commands.impl.StripePartialCaptureCommand">
+        <property name="stripeTransactionLookup" ref="stripeTransactionLookup"/>
+        <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
+    </bean>
 
     <bean id="stripeVoidCommand" parent="abstractStripeCommand"
           class="com.stripe.core.commands.impl.StripeVoidCommand">

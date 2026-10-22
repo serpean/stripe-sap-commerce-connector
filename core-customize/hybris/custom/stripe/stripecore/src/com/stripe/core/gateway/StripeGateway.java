@@ -9,6 +9,7 @@ import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The only door to the Stripe API. Each method throws {@link StripeGatewayException} on error.
@@ -21,13 +22,24 @@ public interface StripeGateway
 	PaymentIntent updatePaymentIntent(String id, PaymentIntentUpdateParams params, String idempotencyKey);
 
 	/**
-	 * Gets the PaymentIntent with {@code payment_method} and {@code latest_charge} expanded.
+	 * Gets the PaymentIntent with {@code payment_method}, {@code latest_charge} and {@code amount_details.line_items}
+	 * expanded. stripe-java has no field for the line items: read them from the raw JSON of the PaymentIntent.
 	 */
 	PaymentIntent retrievePaymentIntent(String id);
 
 	PaymentIntent cancelPaymentIntent(String id, String idempotencyKey);
 
 	PaymentIntent capturePaymentIntent(String id, long amountToCapture, String idempotencyKey);
+
+	/**
+	 * Captures with new {@code amount_details}. Stripe needs them when the PaymentIntent has line items and less than
+	 * its amount is captured: the line items must add up to the amount to capture.
+	 *
+	 * @param amountDetails
+	 *           the {@code amount_details} hash in nested form; empty sends none
+	 */
+	PaymentIntent capturePaymentIntent(String id, long amountToCapture, Map<String, Object> amountDetails,
+			String idempotencyKey);
 
 	Refund createRefund(String paymentIntentId, long amount, String idempotencyKey);
 

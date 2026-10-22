@@ -77,6 +77,7 @@ public class DefaultStripeGateway implements StripeGateway
 		final PaymentIntentRetrieveParams params = PaymentIntentRetrieveParams.builder()
 				.addExpand("payment_method")
 				.addExpand("latest_charge")
+				.addExpand("amount_details.line_items")
 				.build();
 		return call("retrieve_payment_intent", () -> client.v1().paymentIntents().retrieve(id, params));
 	}
@@ -92,10 +93,21 @@ public class DefaultStripeGateway implements StripeGateway
 	@Override
 	public PaymentIntent capturePaymentIntent(final String id, final long amountToCapture, final String idempotencyKey)
 	{
+		return capturePaymentIntent(id, amountToCapture, Map.of(), idempotencyKey);
+	}
+
+	@Override
+	public PaymentIntent capturePaymentIntent(final String id, final long amountToCapture,
+			final Map<String, Object> amountDetails, final String idempotencyKey)
+	{
 		final StripeClient client = newClient();
-		final PaymentIntentCaptureParams params = PaymentIntentCaptureParams.builder()
-				.setAmountToCapture(amountToCapture)
-				.build();
+		final PaymentIntentCaptureParams.Builder builder = PaymentIntentCaptureParams.builder()
+				.setAmountToCapture(amountToCapture);
+		if (!amountDetails.isEmpty())
+		{
+			builder.putExtraParam("amount_details", amountDetails);
+		}
+		final PaymentIntentCaptureParams params = builder.build();
 		return call("capture_payment_intent", () -> client.v1().paymentIntents().capture(id, params, options(idempotencyKey)));
 	}
 

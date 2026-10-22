@@ -3,9 +3,11 @@ package com.stripe.core.commands.impl;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.EUR;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.PI_ID;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.intent;
+import static com.stripe.core.commands.impl.StripeCommandTestSupport.intentWithLineItems;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.wire;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -15,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.CaptureRequest;
 import de.hybris.platform.payment.commands.result.CaptureResult;
@@ -48,6 +51,21 @@ public class StripeCaptureCommandTest
 		assertEquals(TransactionStatusDetails.SUCCESFULL, result.getTransactionStatusDetails());
 		assertEquals(PI_ID, result.getRequestId());
 		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyString());
+	}
+
+	@Test
+	public void fullCaptureSendsNoAmountDetails()
+	{
+		final PaymentIntent withLines = intentWithLineItems("requires_capture", 1999L, "eur");
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(withLines);
+		when(gateway.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1"))
+				.thenReturn(intent("succeeded", 1999L, "eur"));
+
+		final CaptureResult result = command.perform(request());
+
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+		verify(gateway).capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
+		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyMap(), anyString());
 	}
 
 	@Test
