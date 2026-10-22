@@ -205,6 +205,7 @@
         <property name="taskService" ref="taskService"/>
         <property name="timeService" ref="timeService"/>
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
     </bean>
 
     <bean id="stripeCashBalanceRefundTaskRunner" class="com.stripe.core.customer.StripeCashBalanceRefundTaskRunner">
@@ -248,6 +249,8 @@
         <property name="modelService" ref="modelService"/>
         <property name="taskService" ref="taskService"/>
         <property name="timeService" ref="timeService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
     </bean>
 
     <bean id="stripePaymentAdjustmentTaskRunner" class="com.stripe.core.order.StripePaymentAdjustmentTaskRunner">

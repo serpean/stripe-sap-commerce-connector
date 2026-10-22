@@ -2,6 +2,7 @@ package com.stripe.core.customer.impl;
 
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.customer.StripeCashBalanceService;
+import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.PaymentIntent;
@@ -43,6 +44,7 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 	private TaskService taskService;
 	private TimeService timeService;
 	private FlexibleSearchService flexibleSearchService;
+	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
 
 	@Override
 	public void scheduleRefundCheck(final String customerId, final String currency)
@@ -100,7 +102,9 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 	{
 		final List<PaymentIntent> open = stripeGateway.listOpenPaymentIntents(customerId);
 		return open != null && open.stream().anyMatch(
-				paymentIntent -> currency.equalsIgnoreCase(paymentIntent.getCurrency()) && isBankTransferAwaitingFunds(paymentIntent));
+				paymentIntent -> currency.equalsIgnoreCase(paymentIntent.getCurrency())
+						&& isBankTransferAwaitingFunds(paymentIntent)
+						&& stripePaymentIntentRecordDao.findByPaymentIntentId(paymentIntent.getId()).isPresent());
 	}
 
 	private static boolean isBankTransferAwaitingFunds(final PaymentIntent paymentIntent)
@@ -147,6 +151,11 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 	public void setTimeService(final TimeService timeService)
 	{
 		this.timeService = timeService;
+	}
+
+	public void setStripePaymentIntentRecordDao(final StripePaymentIntentRecordDao stripePaymentIntentRecordDao)
+	{
+		this.stripePaymentIntentRecordDao = stripePaymentIntentRecordDao;
 	}
 
 	public void setFlexibleSearchService(final FlexibleSearchService flexibleSearchService)

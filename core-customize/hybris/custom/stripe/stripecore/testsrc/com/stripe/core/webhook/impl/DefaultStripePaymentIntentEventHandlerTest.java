@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
@@ -405,6 +406,19 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, record.getState());
 		verifyNoInteractions(placementService);
 		verify(authorizationService, never()).authorizePendingOrder(any(), any());
+	}
+
+	@Test
+	public void partiallyFundedIntentOfCancelledOrderIsReleased()
+	{
+		final OrderModel order = new OrderModel();
+		order.setStatus(de.hybris.platform.core.enums.OrderStatus.CANCELLED);
+		givenRecord(order, StripePaymentIntentState.AWAITING_FUNDS, Duration.ofHours(1));
+		withInstructions(givenLive("requires_action"), "display_bank_transfer_instructions");
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(PARTIALLY_FUNDED, eventObject, eventCreated));
+
+		verify(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
 	}
 
 	@Test

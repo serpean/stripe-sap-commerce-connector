@@ -13,8 +13,9 @@ import java.util.Set;
 
 /**
  * Denies the partial cancel of a Stripe order while its payment is pending (record state PROCESSING or
- * AWAITING_FUNDS). The money has not arrived, so the amount to adjust is not known. A full cancel is not denied: it
- * cancels the PaymentIntent. Orders not paid with Stripe are not affected.
+ * AWAITING_FUNDS). The money has not arrived, so the amount to adjust is not known. A full cancel is not denied: the
+ * cancel strategy then releases the PaymentIntent (Stripe cancels it, except in status processing, which the webhook
+ * refunds when it succeeds). Orders not paid with Stripe are not affected.
  */
 public class StripePendingPaymentCancelDenialStrategy implements OrderCancelDenialStrategy
 {

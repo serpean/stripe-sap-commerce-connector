@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.servicelayer.model.ModelService;
@@ -23,6 +25,7 @@ import de.hybris.platform.task.TaskService;
 import java.time.Duration;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,6 +40,7 @@ public class DefaultStripeCashBalanceServiceTest
 	private TaskService taskService;
 	private FlexibleSearchService searchService;
 	private SearchResult<TaskModel> searchResult;
+	private StripePaymentIntentRecordDao recordDao;
 	private DefaultStripeCashBalanceService service;
 
 	@Before
@@ -55,6 +59,8 @@ public class DefaultStripeCashBalanceServiceTest
 		when(searchService.<TaskModel>search(any(FlexibleSearchQuery.class))).thenReturn(searchResult);
 		when(searchResult.getResult()).thenReturn(List.of());
 		when(gateway.retrieveLatestCashBalanceTransactionId(anyString())).thenReturn("cbtxn_1");
+		recordDao = mock(StripePaymentIntentRecordDao.class);
+		when(recordDao.findByPaymentIntentId(any())).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
 		when(modelService.create(TaskModel.class)).thenAnswer(invocation -> new TaskModel());
 
 		service = new DefaultStripeCashBalanceService();
@@ -64,6 +70,7 @@ public class DefaultStripeCashBalanceServiceTest
 		service.setTaskService(taskService);
 		service.setTimeService(timeService);
 		service.setFlexibleSearchService(searchService);
+		service.setStripePaymentIntentRecordDao(recordDao);
 	}
 
 	@Test
@@ -120,6 +127,21 @@ public class DefaultStripeCashBalanceServiceTest
 		verify(gateway, times(2)).createCashBalanceRefund(any(), org.mockito.ArgumentMatchers.eq(1234L), any(),
 				keys.capture());
 		org.junit.Assert.assertNotEquals(keys.getAllValues().get(0), keys.getAllValues().get(1));
+	}
+
+	@Test
+	public void openTransferUnknownToTheShopDoesNotKeepBalance()
+	{
+		when(gateway.retrieveCashBalance(CUSTOMER, "eur")).thenReturn(5000L);
+		final PaymentIntent foreign = paymentIntent("display_bank_transfer_instructions");
+		foreign.setId("pi_foreign");
+		when(gateway.listOpenPaymentIntents(CUSTOMER)).thenReturn(List.of(foreign));
+		when(recordDao.findByPaymentIntentId("pi_foreign")).thenReturn(Optional.empty());
+
+		service.refundUnappliedBalance(CUSTOMER, "eur");
+
+		verify(gateway).createCashBalanceRefund(CUSTOMER, 5000L, "eur", "cash-refund-cus_1-eur-cbtxn_1-5000");
+		verify(taskService, never()).scheduleTask(any());
 	}
 
 	@Test

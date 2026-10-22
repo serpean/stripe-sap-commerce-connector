@@ -144,6 +144,13 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 
 		final PaymentIntent live = stripeGateway.retrievePaymentIntent(paymentIntentId);
 		final StripePaymentIntentStatus status = statusOf(live);
+		if (PARTIALLY_FUNDED.equals(eventType) && OrderStatus.CANCELLED.equals(order.get().getStatus()))
+		{
+			LOG.warn("Payment intent {} is partly paid but its order {} is cancelled: releasing the funds", paymentIntentId,
+					order.get().getCode());
+			stripePaymentIntentService.releaseFunds(paymentIntentId, "order " + order.get().getCode() + " is cancelled");
+			return StripeWebhookOutcome.PROCESSED;
+		}
 		if (PARTIALLY_FUNDED.equals(eventType) && status == StripePaymentIntentStatus.AWAITING_FUNDS)
 		{
 			return updateAmountRemaining(order.get(), live);

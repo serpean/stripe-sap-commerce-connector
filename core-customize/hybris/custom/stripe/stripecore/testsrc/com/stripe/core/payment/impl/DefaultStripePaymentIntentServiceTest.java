@@ -632,7 +632,10 @@ public class DefaultStripePaymentIntentServiceTest
 		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
 		transfer.setCustomer("cus_1");
 		transfer.setCurrency("eur");
-		transfer.setPaymentMethodTypes(java.util.List.of("customer_balance"));
+		transfer.setPaymentMethodTypes(java.util.List.of("card", "customer_balance"));
+		final PaymentIntent.NextAction action = new PaymentIntent.NextAction();
+		action.setType("display_bank_transfer_instructions");
+		transfer.setNextAction(action);
 		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
 		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
 
@@ -648,7 +651,9 @@ public class DefaultStripePaymentIntentServiceTest
 		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
 		transfer.setCustomer("cus_1");
 		transfer.setCurrency("eur");
-		transfer.setPaymentMethodTypes(java.util.List.of("customer_balance"));
+		final PaymentIntent.NextAction action = new PaymentIntent.NextAction();
+		action.setType("display_bank_transfer_instructions");
+		transfer.setNextAction(action);
 		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
 		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
 		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
@@ -665,7 +670,12 @@ public class DefaultStripePaymentIntentServiceTest
 		final PaymentIntent card = intent("pi_1", "requires_capture", 1000);
 		card.setCustomer("cus_1");
 		card.setCurrency("eur");
-		card.setPaymentMethodTypes(java.util.List.of("card"));
+		card.setPaymentMethodTypes(java.util.List.of("card", "customer_balance"));
+		final Charge charge = new Charge();
+		final Charge.PaymentMethodDetails details = new Charge.PaymentMethodDetails();
+		details.setType("card");
+		charge.setPaymentMethodDetails(details);
+		card.setLatestChargeObject(charge);
 		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(card);
 		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
 
