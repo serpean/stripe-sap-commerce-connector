@@ -1,4 +1,4 @@
-import { expect, FrameLocator, Locator, Page } from '@playwright/test';
+import { expect, FrameLocator, Locator, Page, Route } from '@playwright/test';
 import {
   addDefaultAddress,
   createCartWithProduct,
@@ -33,13 +33,38 @@ export const CARDS = {
   declined: '4000 0000 0000 0002',
 } as const;
 
-/** Starts to wait for the storefront's POST /orders and gives its status and body. Call it before the action. */
-export function waitForPlaceOrder(page: Page): Promise<{ status: number; body: any }> {
-  return page
-    .waitForResponse((r) => r.request().method() === 'POST' && /\/users\/[^/]+\/orders\?/.test(r.url()), {
-      timeout: 120_000,
-    })
-    .then(async (r) => ({ status: r.status(), body: await r.json().catch(() => undefined) }));
+const PLACE_ORDER_URL = /\/users\/[^/]+\/orders\?/;
+
+/**
+ * Starts to wait for the storefront's POST /orders and gives its status and body. Call it before the action. The
+ * request goes through a route, so the body is read before the browser can drop it (a navigation right after the
+ * response makes the body unavailable to waitForResponse).
+ */
+export async function waitForPlaceOrder(page: Page): Promise<{ status: number; body: any }> {
+  let resolve!: (value: { status: number; body: any }) => void;
+  const result = new Promise<{ status: number; body: any }>((r) => (resolve = r));
+  const handler = async (route: Route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const text = await response.text();
+    let body: any;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    await route.fulfill({ response, body: text });
+    await page.unroute(PLACE_ORDER_URL, handler);
+    resolve({ status: response.status(), body });
+  };
+  await page.route(PLACE_ORDER_URL, handler);
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('No POST /orders within 120 s')), 120_000).unref?.()
+  );
+  return Promise.race([result, timeout]);
 }
 
 /** After a failed confirmation the shop shows its error and the customer can pay again. */
