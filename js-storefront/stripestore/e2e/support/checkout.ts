@@ -295,9 +295,38 @@ export async function payWithKlarna(page: Page, outcome: 'approve' | 'decline'):
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline && !shopUrl.test(page.url())) {
     // The page has two steps with the same button (plan, then confirmation); the offers load a moment after the page.
+    await addKlarnaTestCardIfAsked(page);
     await confirmation.first().click({ timeout: 3_000 }).catch(() => undefined);
     await page.waitForTimeout(2_000);
   }
+}
+
+/**
+ * The Klarna playground can ask the customer to add a card ("Add a payment method"). The sample card of
+ * docs.klarna.com (sample payment data): 4111 1111 1111 1111, any future expiry date, CVC 123.
+ */
+async function addKlarnaTestCardIfAsked(page: Page): Promise<void> {
+  if (!(await fillInAnyFrame(page, /número de tarjeta|card number/i, '4111111111111111'))) {
+    return;
+  }
+  // Each card field can sit in its own frame.
+  await fillInAnyFrame(page, /fecha de caducidad|expir|mm\s*\/\s*aa|mm\s*\/\s*yy/i, '12/30');
+  await fillInAnyFrame(page, /cvc|cvv|security code/i, '123');
+  await page.getByRole('button', { name: /agrega tarjeta|add card/i }).first().click({ timeout: 5_000 }).catch(() => undefined);
+  await page.waitForTimeout(2_000);
+}
+
+/** Fills the first visible field with the label (or placeholder) in any frame of the page; false when there is none. */
+async function fillInAnyFrame(page: Page, label: RegExp, value: string): Promise<boolean> {
+  for (const frame of page.frames()) {
+    for (const field of [frame.getByLabel(label).first(), frame.getByPlaceholder(label).first()]) {
+      if (await field.isVisible().catch(() => false)) {
+        await field.fill(value, { timeout: 5_000 });
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** Pays with a redirect method (for example bizum or eps) that has the Stripe test page, and answers it. */
