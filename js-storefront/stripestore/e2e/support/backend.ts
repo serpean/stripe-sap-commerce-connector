@@ -196,6 +196,47 @@ export async function getAvailableStock(productCode: string): Promise<number> {
   return Number(rows[0]?.[0] ?? 0);
 }
 
+/** Stock that every test product keeps after the refill: available minus reserved. */
+export const MIN_TEST_STOCK = 500;
+
+/**
+ * Refills the stock of the products for the e2e tests in the local reference platform. Each StockLevel of the products
+ * gets available = reserved + MIN_TEST_STOCK when it has less; available is never lowered. A forced out-of-stock level
+ * goes back to the default status. Idempotent. Gives one line per change: product, warehouse, old and new values.
+ */
+export async function refillTestStock(productCodes: string[]): Promise<string[]> {
+  const codes = [...new Set(productCodes)];
+  codes.forEach(literal);
+  if (!codes.length) {
+    return [];
+  }
+  const output = await groovy(
+    `import de.hybris.platform.basecommerce.enums.InStockStatus
+import de.hybris.platform.servicelayer.search.FlexibleSearchQuery
+def query = new FlexibleSearchQuery("SELECT {pk} FROM {StockLevel} WHERE {productCode} IN (?codes)")
+query.addQueryParameter('codes', ${JSON.stringify(codes)})
+flexibleSearchService.search(query).result.each { level ->
+  def oldAvailable = level.available
+  def oldStatus = level.inStockStatus
+  def changed = false
+  if (level.available - level.reserved < ${MIN_TEST_STOCK}) {
+    level.available = level.reserved + ${MIN_TEST_STOCK}
+    changed = true
+  }
+  if (InStockStatus.FORCEOUTOFSTOCK == level.inStockStatus) {
+    level.inStockStatus = InStockStatus.NOTSPECIFIED
+    changed = true
+  }
+  if (changed) {
+    modelService.save(level)
+    println "\${level.productCode} \${level.warehouse?.code}: available \${oldAvailable} -> \${level.available}, reserved \${level.reserved}, status \${oldStatus} -> \${level.inStockStatus}"
+  }
+}`,
+    true
+  );
+  return output.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
 export interface PaymentIntentRecord {
   paymentIntentId: string;
   cartCode: string;
