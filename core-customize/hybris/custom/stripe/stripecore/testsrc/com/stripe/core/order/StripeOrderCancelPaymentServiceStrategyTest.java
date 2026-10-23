@@ -1,5 +1,6 @@
 package com.stripe.core.order;
 
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -24,6 +25,7 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.impl.DefaultStripePaymentAdjustmentService;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeLogCapture;
 import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -340,11 +342,29 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	}
 
 	@Test
-	public void rejectedRefundSchedulesAdjustmentRetry() throws Exception
+	public void rejectedRefundIsFinalAndSchedulesNoRetry() throws Exception
 	{
 		livePaymentIntent("succeeded", 10000L, 0L);
 		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
-		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.REJECTED));
+		final PaymentTransactionEntryModel rejected = entry(TransactionStatus.REJECTED);
+		rejected.setRequestToken("stripe:charge_disputed");
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(rejected);
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentAdjustmentService.class))
+		{
+			strategy.recalculateOrderAndModifyPayments(order);
+
+			assertTrue("ERROR log with order and Stripe code", log.hasError("order-cancel", "stripe:charge_disputed"));
+		}
+		verifyNoInteractions(taskService);
+	}
+
+	@Test
+	public void erroredRefundSchedulesAdjustmentRetry() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.ERROR));
 
 		strategy.recalculateOrderAndModifyPayments(order);
 
@@ -352,7 +372,7 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	}
 
 	@Test
-	public void rejectedVoidSchedulesAdjustmentRetry() throws Exception
+	public void erroredVoidSchedulesAdjustmentRetry() throws Exception
 	{
 		livePaymentIntent("requires_capture", 0L, null);
 		order.setStatus(OrderStatus.CANCELLED);
