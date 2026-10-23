@@ -164,7 +164,8 @@ export async function payWithCard(page: Page, number: string): Promise<void> {
 /** Answers the Stripe 3DS test challenge with "Complete" or "Fail". The challenge sits in nested Stripe frames. */
 export async function completeThreeDs(page: Page, outcome: 'complete' | 'fail'): Promise<void> {
   const name = outcome === 'complete' ? /^\s*complete\s*$/i : /^\s*fail\s*$/i;
-  const deadline = Date.now() + 60_000;
+  // The Stripe test challenge can take more than a minute to load on a busy machine.
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const challenge = page.frame({ name: 'stripe-challenge-frame' });
     const button = challenge?.getByRole('button', { name });
