@@ -15,7 +15,8 @@ test('15. SEPA Direct Debit fails: the order is cancelled and the stock is as be
   // The debit fails at Stripe: the order is cancelled; the money never arrived.
   await waitFor(async () => (await retrievePaymentIntent(placed)).status !== 'processing', 480_000, 'the failed SEPA debit', 10_000);
   const intent = await retrievePaymentIntent(placed);
-  expect(intent.status).toBe('requires_payment_method');
+  // requires_payment_method after the failed debit; canceled when SAP already cancelled the order and released it.
+  expect(['requires_payment_method', 'canceled']).toContain(intent.status);
   expect(netCaptured(intent)).toBe(0);
   await waitForOrderStatus(orderCode, 'CANCELLED', 240_000);
 
