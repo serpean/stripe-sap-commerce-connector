@@ -346,6 +346,9 @@ The global setup (`e2e/global-setup.ts`) sets short timings on the running serve
 
 The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
 
+Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report (`playwright-report/index.html`) embeds both.
+Without it, the battery keeps video and trace only for failed tests.
+
 Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_PATH` (default `product/816324/DSC-T20-Cyber-shot-Silver`, a product in stock).
 
 ### Unit and integration tests
