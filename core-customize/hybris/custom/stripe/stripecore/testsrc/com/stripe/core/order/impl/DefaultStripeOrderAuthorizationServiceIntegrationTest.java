@@ -1,6 +1,8 @@
 package com.stripe.core.order.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -27,6 +29,7 @@ import de.hybris.platform.servicelayer.search.FlexibleSearchQuery;
 import de.hybris.platform.servicelayer.search.FlexibleSearchService;
 import de.hybris.platform.servicelayer.user.UserService;
 import de.hybris.platform.test.TestThreadsHolder;
+import de.hybris.platform.tx.Transaction;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Currency;
@@ -134,6 +137,28 @@ public class DefaultStripeOrderAuthorizationServiceIntegrationTest extends Servi
 		final List<Object> claims = search("SELECT {pk} FROM {StripeOrderPlacementLock} WHERE {paymentIntentId} = ?id",
 				DefaultStripeOrderAuthorizationService.CLAIM_PREFIX + paymentIntentId);
 		assertEquals("the claim of the authorization stays", 1, claims.size());
+	}
+
+	@Test
+	public void lostClaimInsideATransactionDoesNotMarkItRollbackOnly()
+	{
+		assertTrue(stripeOrderPlacementLockService.tryAcquire(DefaultStripeOrderAuthorizationService.CLAIM_PREFIX
+				+ paymentIntentId));
+		service.setClaimWaitMillis(100L);
+		final PaymentIntent paymentIntent = new PaymentIntent();
+		paymentIntent.setId(paymentIntentId);
+		final Transaction tx = Transaction.current();
+		tx.begin();
+		try
+		{
+			assertThrows(IllegalStateException.class, () -> service.authorizePendingOrder(order, paymentIntent));
+			assertFalse("the caller can still commit its work", tx.isRollbackOnly());
+		}
+		finally
+		{
+			tx.rollback();
+		}
+		assertEquals("no payment service call", 0, authorizeCalls.get());
 	}
 
 	/**

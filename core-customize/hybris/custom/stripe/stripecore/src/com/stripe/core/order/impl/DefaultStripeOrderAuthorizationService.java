@@ -5,6 +5,8 @@ import com.stripe.core.constants.StripeCoreConstants;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.model.PaymentIntent;
+import de.hybris.platform.core.Registry;
+import de.hybris.platform.core.TenantAwareThreadFactory;
 import de.hybris.platform.core.model.order.AbstractOrderModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.payment.PaymentService;
@@ -16,6 +18,8 @@ import de.hybris.platform.servicelayer.i18n.I18NService;
 import de.hybris.platform.servicelayer.model.ModelService;
 import de.hybris.platform.servicelayer.search.FlexibleSearchQuery;
 import de.hybris.platform.servicelayer.search.FlexibleSearchService;
+import de.hybris.platform.jalo.JaloSession;
+import de.hybris.platform.tx.Transaction;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -23,6 +27,12 @@ import java.util.Currency;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,12 +45,14 @@ import org.slf4j.LoggerFactory;
  * {@code "authorize-" + paymentIntentId} in the unique index of the order placement lock. A caller that cannot take the
  * claim creates no entry: it waits a short time for the ACCEPTED entry of the holder and returns it, or throws so that it
  * tries again later. A claim older than the stale time of the lock service is removed, so a holder that stopped does not
- * block the order.
+ * block the order. The claim is taken and released in its own database transaction (see
+ * {@link #outsideTransaction(Callable)}), so a lost claim never rolls back the work of the caller.
  */
 public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthorizationService
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeOrderAuthorizationService.class);
 	static final String CLAIM_PREFIX = "authorize-";
+	private static final long CLAIM_CALL_TIMEOUT_SECONDS = 30L;
 	private static final String ACCEPTED_AUTHORIZATIONS = "SELECT {e.pk} FROM {PaymentTransactionEntry AS e"
 			+ " JOIN PaymentTransaction AS t ON {e.paymentTransaction} = {t.pk}}"
 			+ " WHERE {t.order} = ?order AND {e.requestId} = ?requestId AND {e.type} = ?type"
@@ -77,7 +89,7 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 			return true;
 		}
 		final String claim = CLAIM_PREFIX + paymentIntentId;
-		if (!stripeOrderPlacementLockService.tryAcquire(claim))
+		if (!outsideTransaction(() -> stripeOrderPlacementLockService.tryAcquire(claim)))
 		{
 			return awaitOtherAuthorization(order, paymentIntentId);
 		}
@@ -95,14 +107,75 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 		}
 		catch (final RuntimeException e)
 		{
-			stripeOrderPlacementLockService.release(claim);
+			releaseClaim(claim);
 			throw e;
 		}
 		if (!accepted)
 		{
-			stripeOrderPlacementLockService.release(claim);
+			releaseClaim(claim);
 		}
 		return accepted;
+	}
+
+	private void releaseClaim(final String claim)
+	{
+		outsideTransaction(() -> {
+			stripeOrderPlacementLockService.release(claim);
+			return Boolean.TRUE;
+		});
+	}
+
+	/**
+	 * Runs a claim operation in its own database transaction. Inside a running SAP transaction (webhook task, order
+	 * process task) a failed insert on the unique index marks the whole transaction rollback-only, so the caller would
+	 * lose its work. The operation then runs in a short-lived thread of the same tenant, which commits at once.
+	 */
+	protected <T> T outsideTransaction(final Callable<T> operation)
+	{
+		try
+		{
+			if (!isTransactionRunning())
+			{
+				return operation.call();
+			}
+			final ExecutorService executor = Executors.newSingleThreadExecutor(
+					new TenantAwareThreadFactory(Registry.getCurrentTenant(), JaloSession.getCurrentSession()));
+			try
+			{
+				return executor.submit(operation).get(CLAIM_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			}
+			finally
+			{
+				executor.shutdown();
+			}
+		}
+		catch (final InterruptedException e)
+		{
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Authorization claim was interrupted", e);
+		}
+		catch (final ExecutionException e)
+		{
+			throw e.getCause() instanceof RuntimeException ? (RuntimeException) e.getCause()
+					: new IllegalStateException("Authorization claim failed", e.getCause());
+		}
+		catch (final TimeoutException e)
+		{
+			throw new IllegalStateException("Authorization claim did not finish in time", e);
+		}
+		catch (final RuntimeException e)
+		{
+			throw e;
+		}
+		catch (final Exception e)
+		{
+			throw new IllegalStateException("Authorization claim failed", e);
+		}
+	}
+
+	protected boolean isTransactionRunning()
+	{
+		return Transaction.current().isRunning();
 	}
 
 	private boolean authorize(final OrderModel order, final String paymentIntentId)

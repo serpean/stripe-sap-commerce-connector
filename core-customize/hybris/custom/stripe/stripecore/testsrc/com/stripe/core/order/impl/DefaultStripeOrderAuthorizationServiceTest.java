@@ -65,7 +65,14 @@ public class DefaultStripeOrderAuthorizationServiceTest
 		final I18NService i18nService = mock(I18NService.class);
 		when(i18nService.getBestMatchingJavaCurrency("EUR")).thenReturn(EUR);
 
-		service = new DefaultStripeOrderAuthorizationService();
+		service = new DefaultStripeOrderAuthorizationService()
+		{
+			@Override
+			protected boolean isTransactionRunning()
+			{
+				return false;
+			}
+		};
 		service.setPaymentService(paymentService);
 		service.setModelService(modelService);
 		service.setStripeAmountConverter(converter);
