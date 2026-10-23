@@ -9,6 +9,23 @@ import {
   Product,
   registerCustomer,
 } from './occ';
+import { refillTestStock } from './backend';
+
+/** Products whose stock this worker already refilled. */
+const refilled = new Set<string>();
+
+/**
+ * Refills the stock of the product the test picked, once per worker. The search index can make a test pick a product
+ * that the global setup did not see (the index cron job changes the stock status during the run).
+ */
+async function ensureTestStock(productCode: string): Promise<void> {
+  if (refilled.has(productCode)) {
+    return;
+  }
+  const changes = await refillTestStock([productCode]);
+  changes.forEach((line) => console.log(`Test stock refilled: ${line}`));
+  refilled.add(productCode);
+}
 
 export const CARDS = {
   noThreeDs: '4242 4242 4242 4242',
@@ -76,6 +93,7 @@ export async function checkoutToPayment(
   const customer = await registerCustomer();
   await addDefaultAddress(customer);
   const product = await findInStockProduct(currency);
+  await ensureTestStock(product.code);
   const cart = await createCartWithProduct(customer, currency, product.code, options.quantity ?? 1);
 
   await closeCookieBanner(page);
