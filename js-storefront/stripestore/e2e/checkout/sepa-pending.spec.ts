@@ -12,6 +12,8 @@ import { checkoutToPayment, expectOrderConfirmation, payWithSepa, SEPA_IBANS } f
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
 test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is accepted and can ship', async ({ page }) => {
+  // Stripe can take several minutes to settle a test debit (9 min seen); the waits below allow it, the test must too.
+  test.setTimeout(900_000);
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const stockBefore = await getAvailableStock(session.product.code);
   await payWithSepa(page, SEPA_IBANS.succeedsAfterDelay);

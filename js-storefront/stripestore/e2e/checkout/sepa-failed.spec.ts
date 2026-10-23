@@ -4,6 +4,8 @@ import { checkoutToPayment, expectOrderConfirmation, payWithSepa, SEPA_IBANS } f
 import { netCaptured, retrievePaymentIntent } from '../support/stripe';
 
 test('15. SEPA Direct Debit fails: the order is cancelled and the stock is as before the order', async ({ page }) => {
+  // Stripe can take several minutes to settle a test debit (9 min seen); the waits below allow it, the test must too.
+  test.setTimeout(900_000);
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const stockBefore = await getAvailableStock(session.product.code);
   await payWithSepa(page, SEPA_IBANS.fails);
