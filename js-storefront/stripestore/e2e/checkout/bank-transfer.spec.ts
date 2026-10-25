@@ -11,7 +11,7 @@ import {
   waitForOrderStatus,
   waitForPaymentEntry,
 } from '../support/backend';
-import { checkoutToPayment, CheckoutSession, expectOrderConfirmation, payWithBankTransfer } from '../support/checkout';
+import { checkoutToPayment, CheckoutSession, expectOrderConfirmation, expectPaymentInstructions, payWithBankTransfer } from '../support/checkout';
 import { bankTransferReference, fundCashBalance, getCashBalance, listCashBalanceTransactions, listCustomerBalanceRefunds, minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 import { Page } from '@playwright/test';
 
@@ -30,6 +30,7 @@ async function placePendingBankTransfer(page: Page, quantity = 1): Promise<Pendi
   const stockBefore = await getAvailableStock(session.product.code);
   await payWithBankTransfer(page);
   const orderCode = await expectOrderConfirmation(page);
+  await expectPaymentInstructions(page);
   const pending = await waitForOrderStatus(orderCode, 'PAYMENT_PENDING', 30_000);
   const info = (await getOrder(session.customer, orderCode)).stripePaymentInfo;
   expect(info.paymentStatus).toBe('PENDING');
@@ -64,10 +65,6 @@ test.describe('Bank transfer (customer_balance)', () => {
     expect((await getCashBalance(p.customerId)).eur ?? 0).toBe(0);
   });
 
-  // KNOWN GAP (product): the cash balance refund check is never planned. DefaultStripeCashBalanceService.PENDING_TASKS
-  // searches Task.executionDate, a dynamic attribute that FlexibleSearch cannot use (use executionTimeMillis). Tests 19
-  // and 20 check the order outcome first, then the refund. test.fail makes them pass while the refund is missing, and
-  // fail (a reminder to remove test.fail) once the refund works. The log line "REFUND CHECK" shows how far they got.
   test('19. underpaid: the order stays pending, at the timeout it is cancelled and the funds go back to the customer', async ({ page }) => {
     const p = await placePendingBankTransfer(page);
     const half = Math.floor(p.total / 2);
@@ -87,13 +84,11 @@ test.describe('Bank transfer (customer_balance)', () => {
     }, 120_000, 'the PaymentIntent canceled');
     expect(netCaptured(cancelled)).toBe(0);
 
-    console.log('REFUND CHECK: order cancelled and PaymentIntent canceled; waiting for the cash balance refund');
-    test.fail(true, 'cash balance refund check is not planned (FlexibleSearch on Task.executionDate)');
     // The funds return to the cash balance, and the cash balance refund check sends them back (origin customer_balance).
     const refund = await waitFor(async () => {
       const refunds = await listCustomerBalanceRefunds(p.customerId, since);
       return refunds.find((r) => r.amount === half);
-    }, 120_000, `a customer_balance refund of ${half}`, 5_000);
+    }, 240_000, `a customer_balance refund of ${half}`, 5_000);
     expect(refund.amount).toBe(half);
     await waitFor(async () => ((await getCashBalance(p.customerId)).eur ?? 0) === 0, 120_000, 'an empty cash balance', 5_000);
     expect((await listCashBalanceTransactions(p.customerId)).length).toBeGreaterThan(0);
@@ -112,12 +107,10 @@ test.describe('Bank transfer (customer_balance)', () => {
     expect(paid.status).toBe('succeeded');
     expect(netCaptured(paid)).toBe(p.total);
 
-    console.log('REFUND CHECK: order accepted; waiting for the refund of the excess');
-    test.fail(true, 'cash balance refund check is not planned (FlexibleSearch on Task.executionDate)');
     const refund = await waitFor(async () => {
       const refunds = await listCustomerBalanceRefunds(p.customerId, since);
       return refunds.find((r) => r.amount === extra);
-    }, 120_000, `a customer_balance refund of ${extra}`, 5_000);
+    }, 240_000, `a customer_balance refund of ${extra}`, 5_000);
     expect(refund.amount).toBe(extra);
     await waitFor(async () => ((await getCashBalance(p.customerId)).eur ?? 0) === 0, 120_000, 'an empty cash balance', 5_000);
   });

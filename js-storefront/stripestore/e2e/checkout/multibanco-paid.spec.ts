@@ -16,6 +16,7 @@ test.describe('Multibanco', () => {
     const stockBefore = await getAvailableStock(session.product.code);
     await payWithMultibanco(page, 'e2e-multibanco@example.com');
     const orderCode = await expectOrderConfirmation(page);
+    await expectPaymentInstructions(page);
 
     // The order exists with the voucher data in OCC, but no money has arrived: no payment authorization, no sourcing.
     const pending = await waitForOrderStatus(orderCode, 'PAYMENT_PENDING', 30_000);
@@ -49,25 +50,21 @@ test.describe('Multibanco', () => {
     expect((await getSapOrder(orderCode))?.status).toBe('COMPLETED');
   });
 
-  // KNOWN GAPS (product, found by this task): the voucher instructions component (cx-stripe-payment-instructions)
-  // does not render (1) on the order confirmation page, which has no cx-order-overview (it uses
-  // cx-order-confirmation-shipping), and (2) on the order details page after a fresh page load, probably because the
-  // outlet is registered only when the lazy feature module loads. OCC returns the data. test.fail makes these tests
-  // pass now and fail (a reminder to remove test.fail) once the component shows.
   test('15b. the order confirmation page shows the voucher instructions', async ({ page }) => {
-    test.fail(true, 'the instructions outlet is not on the order confirmation page');
     await checkoutToPayment(page, { currency: 'EUR' });
     await payWithMultibanco(page, 'e2e-fill_never@example.com');
     await expectOrderConfirmation(page);
-    await expect(page.locator('cx-stripe-payment-instructions')).toBeVisible({ timeout: 15_000 });
+    const { reference } = await expectPaymentInstructions(page);
+    expect(reference).toMatch(/^\d+ \d+/);
   });
 
-  test('15c. the order details page shows the voucher instructions', async ({ page }) => {
-    test.fail(true, 'the instructions outlet does not render on order details after a fresh page load');
+  test('15c. the order details page shows the voucher instructions after a fresh page load', async ({ page }) => {
     const session = await checkoutToPayment(page, { currency: 'EUR' });
     await payWithMultibanco(page, 'e2e-fill_never@example.com');
     const orderCode = await expectOrderConfirmation(page);
+    // page.goto is a full page load: the lazy payment feature has not been loaded in this page.
     await openOrderDetails(page, orderCode, session.currency);
-    await expectPaymentInstructions(page);
+    const { reference } = await expectPaymentInstructions(page);
+    expect(reference).toMatch(/^\d+ \d+/);
   });
 });
