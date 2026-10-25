@@ -36,7 +36,7 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripeCashBalanceService.class);
 	private static final String BANK_TRANSFER_INSTRUCTIONS = "display_bank_transfer_instructions";
 	private static final String PENDING_TASKS = "SELECT {pk} FROM {Task} WHERE {runnerBean} = ?runner "
-			+ "AND ({failed} IS NULL OR {failed} = ?notFailed) AND {executionDate} > ?now";
+			+ "AND ({failed} IS NULL OR {failed} = ?notFailed) AND {executionTimeMillis} > ?nowMillis";
 
 	private StripeGateway stripeGateway;
 	private StripeConfigurationService stripeConfigurationService;
@@ -123,7 +123,8 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 		final FlexibleSearchQuery query = new FlexibleSearchQuery(PENDING_TASKS);
 		query.addQueryParameter("runner", REFUND_RUNNER_BEAN);
 		query.addQueryParameter("notFailed", Boolean.FALSE);
-		query.addQueryParameter("now", timeService.getCurrentTime());
+		// executionDate is a dynamic attribute: FlexibleSearch can only use its stored form, executionTimeMillis.
+		query.addQueryParameter("nowMillis", timeService.getCurrentTime().getTime());
 		final List<TaskModel> tasks = flexibleSearchService.<TaskModel>search(query).getResult();
 		return tasks.stream().anyMatch(task -> key.equals(task.getContext()));
 	}
