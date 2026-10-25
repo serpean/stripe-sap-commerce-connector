@@ -427,3 +427,45 @@ println configurationService.configuration.getString(${JSON.stringify(key)})`,
 export async function getConfig(key: string): Promise<string> {
   return (await groovy(`println configurationService.configuration.getString(${JSON.stringify(key)}, '')`, false)).trim();
 }
+
+/** The Stripe Customer id stored for the SAP customer (registered customers only), or undefined. */
+export async function getStripeCustomerOf(customerUid: string): Promise<string | undefined> {
+  const rows = await flexibleSearch(
+    'SELECT {sc.stripeCustomerId} FROM {StripeCustomer AS sc JOIN Customer AS c ON {sc.customer} = {c.pk}} ' +
+      `WHERE {c.uid} = ${literal(customerUid)} ORDER BY {sc.creationtime} DESC`
+  );
+  return rows[0]?.[0] ?? undefined;
+}
+
+/**
+ * The reason why the cancel service denies a cancel of the order (orderCancelService.isCancelPossible), as
+ * "code: description", or undefined when the cancel is allowed. Partial means that a part of an entry is cancelled.
+ */
+export async function getCancelDenial(orderCode: string, partial: boolean): Promise<string | undefined> {
+  const out = (
+    await groovy(
+      `${FIND_ORDER(orderCode)}
+def decision = orderCancelService.isCancelPossible(order, order.user, ${partial}, ${partial})
+println decision.allowed ? 'ALLOWED' : decision.denialReasons.collect { "${'${it.code}'}: ${'${it.description}'}" }.join(' | ')`,
+      false
+    )
+  ).trim();
+  return out === 'ALLOWED' ? undefined : out;
+}
+
+/**
+ * Cancels the whole order with the cancel service (orderCancelService.requestOrderCancel, the call behind a full
+ * "cancel order"). The OMS facade of cancelOrder treats a request with a cancel reason as a partial cancel, which a
+ * pending Stripe payment denies on purpose, so a full cancel of a pending order goes through the service.
+ */
+export async function cancelWholeOrder(orderCode: string): Promise<void> {
+  await groovy(
+    `import de.hybris.platform.basecommerce.enums.CancelReason
+import de.hybris.platform.ordercancel.OrderCancelRequest
+${FIND_ORDER(orderCode)}
+def request = new OrderCancelRequest(order)
+request.cancelReason = CancelReason.CUSTOMERREQUEST
+orderCancelService.requestOrderCancel(request, order.user)`,
+    true
+  );
+}

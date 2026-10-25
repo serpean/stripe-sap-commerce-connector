@@ -147,3 +147,54 @@ export function netCaptured(intent: PaymentIntent): number {
 export function minor(amount: number): number {
   return Math.round(amount * 100);
 }
+
+export interface CashBalance {
+  available?: Record<string, number> | null;
+}
+
+/** The cash balance of the Stripe customer (bank transfers that no PaymentIntent has used yet), by currency in the minor unit. */
+export async function getCashBalance(customerId: string): Promise<Record<string, number>> {
+  return (await stripeGet(`/customers/${customerId}/cash_balance`) as CashBalance).available ?? {};
+}
+
+/** The reference of the bank transfer instructions of a PaymentIntent in AWAITING_FUNDS (requires_action). */
+export async function bankTransferReference(paymentIntentId: string): Promise<string> {
+  const intent = await stripeGet(`/payment_intents/${paymentIntentId}`);
+  const reference = intent.next_action?.display_bank_transfer_instructions?.reference;
+  if (!reference) {
+    throw new Error(`PaymentIntent ${paymentIntentId} has no bank transfer reference (status ${intent.status})`);
+  }
+  return reference;
+}
+
+/**
+ * Simulates an incoming bank transfer (docs.stripe.com/payments/bank-transfers/accept-a-payment, "Test your
+ * integration"): POST /v1/test_helpers/customers/{id}/fund_cash_balance. The reference matches the funds to the open
+ * PaymentIntent. The currency is EUR (EU bank transfer).
+ */
+export async function fundCashBalance(customerId: string, amountMinor: number, reference: string): Promise<void> {
+  await stripePost(`/test_helpers/customers/${customerId}/fund_cash_balance`, {
+    amount: String(amountMinor),
+    currency: 'eur',
+    reference,
+  });
+}
+
+export interface CustomerBalanceRefund {
+  id: string;
+  amount: number;
+  status: string;
+  origin?: string | null;
+  customer?: string | null;
+}
+
+/** The refunds with origin customer_balance (funds returned to the customer's bank) created after the time (epoch s). */
+export async function listCustomerBalanceRefunds(customerId: string, createdAfter: number): Promise<CustomerBalanceRefund[]> {
+  const refunds: CustomerBalanceRefund[] = (await stripeGet('/refunds', { limit: '100', 'created[gte]': String(createdAfter) })).data;
+  return refunds.filter((r) => r.origin === 'customer_balance' && (!r.customer || r.customer === customerId));
+}
+
+/** The cash balance transactions of the customer, newest first (funded, applied_to_payment, return_initiated...). */
+export async function listCashBalanceTransactions(customerId: string): Promise<{ id: string; type: string; net_amount: number }[]> {
+  return (await stripeGet(`/customers/${customerId}/cash_balance_transactions`, { limit: '100' })).data;
+}

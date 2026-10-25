@@ -384,3 +384,83 @@ export async function payWithSepa(page: Page, iban: string): Promise<void> {
   }
   throw new Error('The SEPA form was never confirmed at Stripe');
 }
+/**
+ * Pays with Multibanco. The Payment Element asks for the email, and Stripe picks the test scenario from it (see
+ * docs.stripe.com/payments/multibanco/accept-a-payment, "Test your integration"). The voucher does not open a page:
+ * the customer comes back to the confirmation page.
+ */
+export async function payWithMultibanco(page: Page, email: string): Promise<void> {
+  await choosePaymentMethod(page, 'multibanco', /multibanco/i);
+  const element = paymentElement(page);
+  const field = element.locator('input[name="email"]');
+  if (await field.isVisible().catch(() => false)) {
+    await field.fill(email);
+  }
+  await confirmWhenComplete(page);
+  await closeInstructionsModal(page);
+}
+
+/**
+ * Stripe.js shows the Multibanco voucher or the bank transfer details in a modal (a Stripe frame) and finishes the
+ * confirmation when the customer closes it. The browser then goes on to the order confirmation page.
+ */
+async function closeInstructionsModal(page: Page): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline && !/order-confirmation/.test(page.url())) {
+    for (const frame of page.frames()) {
+      const close = frame.getByRole('button', { name: /close/i }).first();
+      if (await frame.getByText(/test Multibanco voucher|test mode bank transfer/i).first().isVisible().catch(() => false)) {
+        if (await close.isVisible().catch(() => false)) {
+          await close.click({ timeout: 5_000 }).catch(() => undefined);
+          return;
+        }
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+}
+
+/** Pays with a bank transfer (customer_balance, EU bank transfer). The customer comes back to the confirmation page. */
+export async function payWithBankTransfer(page: Page): Promise<void> {
+  await choosePaymentMethod(page, 'customer_balance', /bank transfer/i);
+  const field = paymentElement(page).locator('input[name="email"]');
+  if (await field.isVisible().catch(() => false)) {
+    await field.fill('e2e-bank-transfer@example.com');
+  }
+  await confirmWhenComplete(page);
+  await closeInstructionsModal(page);
+}
+
+/**
+ * Clicks "Pay now" until Stripe gets the confirmation: the Payment Element reports the form as complete a moment
+ * after the last field, and an earlier click does nothing.
+ */
+async function confirmWhenComplete(page: Page): Promise<void> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const confirmation = page.waitForRequest(/api\.stripe\.com\/v1\/payment_intents\/.*\/confirm/, { timeout: 8_000 });
+    await payButton(page).click();
+    if (await confirmation.then(() => true, () => false)) {
+      return;
+    }
+  }
+  throw new Error('The payment form was never confirmed at Stripe');
+}
+
+/** Opens the order details page of the customer's order (the order overview outlet of the library lives there). */
+export async function openOrderDetails(page: Page, orderCode: string, currency: Currency): Promise<void> {
+  await page.goto(`${sitePath(currency)}/my-account/order/${orderCode}`);
+  await expect(page.locator('cx-order-overview')).toBeVisible({ timeout: 60_000 });
+}
+
+/**
+ * Checks the payment instructions of a pending payment on the current page (component cx-stripe-payment-instructions)
+ * and gives the payment reference.
+ */
+export async function expectPaymentInstructions(page: Page): Promise<{ reference: string }> {
+  const instructions = page.locator('cx-stripe-payment-instructions');
+  await expect(instructions.getByRole('heading', { name: /complete your payment/i })).toBeVisible({ timeout: 15_000 });
+  await expect(instructions.getByRole('link')).toHaveAttribute('href', /^https:\/\//);
+  const reference = (await instructions.locator('dd').first().innerText()).trim();
+  expect(reference).not.toBe('');
+  return { reference };
+}

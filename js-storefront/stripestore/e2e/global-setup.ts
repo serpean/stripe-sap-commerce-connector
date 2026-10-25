@@ -7,6 +7,12 @@ export const TEST_TIMINGS: Record<string, string> = {
   'stripe.webhook.graceperiod.seconds': '20',
   'stripe.payment.pending.retry.seconds': '10',
   'stripe.payment.pending.timeout.sepa_debit.seconds': '600',
+  // Group E: short timeouts and retries (the defaults are days and an hour).
+  'stripe.payment.pending.timeout.multibanco.seconds': '120',
+  'stripe.payment.pending.timeout.customer_balance.seconds': '180',
+  'stripe.payment.pending.retry.multibanco.seconds': '10',
+  'stripe.payment.pending.retry.customer_balance.seconds': '10',
+  'stripe.cashbalance.refund.delay.seconds': '10',
   'stripe.capture.mode': 'manual',
 };
 
