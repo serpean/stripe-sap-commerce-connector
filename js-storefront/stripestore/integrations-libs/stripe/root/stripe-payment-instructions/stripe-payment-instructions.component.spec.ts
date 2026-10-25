@@ -6,9 +6,10 @@
 
 import { NO_ERRORS_SCHEMA, Pipe, PipeTransform } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { OrderFacade } from '@spartacus/order/root';
 import { OutletContextData } from '@spartacus/storefront';
 import { of } from 'rxjs';
-import { StripePaymentInfo } from 'sap-commerce-stripe-payment/root';
+import { StripePaymentInfo } from '../model/index';
 import { StripePaymentInstructionsComponent } from './stripe-payment-instructions.component';
 
 @Pipe({ name: 'cxTranslate', standalone: false })
@@ -28,7 +29,27 @@ class StubDatePipe implements PipeTransform {
 describe('StripePaymentInstructionsComponent', () => {
   let fixture: ComponentFixture<StripePaymentInstructionsComponent>;
 
-  function setup(info?: StripePaymentInfo): void {
+  function setup(
+    info?: StripePaymentInfo,
+    options: { outlet?: 'order' | 'component' | 'none' } = {}
+  ): void {
+    const outlet = options.outlet ?? 'order';
+    const order = { stripePaymentInfo: info };
+    const providers: unknown[] = [
+      { provide: OrderFacade, useValue: { getOrderDetails: () => of(order) } },
+    ];
+    if (outlet === 'order') {
+      providers.push({
+        provide: OutletContextData,
+        useValue: { context$: of({ item: order }) },
+      });
+    } else if (outlet === 'component') {
+      // A CMS component outlet (the confirmation page) gives the component, not an order.
+      providers.push({
+        provide: OutletContextData,
+        useValue: { context$: of({ component: { flexType: 'X' } }) },
+      });
+    }
     TestBed.configureTestingModule({
       declarations: [
         StripePaymentInstructionsComponent,
@@ -36,12 +57,7 @@ describe('StripePaymentInstructionsComponent', () => {
         StubDatePipe,
       ],
       schemas: [NO_ERRORS_SCHEMA],
-      providers: [
-        {
-          provide: OutletContextData,
-          useValue: { context$: of({ item: { stripePaymentInfo: info } }) },
-        },
-      ],
+      providers: providers as never[],
     });
     fixture = TestBed.createComponent(StripePaymentInstructionsComponent);
     fixture.detectChanges();
@@ -82,5 +98,15 @@ describe('StripePaymentInstructionsComponent', () => {
   it('renders nothing without payment info', () => {
     setup(undefined);
     expect(fixture.nativeElement.textContent.trim()).toBe('');
+  });
+
+  it('reads the placed order from the order facade on the confirmation page (CMS component outlet)', () => {
+    setup(pending, { outlet: 'component' });
+    expect(fixture.nativeElement.textContent).toContain('12345 678 901 234');
+  });
+
+  it('reads the placed order from the order facade without any outlet context', () => {
+    setup(pending, { outlet: 'none' });
+    expect(fixture.nativeElement.querySelector('a')).not.toBeNull();
   });
 });
