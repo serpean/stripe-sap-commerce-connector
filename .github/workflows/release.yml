@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, for example 3.0.0 (no "v")'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION_INPUT: ${{ inputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: js-storefront/stripestore/package-lock.json
+
+      - name: Check version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v${VERSION_INPUT#v}"
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${tag#v}" >> "$GITHUB_ENV"
+          scripts/release/check-version.sh "$tag"
+
+      - name: Write .npmrc
+        working-directory: js-storefront/stripestore
+        env:
+          SAP_NPM_AUTH: ${{ secrets.SAP_NPM_AUTH }}
+        run: |
+          {
+            echo '@spartacus:registry=https://73554900100900004337.npmsrv.base.repositories.cloud.sap/'
+            echo '//73554900100900004337.npmsrv.base.repositories.cloud.sap/:_auth='"$SAP_NPM_AUTH"
+            echo 'always-auth=true'
+          } > .npmrc
+
+      - name: Install dependencies
+        working-directory: js-storefront/stripestore
+        run: npm ci
+
+      - name: Test library
+        working-directory: js-storefront/stripestore
+        run: npx ng test sap-commerce-stripe-payment --watch=false --browsers=ChromeHeadless
+
+      - name: Build library
+        working-directory: js-storefront/stripestore
+        run: npx ng build sap-commerce-stripe-payment
+
+      - name: Pack library
+        working-directory: js-storefront/stripestore/dist/sap-commerce-stripe-payment
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist-release/pack"
+          npm pack --pack-destination "$GITHUB_WORKSPACE/dist-release/pack"
+
+      - name: Build release zip
+        run: |
+          scripts/release/build-release.sh "$RELEASE_VERSION" dist-release/pack/*.tgz
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "dist-release/stripe-sap-commerce-connector-${RELEASE_VERSION}.zip" \
+            --title "$RELEASE_TAG" \
+            --notes-file dist-release/RELEASE_NOTES.md
+
+      - name: Upload artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stripe-sap-commerce-connector-${{ inputs.version }}
+          path: dist-release/stripe-sap-commerce-connector-*.zip
+          if-no-files-found: error
+
+      - name: Delete .npmrc
+        if: always()
+        run: rm -f js-storefront/stripestore/.npmrc

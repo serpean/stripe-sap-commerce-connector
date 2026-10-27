@@ -128,3 +128,6 @@ js-storefront/stripestore/playwright-report/
 # Official SAP Spartacus sample data: a dependency of the reference project,
 # downloaded by core-customize/scripts/fetch-spartacussampledata.sh
 core-customize/hybris/custom/spartacus/spartacussampledata/
+
+# GitHub release output
+dist-release/
