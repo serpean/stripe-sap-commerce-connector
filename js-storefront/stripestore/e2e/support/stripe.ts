@@ -198,3 +198,17 @@ export async function listCustomerBalanceRefunds(customerId: string, createdAfte
 export async function listCashBalanceTransactions(customerId: string): Promise<{ id: string; type: string; net_amount: number }[]> {
   return (await stripeGet(`/customers/${customerId}/cash_balance_transactions`, { limit: '100' })).data;
 }
+
+/**
+ * Gives the Stripe customer the email of the Stripe account. A cash balance refund (origin=customer_balance) makes
+ * Stripe email the customer to collect the bank details, and a Stripe test account can only send email to its own
+ * verified address ("Cannot send email ... verify the email address first"). The test customers have example.com
+ * addresses, so the refund checks use the account email. The email is never printed.
+ */
+export async function useAccountEmailForRefunds(customerId: string): Promise<void> {
+  const account = await stripeGet('/account');
+  if (!account.email) {
+    throw new Error('The Stripe account has no email: cash balance refunds cannot be tested');
+  }
+  await stripePost(`/customers/${customerId}`, { email: account.email });
+}

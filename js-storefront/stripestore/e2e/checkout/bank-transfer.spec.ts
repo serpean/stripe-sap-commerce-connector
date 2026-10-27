@@ -12,7 +12,7 @@ import {
   waitForPaymentEntry,
 } from '../support/backend';
 import { checkoutToPayment, CheckoutSession, expectOrderConfirmation, expectPaymentInstructions, payWithBankTransfer } from '../support/checkout';
-import { bankTransferReference, fundCashBalance, getCashBalance, listCashBalanceTransactions, listCustomerBalanceRefunds, minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
+import { bankTransferReference, fundCashBalance, getCashBalance, listCashBalanceTransactions, listCustomerBalanceRefunds, minor, netCaptured, retrievePaymentIntent, useAccountEmailForRefunds } from '../support/stripe';
 import { Page } from '@playwright/test';
 
 interface Pending {
@@ -69,6 +69,8 @@ test.describe('Bank transfer (customer_balance)', () => {
     const p = await placePendingBankTransfer(page);
     const half = Math.floor(p.total / 2);
     const since = Math.floor(Date.now() / 1000) - 5;
+    // Stripe emails the customer to collect the bank details of a refund; a test account can only email itself.
+    await useAccountEmailForRefunds(p.customerId);
     await fundCashBalance(p.customerId, half, p.reference);
 
     // Half of the money is not enough: the order keeps waiting.
@@ -98,6 +100,8 @@ test.describe('Bank transfer (customer_balance)', () => {
     const p = await placePendingBankTransfer(page);
     const extra = 500;
     const since = Math.floor(Date.now() / 1000) - 5;
+    // Stripe emails the customer to collect the bank details of a refund; a test account can only email itself.
+    await useAccountEmailForRefunds(p.customerId);
     await fundCashBalance(p.customerId, p.total + extra, p.reference);
 
     await waitForOrderStatus(p.orderCode, 'READY', 300_000);
