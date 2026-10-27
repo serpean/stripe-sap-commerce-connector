@@ -9,6 +9,7 @@ import {
   waitForPaymentEntry,
 } from '../support/backend';
 import { checkoutToPayment, expectOrderConfirmation, payWithSepa, SEPA_IBANS } from '../support/checkout';
+import { expectOneAuthorizedOrder } from '../support/assertions';
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
 test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is accepted and can ship', async ({ page }) => {
@@ -35,8 +36,9 @@ test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is acce
   await waitFor(async () => (await retrievePaymentIntent(processing.id)).status === 'succeeded', 480_000, 'the SEPA debit', 10_000);
   const ready = await waitForOrderStatus(orderCode, 'READY', 240_000);
   const entries = await waitForPaymentEntry(orderCode, 'AUTHORIZATION');
-  // Soft: a duplicate entry must fail the test, but the rest of the flow is still checked.
-  expect.soft(entries.filter((e) => e.type === 'AUTHORIZATION').map((e) => [e.status, e.requestId])).toEqual([['ACCEPTED', processing.id]]);
+  // Exactly one ACCEPTED authorization of this PaymentIntent (the webhook and the order process must not both add one).
+  expect(entries.filter((e) => e.type === 'AUTHORIZATION').map((e) => [e.status, e.requestId])).toEqual([['ACCEPTED', processing.id]]);
+  await expectOneAuthorizedOrder(orderCode);
   // The OCC order read can stay cached for up to a minute after the order changed.
   await waitFor(
     async () => (await getOrder(session.customer, orderCode)).stripePaymentInfo?.paymentStatus === 'ACCEPTED',

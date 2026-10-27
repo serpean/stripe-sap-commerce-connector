@@ -203,8 +203,14 @@ export const MIN_TEST_STOCK = 500;
  * Refills the stock of the products for the e2e tests in the local reference platform. Each StockLevel of the products
  * gets available = reserved + MIN_TEST_STOCK when it has less; available is never lowered. A forced out-of-stock level
  * goes back to the default status. Idempotent. Gives one line per change: product, warehouse, old and new values.
+ * Runs only against a HAC on localhost.
  */
 export async function refillTestStock(productCodes: string[]): Promise<string[]> {
+  // The refill writes stock data (and clears a forced out-of-stock status): only on a local reference platform.
+  const host = new URL(HAC_URL).hostname;
+  if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+    throw new Error(`refillTestStock: refusing to change stock on the non-local host ${host}`);
+  }
   const codes = [...new Set(productCodes)];
   codes.forEach(literal);
   if (!codes.length) {

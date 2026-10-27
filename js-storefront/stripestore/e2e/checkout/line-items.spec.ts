@@ -25,15 +25,19 @@ test('16. line items: one line per cart entry and the lines add up to the amount
   expect(live.amount).toBe(minor(order.totalPrice));
 });
 
-test('16 (update). Stripe accepts the update with amount_details cleared on a PaymentIntent that never had line items', async () => {
-  // The connector sends amount_details="" in an update without line items, also for a PaymentIntent without them.
+test('16b. Stripe API check: an update with amount_details cleared works on a PaymentIntent that never had line items', async () => {
+  // A check of Stripe, not of the shop: the connector sends amount_details="" in an update without line items, also
+  // for a PaymentIntent without them. The PaymentIntent is cancelled even when an assertion fails.
   const created = await stripePost('/payment_intents', {
     amount: '2000',
     currency: 'eur',
     'automatic_payment_methods[enabled]': 'true',
   });
-  expect(created.amount_details?.line_items?.data ?? []).toEqual([]);
-  const updated = await stripePost(`/payment_intents/${created.id}`, { amount: '2500', amount_details: '' });
-  expect(updated.amount).toBe(2500);
-  await stripePost(`/payment_intents/${created.id}/cancel`, {});
+  try {
+    expect(created.amount_details?.line_items?.data ?? []).toEqual([]);
+    const updated = await stripePost(`/payment_intents/${created.id}`, { amount: '2500', amount_details: '' });
+    expect(updated.amount).toBe(2500);
+  } finally {
+    await stripePost(`/payment_intents/${created.id}/cancel`, {});
+  }
 });

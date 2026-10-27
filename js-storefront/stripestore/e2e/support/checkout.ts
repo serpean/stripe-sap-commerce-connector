@@ -61,10 +61,20 @@ export async function waitForPlaceOrder(page: Page): Promise<{ status: number; b
     resolve({ status: response.status(), body });
   };
   await page.route(PLACE_ORDER_URL, handler);
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('No POST /orders within 120 s')), 120_000).unref?.()
-  );
-  return Promise.race([result, timeout]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Remove the route, so that a later test step does not go through a stale handler.
+      page.unroute(PLACE_ORDER_URL, handler).catch(() => undefined);
+      reject(new Error('No POST /orders within 120 s'));
+    }, 120_000);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([result, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** After a failed confirmation the shop shows its error and the customer can pay again. */
@@ -408,6 +418,9 @@ async function closeInstructionsModal(page: Page): Promise<void> {
       }
     }
     await page.waitForTimeout(500);
+  }
+  if (!/order-confirmation/.test(page.url())) {
+    throw new Error('closeInstructionsModal: no Stripe instructions modal and no order confirmation page within 60 s');
   }
 }
 
