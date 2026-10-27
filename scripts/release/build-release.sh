@@ -10,8 +10,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 # Paths that must never be in the zip (extended regex, matched on each zip path).
 FORBIDDEN_PATHS='(^|/)(stripesampledata|spartacussampledata|recipe|recipes|lib|classes|gensrc|node_modules)(/|$)|(^|/)(\.env[^/]*|\.npmrc)$|(^|/)(extensioninfo|items)\.xsd$|(^|/)hybris/bin/platform(/|$)|(^|/)sample[-_]?storefront(/|$)|(^|/)stripestore(/|$)'
 # Content that must never be in a file: Stripe keys and webhook secrets (prefix plus 20 or more key
-# characters, so code and docs that only name a prefix or use a placeholder do not match) and npm _auth.
-SECRET_PATTERN='(sk|rk)_(live|test)_[A-Za-z0-9]{20,}|whsec_[A-Za-z0-9]{20,}|_auth=[A-Za-z0-9+/=]{8,}'
+# characters, so code and docs that only name a prefix or use a placeholder do not match) and npm
+# credentials (_auth, _authToken, _password; quoted or not).
+SECRET_PATTERN='(sk|rk)_(live|test)_[A-Za-z0-9]{20,}|whsec_[A-Za-z0-9]{20,}|_(auth|authToken|password)[[:space:]]*=[[:space:]]*["'"'"']?[A-Za-z0-9+/=_.-]{8,}'
 
 check_zip() {
 	local zip="$1" work paths bad=0 f
@@ -23,21 +24,39 @@ check_zip() {
 	fi
 	work="$(mktemp -d)"
 	trap 'rm -rf "$work"' RETURN
-	unzip -q "$zip" -d "$work/zip"
+	# Every step checks its own status: the caller may run this function where set -e is off.
+	if ! unzip -q "$zip" -d "$work/zip"; then
+		echo "ERROR: cannot extract $zip" >&2
+		return 1
+	fi
 	# Open each .tgz too, because the zip compresses it.
 	while IFS= read -r -d '' f; do
-		mkdir -p "$f.x" && tar -xzf "$f" -C "$f.x"
+		if ! { mkdir -p "$f.x" && tar -xzf "$f" -C "$f.x"; }; then
+			echo "ERROR: cannot extract ${f#"$work"/zip/}" >&2
+			bad=1
+		fi
 	done < <(find "$work/zip" -name '*.tgz' -print0)
+	local matches status
+	# grep exits 0 on a match, 1 on no match, 2 on an error: an error is not a clean result.
+	matches="$(grep -rlE "$SECRET_PATTERN" "$work/zip" 2> /dev/null)" && status=0 || status=$?
+	if [ "$status" -gt 1 ]; then
+		echo "ERROR: the secret scan failed (grep status $status)" >&2
+		bad=1
+	fi
 	while IFS= read -r f; do
+		[ -n "$f" ] || continue
 		echo "ERROR: possible secret in file: ${f#"$work"/zip/}" >&2
 		bad=1
-	done < <(grep -rlE "$SECRET_PATTERN" "$work/zip" 2> /dev/null || true)
+	done <<< "$matches"
 	return "$bad"
 }
 
 if [ -n "${VERIFY_ONLY_ZIP:-}" ]; then
-	check_zip "$VERIFY_ONLY_ZIP" && echo "OK: $VERIFY_ONLY_ZIP passed the checks."
-	exit $?
+	if check_zip "$VERIFY_ONLY_ZIP"; then
+		echo "OK: $VERIFY_ONLY_ZIP passed the checks."
+		exit 0
+	fi
+	exit 1
 fi
 
 if [ $# -ne 2 ]; then
@@ -55,13 +74,18 @@ zip_name="stripe-sap-commerce-connector-$version.zip"
 rm -rf "$stage" "$out/$zip_name"
 mkdir -p "$stage/stripe" "$stage/storefront"
 
-# Only tracked files enter the zip, so nothing ignored can get in.
+# Only tracked files enter the zip, so nothing ignored can get in. The content is the working tree
+# (in CI: the checked-out commit).
 for ext in stripecore stripefacades stripeocc; do
 	base="core-customize/hybris/custom/stripe/$ext"
 	git ls-files -z -- "$base" | while IFS= read -r -d '' f; do
 		mkdir -p "$stage/stripe/$ext/$(dirname "${f#"$base"/}")"
 		cp "$f" "$stage/stripe/$ext/${f#"$base"/}"
 	done
+	if [ ! -f "$stage/stripe/$ext/extensioninfo.xml" ]; then
+		echo "ERROR: no files of extension $ext were copied (wrong path?)." >&2
+		exit 1
+	fi
 done
 cp "$tgz" "$stage/storefront/$(basename "$tgz")"
 cp README.md CHANGELOG.md LICENSE "$stage/"
@@ -70,7 +94,9 @@ git ls-files -z -- docs/migration | while IFS= read -r -d '' f; do
 	cp "$f" "$stage/$f"
 done
 
-(cd "$stage" && find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS)
+# NUL-separated names, so spaces or quotes in a name do not break the list; the './' prefix is cut from the output.
+(cd "$stage" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 \
+	| sed 's|^\([0-9a-f]*  \)\./|\1|' > SHA256SUMS)
 (cd "$stage" && zip -q -r -X "$out/$zip_name" .)
 rm -rf "$stage"
 

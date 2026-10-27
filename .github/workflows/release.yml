@@ -25,6 +25,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # npm ci runs third-party install scripts: do not leave the write token in .git/config.
+          # gh release uses GH_TOKEN instead.
+          persist-credentials: false
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
@@ -40,9 +44,10 @@ jobs:
           else
             tag="v${VERSION_INPUT#v}"
           fi
+          # Validate first: only a checked tag (no newline, no other text) goes into GITHUB_ENV.
+          scripts/release/check-version.sh "$tag"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "RELEASE_VERSION=${tag#v}" >> "$GITHUB_ENV"
-          scripts/release/check-version.sh "$tag"
 
       - name: Write .npmrc
         working-directory: js-storefront/stripestore
@@ -61,7 +66,7 @@ jobs:
 
       - name: Test library
         working-directory: js-storefront/stripestore
-        run: npx ng test sap-commerce-stripe-payment --watch=false --browsers=ChromeHeadless
+        run: npx ng test sap-commerce-stripe-payment --watch=false --browsers=ChromeHeadlessCI
 
       - name: Build library
         working-directory: js-storefront/stripestore
@@ -81,6 +86,7 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$RELEASE_TAG" \
             "dist-release/stripe-sap-commerce-connector-${RELEASE_VERSION}.zip" \

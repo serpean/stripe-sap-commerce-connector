@@ -11,6 +11,11 @@ fi
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 tag="$1"
+# One line, 'v' plus a semantic version: nothing else can reach the release (or GITHUB_ENV).
+if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || [ "$(printf '%s' "$tag" | wc -l)" -ne 0 ]; then
+	echo "ERROR: tag must look like v1.2.3 (got an invalid value)." >&2
+	exit 1
+fi
 version="${tag#v}"
 package_json="$root/js-storefront/stripestore/integrations-libs/stripe/package.json"
 changelog="$root/CHANGELOG.md"
@@ -31,10 +36,12 @@ if ! grep -qF "## [$version]" "$changelog"; then
 fi
 
 mkdir -p "$root/dist-release"
-# Print only the section of this version: from its heading to the next '## [' heading.
+# Print only the section of this version: from its heading to the next '## [' heading, without
+# Keep a Changelog link lines ('[x]: url').
 awk -v heading="## [$version]" '
 	index($0, heading) == 1 { found = 1; next }
 	found && /^## \[/ { exit }
+	found && /^\[[^]]+\]: / { next }
 	found { print }
 ' "$changelog" | sed -e '/./,$!d' > "$root/dist-release/RELEASE_NOTES.md"
 
