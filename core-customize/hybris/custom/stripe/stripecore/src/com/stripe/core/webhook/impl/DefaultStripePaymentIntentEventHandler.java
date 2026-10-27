@@ -1,6 +1,7 @@
 package com.stripe.core.webhook.impl;
 
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
@@ -12,6 +13,7 @@ import com.stripe.core.order.StripeOrderPlacementService;
 import com.stripe.core.payment.StripePaymentDetailsCopier;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.StripePaymentMethodGroups;
 import com.stripe.core.site.StripeSiteContext;
 import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.core.webhook.StripePaymentIntentEventHandler;
@@ -41,11 +43,13 @@ import org.slf4j.LoggerFactory;
  * authorizes the pending order, or, when there is no order after the grace period, places it from the server. A
  * requires_action event counts only when the PaymentIntent issued payment instructions (voucher or bank transfer,
  * AWAITING_FUNDS); any other requires_action (3D Secure, redirect) is ignored. A partially_funded event of a placed
- * order that still waits for the money only copies the amount still to pay to the payment info of the order; the
- * state does not change. When the funds were already released, it does nothing. When the order was cancelled before
+ * order that still waits for the money copies the amount still to pay to the payment info of the order and records
+ * the AWAITING_FUNDS state; the order status does not change. When the funds were already released, it does nothing. When the order was cancelled before
  * the payment succeeded, or the authorization of the order is rejected (for example, the amounts differ), the order
  * is cancelled and the funds are released.</li>
- * <li>Failure events (payment_failed, canceled): cancels the pending order.</li>
+ * <li>Failure events (payment_failed, canceled): cancels the pending order. When a bank transfer PaymentIntent is
+ * cancelled (also outside the connector, for example in the Dashboard), the money it received goes back to the cash
+ * balance without a {@code funds_available} event, so a cash balance check is planned.</li>
  * </ul>
  * An event for a PaymentIntent without a record (not created by this shop) is ignored. The record row is locked first,
  * so two events of one PaymentIntent are handled one after the other. The event is handled in the site of the record,
@@ -86,6 +90,7 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	private StripePaymentDetailsCopier stripePaymentDetailsCopier;
 	private StripeSiteContext stripeSiteContext;
 	private TimeService timeService;
+	private StripeCashBalanceService stripeCashBalanceService;
 
 	@Override
 	public StripeWebhookOutcome handle(final String eventType, final PaymentIntent paymentIntent, final Instant eventCreated)
@@ -153,6 +158,9 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 		}
 		if (PARTIALLY_FUNDED.equals(eventType) && status == StripePaymentIntentStatus.AWAITING_FUNDS)
 		{
+			// A record still CREATED (the requires_action event was lost or comes later) gets AWAITING_FUNDS, so the
+			// order shows the payment as pending.
+			updateState(record, status);
 			return updateAmountRemaining(order.get(), live);
 		}
 		if (PAID.contains(status) && OrderStatus.CANCELLED.equals(order.get().getStatus())
@@ -206,13 +214,18 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	private StripeWebhookOutcome onFailure(final String eventType, final StripePaymentIntentRecordModel record)
 	{
 		final String paymentIntentId = record.getPaymentIntentId();
-		final StripePaymentIntentStatus status = statusOf(stripeGateway.retrievePaymentIntent(paymentIntentId));
+		final PaymentIntent live = stripeGateway.retrievePaymentIntent(paymentIntentId);
+		final StripePaymentIntentStatus status = statusOf(live);
 		if (!DEAD.contains(status))
 		{
 			LOG.info("Event {} of payment intent {} is out of date: the status is now {}", eventType, paymentIntentId, status);
 			return StripeWebhookOutcome.IGNORED;
 		}
 		updateState(record, status);
+		if (status == StripePaymentIntentStatus.CANCELED)
+		{
+			scheduleCashBalanceCheck(live);
+		}
 		final Optional<OrderModel> order = orderOf(record);
 		if (order.isPresent() && !stripeOrderAuthorizationService.hasAcceptedAuthorization(order.get(), paymentIntentId))
 		{
@@ -221,6 +234,28 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 			requireCancellationService().cancelForFailedPayment(order.get());
 		}
 		return StripeWebhookOutcome.PROCESSED;
+	}
+
+	/**
+	 * Plans a cash balance check for a cancelled bank transfer PaymentIntent with a customer. The cash balance service
+	 * skips customers of other systems. A failure to plan never fails the event.
+	 */
+	private void scheduleCashBalanceCheck(final PaymentIntent live)
+	{
+		if (stripeCashBalanceService == null || StringUtils.isBlank(live.getCustomer())
+				|| StringUtils.isBlank(live.getCurrency()) || !StripePaymentMethodGroups.isBankTransfer(live))
+		{
+			return;
+		}
+		try
+		{
+			stripeCashBalanceService.scheduleRefundCheck(live.getCustomer(), live.getCurrency());
+		}
+		catch (final RuntimeException e)
+		{
+			LOG.warn("Cash balance check of Stripe customer {} is not planned after the cancel of {}: {}", live.getCustomer(),
+					live.getId(), e.getMessage());
+		}
 	}
 
 	/**
@@ -421,5 +456,10 @@ public class DefaultStripePaymentIntentEventHandler implements StripePaymentInte
 	public void setStripePaymentDetailsCopier(final StripePaymentDetailsCopier stripePaymentDetailsCopier)
 	{
 		this.stripePaymentDetailsCopier = stripePaymentDetailsCopier;
+	}
+
+	public void setStripeCashBalanceService(final StripeCashBalanceService stripeCashBalanceService)
+	{
+		this.stripeCashBalanceService = stripeCashBalanceService;
 	}
 }

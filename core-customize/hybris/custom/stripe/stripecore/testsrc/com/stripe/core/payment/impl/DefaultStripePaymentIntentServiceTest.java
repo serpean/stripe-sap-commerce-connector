@@ -791,6 +791,21 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
+	public void unchangedCartKeepsIntentWithIssuedInstructions()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(withInstructions(intent("pi_1", "requires_action", 1200)));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		verify(lockService, never()).tryAcquire(anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+	}
+
+	@Test
 	public void canceledIntentIsReplaced()
 	{
 		cartHasIntent("pi_old");

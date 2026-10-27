@@ -17,6 +17,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
@@ -441,6 +442,57 @@ public class DefaultStripePaymentIntentEventHandlerTest
 		verify(modelService, never()).save(record);
 		verifyNoInteractions(placementService, cancellationService, paymentIntentService);
 		verify(authorizationService, never()).authorizePendingOrder(any(), any());
+	}
+
+	@Test
+	public void partiallyFundedOfOrderWithCreatedRecordRecordsAwaitingFunds()
+	{
+		final OrderModel order = new OrderModel();
+		order.setPaymentInfo(new StripePaymentInfoModel());
+		final StripePaymentIntentRecordModel record = givenRecord(order, StripePaymentIntentState.CREATED,
+				Duration.ofHours(1));
+		withInstructions(givenLive("requires_action"), "display_bank_transfer_instructions");
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle(PARTIALLY_FUNDED, eventObject, eventCreated));
+
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, record.getState());
+		verify(modelService).save(record);
+	}
+
+	@Test
+	public void cancelledBankTransferPlansCashBalanceCheck()
+	{
+		final StripeCashBalanceService cashBalanceService = mock(StripeCashBalanceService.class);
+		handler.setStripeCashBalanceService(cashBalanceService);
+		givenRecord(null, StripePaymentIntentState.AWAITING_FUNDS, Duration.ofHours(1));
+		final PaymentIntent live = givenLive("canceled");
+		live.setCustomer("cus_9");
+		live.setCurrency("eur");
+		final com.stripe.model.PaymentMethod method = new com.stripe.model.PaymentMethod();
+		method.setType("customer_balance");
+		live.setPaymentMethodObject(method);
+
+		assertEquals(StripeWebhookOutcome.PROCESSED, handler.handle("payment_intent.canceled", eventObject, eventCreated));
+
+		verify(cashBalanceService).scheduleRefundCheck("cus_9", "eur");
+	}
+
+	@Test
+	public void cancelledCardPaymentPlansNoCashBalanceCheck()
+	{
+		final StripeCashBalanceService cashBalanceService = mock(StripeCashBalanceService.class);
+		handler.setStripeCashBalanceService(cashBalanceService);
+		givenRecord(null, StripePaymentIntentState.AUTHORIZED, Duration.ofHours(1));
+		final PaymentIntent live = givenLive("canceled");
+		live.setCustomer("cus_9");
+		live.setCurrency("eur");
+		final com.stripe.model.PaymentMethod method = new com.stripe.model.PaymentMethod();
+		method.setType("card");
+		live.setPaymentMethodObject(method);
+
+		handler.handle("payment_intent.canceled", eventObject, eventCreated);
+
+		verifyNoInteractions(cashBalanceService);
 	}
 
 	@Test

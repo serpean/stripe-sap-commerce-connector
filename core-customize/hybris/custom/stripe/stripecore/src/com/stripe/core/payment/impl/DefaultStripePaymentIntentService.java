@@ -15,6 +15,7 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
 import com.stripe.core.payment.StripeLineItemsBuilder;
+import com.stripe.core.payment.StripePaymentMethodGroups;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
@@ -168,21 +169,13 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	}
 
 	/**
-	 * A bank transfer PaymentIntent shows bank transfer instructions, or its charge was paid from the customer balance.
-	 * The list of enabled payment method types is not used: with automatic payment methods it names every method.
 	 * The refund of a succeeded transfer PaymentIntent does not return to the cash balance. The Refunds API sends it to
 	 * the bank account of the customer (Stripe emails the customer); only the Dashboard offers the cash balance as
-	 * destination.
+	 * destination. So only a cancel needs a cash balance check.
 	 */
 	private static boolean isBankTransfer(final PaymentIntent intent)
 	{
-		if (intent.getNextAction() != null && "display_bank_transfer_instructions".equals(intent.getNextAction().getType()))
-		{
-			return true;
-		}
-		final Charge charge = intent.getLatestChargeObject();
-		return charge != null && charge.getPaymentMethodDetails() != null
-				&& "customer_balance".equals(charge.getPaymentMethodDetails().getType());
+		return StripePaymentMethodGroups.isBankTransfer(intent);
 	}
 
 	/**

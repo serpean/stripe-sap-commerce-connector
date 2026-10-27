@@ -182,6 +182,7 @@
         <property name="timeService" ref="timeService"/>
         <property name="stripeSiteContext" ref="stripeSiteContext"/>
         <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
     </bean>
 
     <alias name="defaultStripeRefundEventHandler" alias="stripeRefundEventHandler"/>
