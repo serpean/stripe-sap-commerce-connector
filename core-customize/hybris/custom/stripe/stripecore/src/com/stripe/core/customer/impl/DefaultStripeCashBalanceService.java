@@ -162,7 +162,8 @@ public class DefaultStripeCashBalanceService implements StripeCashBalanceService
 			{
 				throw e;
 			}
-			LOG.info("Stripe customer {} does not exist in this Stripe account: its cash balance is skipped", customerId);
+			LOG.warn("Stripe customer {} does not exist in the Stripe account of the global key: its cash balance is skipped. "
+					+ "Check that the global key and the site keys use the same Stripe account", customerId);
 			return false;
 		}
 		if (customer == null || Boolean.TRUE.equals(customer.getDeleted()))

@@ -162,9 +162,10 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 			}
 			catch (final TimeoutException e)
 			{
-				// The thread is interrupted. If its insert still commits, the claim has no owner and is removed when it
-				// is stale; until then other callers wait and retry.
-				result.cancel(true);
+				// The thread is not interrupted: an interrupt during database file I/O can close the HSQLDB file channel.
+				// If its insert still commits, the claim has no owner and is removed when it is stale; until then other
+				// callers wait and retry.
+				result.cancel(false);
 				throw e;
 			}
 			finally

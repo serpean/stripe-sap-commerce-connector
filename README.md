@@ -496,7 +496,7 @@ While the payment of an order is pending, a partial cancel is denied with the co
 - A retry of a cancel adjustment can replay a Stripe failure that Stripe saved for the same idempotency key. Stripe keeps keys for 24 hours.
 - HSQLDB has no row locks. The locks on the PaymentIntent record and on the webhook event do nothing there. Use a real database (not HSQLDB) to test concurrency.
 - A card authorization expires after 7 days.
-- **One Stripe account for these checks.** The cash balance checks and the OMS `refundFollowOn` use the global Stripe key. Per-site keys on different Stripe accounts do not work for them.
+- **One Stripe account for these checks.** The cash balance checks and the OMS `refundFollowOn` use the global Stripe key. Per-site keys on different Stripe accounts do not work for them. In that case the server logs a WARN "does not exist in the Stripe account of the global key" and the balance stays in Stripe: refund it by hand in the Dashboard.
 - **Refund outside the method window.** It stays in `ERROR` after 5 retries. Refund by hand in the Dashboard (see the runbook). A refund that ends `failed` or `canceled` is final and is not retried.
 - **Accelerator is not supported.** The payment instructions and the new methods are for Spartacus only.
 - **No instructions email.** The connector shows the Multibanco or bank transfer instructions in the storefront and in the Stripe page (`instructionsUrl`). It does not send them by email.
