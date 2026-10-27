@@ -19,12 +19,19 @@ See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
   bank transfer is handled (`payment_intent.partially_funded`).
 - OCC fields in `stripePaymentInfo`: `instructionsUrl`, `paymentReference` (Multibanco: `<entity> <reference>`),
   `instructionsExpireAt`, `amountRemaining`.
-- Spartacus component `cx-stripe-payment-instructions`. It shows the payment instructions on the order
-  confirmation page and on the order details page.
+- Spartacus component `cx-stripe-payment-instructions` (`StripePaymentInstructionsComponent`, exported from the
+  entry point `sap-commerce-stripe-payment/root`). It shows the payment instructions on the order confirmation page
+  and on the order details page. Its outlets are provided by `StripePaymentRootModule`, so they exist before the
+  lazy payment feature loads. The order details page uses the order overview outlet; the order confirmation page
+  uses the outlet of the CMS component `OrderConfirmationThankMessageComponent`.
 - Stripe Customer for each SAP customer (`stripe.customer.create`), stored for each Stripe account key.
   Guests get one for each cart. Bank transfer needs it.
 - Refund of the money left in the Stripe cash balance (overpayment, or a transfer for a cancelled order),
-  after `stripe.cashbalance.refund.delay.seconds`. Webhook event `cash_balance.funds_available`.
+  after `stripe.cashbalance.refund.delay.seconds`. Webhook event `cash_balance.funds_available`; a check is also
+  planned when a bank transfer PaymentIntent is cancelled (by the connector or in the Dashboard). Only Stripe
+  Customers of this installation are refunded: the connector marks the customers it creates with the metadata
+  `sap_commerce_connector=true`, and a customer also needs a local row (`StripeCustomer`, or a PaymentIntent
+  record of its guest cart). Other customers of the Stripe account are skipped.
 - Webhook events `payment_intent.requires_action` and `payment_intent.partially_funded`.
 - Line items (`amount_details`) on the PaymentIntent for methods that ask for them, such as seQura. They never
   change the amount. If the lines do not add up, they are left out and a WARN is logged.
@@ -34,22 +41,22 @@ See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
   `stripe.cashbalance.refund.delay.seconds` (3600).
 - Partial cancel of a pending order is denied (code `7301`, text prefix `stripe-payment-pending:`). A full
   cancel releases the PaymentIntent.
-- GitHub release workflow (`.github/workflows/release.yml`): it builds the connector zip, the Spartacus
-  package, and checksums for a `v*` tag, and checks the tag against the library version and this file.
+- GitHub release workflow (`.github/workflows/release.yml`): for a `v*` tag it builds one zip that holds the
+  connector extensions, the Spartacus package, and `SHA256SUMS`, and checks the tag against the library version
+  and this file.
 - End-to-end battery of 38 cases. Option `E2E_VIDEO=on` records a video and a trace of every test.
 - Migration guide [docs/migration/3.1.0.md](docs/migration/3.1.0.md).
 
 ### Changed
 
 - The default of `stripe.capture.manual.methods` is now `card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie`
-  (11 methods). Mondu is removed: Stripe rejects its manual capture option.
-- `StripePaymentInstructionsComponent` now lives in the entry point `sap-commerce-stripe-payment/root`
-  (it was in `/components`), and its outlets are provided by `StripePaymentRootModule`, so they exist before the
-  lazy payment feature loads. The order details page uses the order overview outlet; the order confirmation page
-  uses the outlet of the CMS component `OrderConfirmationThankMessageComponent`.
-- `stripefacades` requires `ordermanagementfacades`.
-- The setter `setStripePaymentInfoUpdater` is removed from three beans, and `StripePaymentInfoUpdater` is
-  deprecated. Projects that set it in their own Spring files must remove that property.
+  (11 methods; it was `card,paypal,klarna`). With manual capture mode, 8 more methods now reserve the money
+  instead of capturing it at once. Mondu is not in the list: Stripe rejects its manual capture option.
+- **Breaking:** `stripefacades` requires the SAP extension `ordermanagementfacades`. Add it to
+  `localextensions.xml`, also in projects without OMS.
+- **Breaking:** the setter `setStripePaymentInfoUpdater` is removed from three beans, and
+  `StripePaymentInfoUpdater` is deprecated. Projects that set it in their own Spring files must remove that
+  property, or Spring fails at startup.
 - The authorization of a pending payment that succeeds later is claimed once, in its own transaction.
 - A partial capture clears the stored discount, shipping, and tax line items of the PaymentIntent.
 - A Stripe refund that ends `failed` or `canceled` is final: the adjustment is `REJECTED`, an ERROR is
@@ -63,11 +70,6 @@ See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
   only Stripe orders. The SAP code compares entry numbers with `OrderCancelEntryData` objects, so it always
   answers "partial". A full cancel through the OMS facade is now a full cancel. Check any project code that
   relied on the old answer.
-- A mondu entry in the default manual capture list made Stripe reject every PaymentIntent.
-- A partial capture of a PaymentIntent with line items was rejected by Stripe.
-- A pending SEPA payment that succeeds could create two AUTHORIZATION entries.
-- The cash balance refund check did not run: its task search used an attribute that is not searchable.
-- The payment instructions did not show on the order confirmation page.
 
 ## [3.0.0] - 2026-10-21
 

@@ -194,7 +194,7 @@ Rules:
 
 ## After purchase
 
-The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`).
+The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`). In both cases `stripefacades` requires the SAP extension `ordermanagementfacades` (since 3.1.0), so add it to `localextensions.xml` also when the project does not use OMS.
 
 - **Capture.** `takePaymentAction` captures the current order total. If the order changed, the total is lower than the authorized amount, and Stripe releases the rest.
 - **Partial capture.** The same action captures a part of the authorized amount. When the PaymentIntent has line items, the capture sends line items that add up to the captured amount: the order lines when the order total is that amount, else one line "Order <code>". The line items never change the captured amount.
@@ -225,7 +225,7 @@ Some methods confirm later (the PaymentIntent is `processing`, or it waits for t
 - payment accepted: the process goes on;
 - payment failed, cancelled, or refunded: the order is cancelled;
 - still pending: the process checks again after the retry delay;
-- still pending after the timeout: the order is cancelled and the PaymentIntent is released.
+- still pending after the timeout: the order is cancelled and the PaymentIntent is released (cancelled at Stripe; money already captured is refunded).
 
 The timeout and the retry delay depend on the payment method:
 
@@ -257,7 +257,14 @@ These two methods (group E) give the customer payment instructions. The PaymentI
 A bank transfer customer can send too much, or send money for an order that was cancelled. Stripe keeps this money in the cash balance of the customer. The connector reacts to `cash_balance.funds_available`, and after the connector cancels a bank transfer PaymentIntent. After `stripe.cashbalance.refund.delay.seconds` (default 1 hour) it checks the balance:
 
 - the customer has no open bank transfer in Stripe: the connector refunds the balance;
-- the customer has an open bank transfer: the balance stays for it (Stripe reconciles it by itself), and the connector checks again later.
+- the customer has an open bank transfer of this shop (with an order, or younger than the bank transfer timeout): the balance stays for it (Stripe reconciles it by itself), and the connector checks again later.
+
+The connector acts only on Stripe Customers of this installation. A Stripe account can also hold customers of other systems (Stripe Invoicing, another shop, another SAP Commerce installation), and their money is not the connector's money. A customer is checked and refunded only when both are true:
+
+- its metadata has `sap_commerce_connector=true` (the connector sets this marker on every Stripe Customer it creates, since 3.1.0);
+- this installation has a local row for it: a `StripeCustomer` item (registered customer), or for a guest customer a PaymentIntent record of the cart in its `cartCode` metadata.
+
+Any other customer is skipped, with an INFO log line, when the check is planned and again before the refund. Its balance stays in Stripe; the other system or the Dashboard must handle it.
 
 The refund goes back to the bank account of the customer. Stripe emails the customer to collect the bank details, so the Stripe Customer needs an email. A Stripe test account can email only the account owner.
 
@@ -300,7 +307,7 @@ The connector does not replace SAP classes with one alias. It adds to them.
   Orders that do not use Stripe go to the original bean. A bean that does not exist is not changed. A final class is replaced by the Stripe bean, with a warning.
 - **Cancel strategy:** the alias `orderCancelPaymentServiceStrategy` points to `stripeOrderCancelPaymentServiceStrategy`.
 - **Place-order validator:** the SAP validator rejects a cart with no card data (`cart.paymentInfoNotSet`). `StripePlaceOrderCartValidator` is advice on a class proxy of that bean. It drops that one error for a cart with a Stripe PaymentIntent. All other checks stay.
-- **Item types:** `StripePaymentInfo`, `StripePaymentIntentRecord`, `StripeOrderPlacementLock`, `StripeWebhookEvent`, and the order status `PAYMENT_PENDING`.
+- **Item types:** `StripePaymentInfo`, `StripePaymentIntentRecord` (its state enum `StripePaymentIntentState` has `AWAITING_FUNDS` for a payment that waits for a voucher or a bank transfer), `StripeOrderPlacementLock`, `StripeWebhookEvent`, `StripeCustomer` (the Stripe Customer of a registered SAP customer, per Stripe account), and the order status `PAYMENT_PENDING`.
 
 # Spartacus Frontend
 
@@ -476,6 +483,7 @@ When a bank transfer customer pays too much, or pays an order that is already ca
 1. In the Stripe Dashboard, open the customer and read the cash balance. It must be 0 after the refund.
 2. Look for a refund with the origin `customer_balance` on the customer.
 3. If the refund does not exist, read the ERROR lines of `StripeCashBalanceRefundTaskRunner`. A common cause: the Stripe Customer has no email.
+4. An INFO line "was not created by this connector" or "has no local customer or payment in this installation" means the customer is not of this installation (see [Money left in the Stripe cash balance](#money-left-in-the-stripe-cash-balance)). The connector does not refund it. Refund it by hand in the Dashboard if the money belongs to this shop.
 
 ## Partial cancel denied
 
@@ -494,7 +502,7 @@ While the payment of an order is pending, a partial cancel is denied with the co
 - **No instructions email.** The connector shows the Multibanco or bank transfer instructions in the storefront and in the Stripe page (`instructionsUrl`). It does not send them by email.
 - **Apple Pay and Google Pay** need a registered domain. You cannot test them on `localhost`.
 - **Stripe test accounts** email only the account owner. The refund of a bank transfer balance sends an email to the customer, so the e2e tests set the email of the Stripe test customer to the account email.
-- **End-to-end cases not simulated** (Stripe has no test mode for them): a Bizum payment that fails (Stripe test mode returns to the shop at once); seQura line items (the line items test pays by card); a Klarna decline; the real expiry of a manual capture. Unit and integration tests cover the logic of these cases.
+- **End-to-end cases not run:** a Bizum payment that fails (Stripe test mode returns to the shop at once, so it cannot be simulated); seQura line items (the line items test pays by card); a Klarna decline (no spec uses the Stripe test helper); the real expiry of a manual capture; the update of a PaymentIntent with line items to an amount without line items. Unit and integration tests cover the logic of these cases. The SEPA failure spec failed once in many runs and did not fail again.
 - A pending Multibanco or bank transfer order does not reserve stock (SAP standard). See [Pending payments](#pending-payments).
 
 # Support
