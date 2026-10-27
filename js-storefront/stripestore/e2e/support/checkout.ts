@@ -373,16 +373,7 @@ export async function payWithSepa(page: Page, iban: string): Promise<void> {
   await element.locator('input[name="locality"]').fill('Berlin');
   await expect(element.locator('input[name="iban"]')).toHaveValue(/DE\d\d/);
   await expect(element.locator('input[name="email"]')).toHaveValue('e2e-sepa@example.com');
-  // The Payment Element reports the form as complete a moment after the last field; a click before that does nothing
-  // (no request, no message). Click again until Stripe gets the confirmation.
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const confirmation = page.waitForRequest(/api\.stripe\.com\/v1\/payment_intents\/.*\/confirm/, { timeout: 8_000 });
-    await payButton(page).click();
-    if (await confirmation.then(() => true, () => false)) {
-      return;
-    }
-  }
-  throw new Error('The SEPA form was never confirmed at Stripe');
+  await confirmWhenComplete(page);
 }
 /**
  * Pays with Multibanco. The Payment Element asks for the email, and Stripe picks the test scenario from it (see

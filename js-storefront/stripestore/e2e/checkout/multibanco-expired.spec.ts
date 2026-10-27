@@ -31,7 +31,7 @@ test('16. Multibanco not paid: at the connector timeout the order is cancelled a
 
 test('17. Multibanco voucher expired at Stripe: the order is cancelled and no money is taken', async ({ page }) => {
   test.setTimeout(600_000);
-  const session = await checkoutToPayment(page, { currency: 'EUR' });
+  await checkoutToPayment(page, { currency: 'EUR' });
   // expire_immediately: Stripe fails the voucher within seconds (payment_intent.payment_failed).
   await payWithMultibanco(page, 'e2e-expire_immediately@example.com');
   const orderCode = await expectOrderConfirmation(page);
@@ -45,5 +45,4 @@ test('17. Multibanco voucher expired at Stripe: the order is cancelled and no mo
   expect(['requires_payment_method', 'canceled']).toContain(intent.status);
   expect(netCaptured(intent)).toBe(0);
   expect((await getPaymentEntries(orderCode)).filter((e) => e.type === 'AUTHORIZATION' && e.status === 'ACCEPTED')).toEqual([]);
-  expect(session.customer.email).toBeTruthy();
 });

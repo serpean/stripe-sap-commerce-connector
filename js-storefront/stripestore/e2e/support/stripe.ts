@@ -188,10 +188,15 @@ export interface CustomerBalanceRefund {
   customer?: string | null;
 }
 
-/** The refunds with origin customer_balance (funds returned to the customer's bank) created after the time (epoch s). */
+/**
+ * The refunds with origin customer_balance created after the time (epoch s) that came out of the cash balance of the
+ * customer. Stripe leaves the customer field of these refunds empty, so each refund must match a return_initiated
+ * cash balance transaction of the customer with the same amount.
+ */
 export async function listCustomerBalanceRefunds(customerId: string, createdAfter: number): Promise<CustomerBalanceRefund[]> {
   const refunds: CustomerBalanceRefund[] = (await stripeGet('/refunds', { limit: '100', 'created[gte]': String(createdAfter) })).data;
-  return refunds.filter((r) => r.origin === 'customer_balance' && (!r.customer || r.customer === customerId));
+  const returns = (await listCashBalanceTransactions(customerId)).filter((t) => t.type === 'return_initiated');
+  return refunds.filter((r) => r.origin === 'customer_balance' && returns.some((t) => -t.net_amount === r.amount));
 }
 
 /** The cash balance transactions of the customer, newest first (funded, applied_to_payment, return_initiated...). */

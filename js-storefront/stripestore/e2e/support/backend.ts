@@ -452,20 +452,3 @@ println decision.allowed ? 'ALLOWED' : decision.denialReasons.collect { "${'${it
   ).trim();
   return out === 'ALLOWED' ? undefined : out;
 }
-
-/**
- * Cancels the whole order with the cancel service (orderCancelService.requestOrderCancel, the call behind a full
- * "cancel order"). The OMS facade of cancelOrder treats a request with a cancel reason as a partial cancel, which a
- * pending Stripe payment denies on purpose, so a full cancel of a pending order goes through the service.
- */
-export async function cancelWholeOrder(orderCode: string): Promise<void> {
-  await groovy(
-    `import de.hybris.platform.basecommerce.enums.CancelReason
-import de.hybris.platform.ordercancel.OrderCancelRequest
-${FIND_ORDER(orderCode)}
-def request = new OrderCancelRequest(order)
-request.cancelReason = CancelReason.CUSTOMERREQUEST
-orderCancelService.requestOrderCancel(request, order.user)`,
-    true
-  );
-}

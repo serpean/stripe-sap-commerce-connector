@@ -1,17 +1,20 @@
 import { expect, test } from '@playwright/test';
 import { getAvailableStock, getOrder, getPaymentEntries, getSapOrder, setConfig, shipOrder, waitFor, waitForOrderStatus, waitForPaymentEntry } from '../support/backend';
+import { TEST_TIMINGS } from '../global-setup';
 import { checkoutToPayment, expectOrderConfirmation, expectPaymentInstructions, openOrderDetails, payWithMultibanco } from '../support/checkout';
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
+const TIMEOUT_KEY = 'stripe.payment.pending.timeout.multibanco.seconds';
+
 test.describe('Multibanco', () => {
   test.afterEach(async () => {
-    await setConfig('stripe.payment.pending.timeout.multibanco.seconds', '120');
+    await setConfig(TIMEOUT_KEY, TEST_TIMINGS[TIMEOUT_KEY]);
   });
 
   test('15. Multibanco paid: the order waits in PAYMENT_PENDING with the voucher, then it is accepted and can ship', async ({ page }) => {
     // Stripe test email without a prefix: the payment arrives after about 3 minutes. The connector timeout is longer.
     test.setTimeout(900_000);
-    await setConfig('stripe.payment.pending.timeout.multibanco.seconds', '900');
+    await setConfig(TIMEOUT_KEY, '900');
     const session = await checkoutToPayment(page, { currency: 'EUR' });
     const stockBefore = await getAvailableStock(session.product.code);
     await payWithMultibanco(page, 'e2e-multibanco@example.com');

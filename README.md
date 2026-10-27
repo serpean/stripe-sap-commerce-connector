@@ -346,6 +346,8 @@ The global setup (`e2e/global-setup.ts`) sets short timings on the running serve
 
 The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
 
+Refund checks of the bank transfer specs: a Stripe test account can only email its own verified address, and a refund of the cash balance makes Stripe email the customer. So these specs set the email of the Stripe test customer to the account email, and Stripe sends a refund email to the account owner on each run.
+
 Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report (`playwright-report/index.html`) embeds both.
 Without it, the battery keeps video and trace only for failed tests.
 

@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
   cancelOrder,
-  cancelWholeOrder,
   getCancelDenial,
   getAvailableStock,
   getOrder,
@@ -129,7 +128,8 @@ test.describe('Bank transfer (customer_balance)', () => {
     expect((await waitForOrderStatus(p.orderCode, 'PAYMENT_PENDING', 10_000)).status).toBe('PAYMENT_PENDING');
     expect((await retrievePaymentIntent(p.intentId)).status).toBe('requires_action');
 
-    await cancelWholeOrder(p.orderCode);
+    // The full cancel goes through the OMS facade, the path of the OCC cancellation and of the Backoffice.
+    await cancelOrder(p.orderCode);
     await waitForOrderStatus(p.orderCode, 'CANCELLED', 180_000);
     const cancelled = await waitFor(async () => {
       const live = await retrievePaymentIntent(p.intentId);
