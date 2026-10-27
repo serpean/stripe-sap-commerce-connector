@@ -107,7 +107,8 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 	private String createAndStore(final CustomerModel user, final String accountKey, final String idempotencyKey)
 	{
 		final Customer customer = stripeGateway.createCustomer(
-				CustomerCreateParams.builder().putMetadata("userPk", String.valueOf(user.getPk())).build(), idempotencyKey);
+				CustomerCreateParams.builder().putMetadata("userPk", String.valueOf(user.getPk()))
+						.putMetadata(CONNECTOR_METADATA_KEY, CONNECTOR_METADATA_VALUE).build(), idempotencyKey);
 		String id = customer.getId();
 		try
 		{
@@ -177,17 +178,26 @@ public class DefaultStripeCustomerService implements StripeCustomerService
 
 	private CustomerCreateParams guestCreateParams(final CartModel cart)
 	{
-		return CustomerCreateParams.builder().putMetadata("cartCode", cart.getCode()).build();
+		return CustomerCreateParams.builder().putMetadata(CART_CODE_METADATA_KEY, cart.getCode())
+				.putMetadata(CONNECTOR_METADATA_KEY, CONNECTOR_METADATA_VALUE).build();
 	}
 
+	/**
+	 * The cart guid makes the key unique across installations that share one Stripe account (cart codes repeat).
+	 */
 	private String guestKey(final CartModel cart)
 	{
-		return "customer-cart-" + cart.getCode();
+		return "customer-cart-" + cart.getCode() + "-" + cart.getGuid();
 	}
 
+	/**
+	 * A hash of the uid makes the key unique across installations that share one Stripe account (PKs of sample data
+	 * repeat). The uid itself is an email and never goes into a key.
+	 */
 	private String registeredKey(final CustomerModel user, final String accountKey)
 	{
-		return "customer-" + user.getPk() + "-" + accountKey;
+		return "customer-" + user.getPk() + "-" + StringUtils.left(StripeDigests.sha256Hex(String.valueOf(user.getUid())), 16)
+				+ "-" + accountKey;
 	}
 
 	private void updateEmailIfChanged(final String customerId, final String email)

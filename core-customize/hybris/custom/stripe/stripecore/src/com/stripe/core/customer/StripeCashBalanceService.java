@@ -3,7 +3,9 @@ package com.stripe.core.customer;
 /**
  * Money that a customer sent by bank transfer and Stripe holds as cash balance. Stripe applies the balance to an open
  * bank transfer PaymentIntent of the customer by itself. Balance that no open transfer can use has no SAP order, so it
- * is refunded to the customer.
+ * is refunded to the customer. Only Stripe customers of this installation are checked: a customer needs the connector
+ * metadata marker and a local row (a {@code StripeCustomer}, or a PaymentIntent record of its guest cart). Other
+ * customers of the Stripe account are skipped.
  */
 public interface StripeCashBalanceService
 {

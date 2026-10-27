@@ -48,6 +48,11 @@ public interface StripeGateway
 	Customer updateCustomer(String id, CustomerUpdateParams params, String idempotencyKey);
 
 	/**
+	 * The Stripe Customer with its metadata. A deleted customer comes back with {@code deleted=true}.
+	 */
+	Customer retrieveCustomer(String id);
+
+	/**
 	 * The available cash balance of the customer in this currency, in minor units (0 when there is none).
 	 */
 	long retrieveCashBalance(String customerId, String currency);

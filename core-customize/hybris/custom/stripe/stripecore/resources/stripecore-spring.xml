@@ -208,6 +208,7 @@
         <property name="timeService" ref="timeService"/>
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripeCustomerDao" ref="stripeCustomerDao"/>
     </bean>
 
     <bean id="stripeCashBalanceRefundTaskRunner" class="com.stripe.core.customer.StripeCashBalanceRefundTaskRunner">

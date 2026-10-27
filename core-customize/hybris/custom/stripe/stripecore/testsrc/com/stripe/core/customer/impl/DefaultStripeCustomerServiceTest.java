@@ -13,11 +13,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.customer.dao.StripeCustomerDao;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripeCustomerModel;
 import com.stripe.model.Customer;
+import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.CustomerUpdateParams;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.commerceservices.enums.CustomerType;
@@ -87,6 +89,7 @@ public class DefaultStripeCustomerServiceTest
 		when(user.getType()).thenReturn(null);
 		cart = mock(CartModel.class);
 		when(cart.getCode()).thenReturn("c1");
+		when(cart.getGuid()).thenReturn("g1");
 		when(cart.getUser()).thenReturn(user);
 	}
 
@@ -111,7 +114,11 @@ public class DefaultStripeCustomerServiceTest
 
 		service.customerIdFor(cart);
 
-		verify(gateway).createCustomer(any(), eq("customer-123-acct_1:test"));
+		final String uidHash = com.stripe.core.util.StripeDigests.sha256Hex("ana@example.com").substring(0, 16);
+		final ArgumentCaptor<CustomerCreateParams> created = ArgumentCaptor.forClass(CustomerCreateParams.class);
+		verify(gateway).createCustomer(created.capture(), eq("customer-123-" + uidHash + "-acct_1:test"));
+		assertEquals("123", metadataOf(created.getValue()).get("userPk"));
+		assertEquals("true", metadataOf(created.getValue()).get(StripeCustomerService.CONNECTOR_METADATA_KEY));
 		final ArgumentCaptor<CustomerUpdateParams> params = ArgumentCaptor.forClass(CustomerUpdateParams.class);
 		verify(gateway).updateCustomer(eq("cus_1"), params.capture(), anyString());
 		assertEquals("ana.contact@example.com", params.getValue().getEmail());
@@ -150,7 +157,10 @@ public class DefaultStripeCustomerServiceTest
 		service.customerIdFor(cart);
 		service.customerIdFor(cart);
 
-		verify(gateway, times(2)).createCustomer(any(), eq("customer-cart-c1"));
+		final ArgumentCaptor<CustomerCreateParams> created = ArgumentCaptor.forClass(CustomerCreateParams.class);
+		verify(gateway, times(2)).createCustomer(created.capture(), eq("customer-cart-c1-g1"));
+		assertEquals("c1", metadataOf(created.getValue()).get("cartCode"));
+		assertEquals("true", metadataOf(created.getValue()).get(StripeCustomerService.CONNECTOR_METADATA_KEY));
 		assertTrue(stored.isEmpty());
 		verify(modelService, never()).save(any(StripeCustomerModel.class));
 	}
@@ -264,5 +274,11 @@ public class DefaultStripeCustomerServiceTest
 				.save(any(StripeCustomerModel.class));
 
 		assertEquals(Optional.of("cus_other"), service.customerIdFor(cart));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static java.util.Map<String, Object> metadataOf(final CustomerCreateParams params)
+	{
+		return (java.util.Map<String, Object>) params.getMetadata();
 	}
 }

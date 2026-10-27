@@ -138,6 +138,13 @@ public class DefaultStripeGateway implements StripeGateway
 	}
 
 	@Override
+	public Customer retrieveCustomer(final String id)
+	{
+		final StripeClient client = newClient();
+		return call("retrieve_customer", () -> client.v1().customers().retrieve(id));
+	}
+
+	@Override
 	public long retrieveCashBalance(final String customerId, final String currency)
 	{
 		final StripeClient client = newClient();
