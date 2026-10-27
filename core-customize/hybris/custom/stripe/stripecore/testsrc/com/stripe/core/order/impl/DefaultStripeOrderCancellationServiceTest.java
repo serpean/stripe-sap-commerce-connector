@@ -1,6 +1,7 @@
 package com.stripe.core.order.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -150,9 +151,29 @@ public class DefaultStripeOrderCancellationServiceTest
 		doThrow(new StripeGatewayException("processing", "payment_intent_unexpected_state", false, false, null))
 				.when(paymentIntentService).releaseFunds(anyString(), anyString());
 
-		service.cancelForFailedPayment(order);
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeOrderCancellationService.class))
+		{
+			service.cancelForFailedPayment(order);
 
+			assertFalse("a processing PaymentIntent that cannot be cancelled is expected: no ERROR",
+					log.hasError("order-cancel", PI_ID));
+		}
 		assertEquals(OrderStatus.CANCELLED, order.getStatus());
+	}
+
+	@Test
+	public void stripeErrorOfAPaymentThatIsNotProcessingLogsAnError() throws Exception
+	{
+		record.setState(StripePaymentIntentState.AWAITING_FUNDS);
+		doThrow(new StripeGatewayException("not reachable", "api_connection_error", false, false, null))
+				.when(paymentIntentService).releaseFunds(anyString(), anyString());
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripeOrderCancellationService.class))
+		{
+			service.cancelForFailedPayment(order);
+
+			assertTrue(log.hasError("order-cancel", PI_ID));
+		}
 	}
 
 	@Test

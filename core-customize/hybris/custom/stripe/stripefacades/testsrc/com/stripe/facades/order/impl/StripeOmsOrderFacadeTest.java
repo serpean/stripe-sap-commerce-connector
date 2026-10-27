@@ -43,6 +43,12 @@ public class StripeOmsOrderFacadeTest
 		assertFalse(facade.isPartialCancel(request(0), order(0)));
 	}
 
+	@Test
+	public void requestWithoutEntriesIsPartialAndDoesNotFail()
+	{
+		assertTrue(facade.isPartialCancel(new OrderCancelRequestData(), order(0)));
+	}
+
 	private static OrderCancelRequestData request(final int... entryNumbers)
 	{
 		final List<OrderCancelEntryData> entries = new ArrayList<>();

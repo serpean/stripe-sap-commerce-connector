@@ -134,6 +134,13 @@ public class DefaultStripeOrderCancellationService implements StripeOrderCancell
 		}
 		catch (final StripeGatewayException e)
 		{
+			if (StripePaymentIntentState.PROCESSING.equals(state))
+			{
+				// Expected: Stripe cannot cancel a processing PaymentIntent (SEPA debit, for example).
+				LOG.info("Payment intent {} of cancelled order {} is processing and cannot be cancelled now ({}): if the "
+						+ "payment succeeds, the webhook refunds it", paymentIntentId, order.getCode(), e.getStripeCode());
+				return;
+			}
 			LOG.error("Stripe did not release the funds of payment intent {} of cancelled order {} ({}). If the payment "
 					+ "succeeds later, the webhook refunds it", paymentIntentId, order.getCode(), e.getMessage());
 		}

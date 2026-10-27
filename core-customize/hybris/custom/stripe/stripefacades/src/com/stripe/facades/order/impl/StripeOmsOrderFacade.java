@@ -20,6 +20,11 @@ public class StripeOmsOrderFacade extends DefaultOmsOrderFacade
 	@Override
 	public Boolean isPartialCancel(final OrderCancelRequestData orderCancelRequestData, final OrderModel order)
 	{
+		if (orderCancelRequestData.getEntries() == null || order.getEntries() == null)
+		{
+			// Nothing to compare: a request without entries covers no entry, so it is partial (SAP validation rejects it).
+			return Boolean.TRUE;
+		}
 		final Set<Integer> requested = orderCancelRequestData.getEntries().stream().map(OrderCancelEntryData::getOrderEntryNumber)
 				.collect(Collectors.toSet());
 		return !requested.containsAll(order.getEntries().stream().map(AbstractOrderEntryModel::getEntryNumber)

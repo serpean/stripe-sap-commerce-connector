@@ -31,6 +31,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
@@ -47,6 +48,11 @@ import org.slf4j.LoggerFactory;
  * tries again later. A claim older than the stale time of the lock service is removed, so a holder that stopped does not
  * block the order. The claim is taken and released in its own database transaction (see
  * {@link #outsideTransaction(Callable)}), so a lost claim never rolls back the work of the caller.
+ * <p>
+ * Trade-off: the claim commits at once, but the ACCEPTED entry commits with the transaction of the caller. When that
+ * transaction rolls back after the claim was taken, the claim stays without an entry, and other callers wait and retry
+ * until the claim is stale (10 minutes, the stale time of the lock service). The payment is safe: the
+ * PaymentIntent keeps the money, and the next caller after the stale time authorizes the order.
  */
 public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthorizationService
 {
@@ -107,7 +113,16 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 		}
 		catch (final RuntimeException e)
 		{
-			releaseClaim(claim);
+			try
+			{
+				releaseClaim(claim);
+			}
+			catch (final RuntimeException releaseError)
+			{
+				// The first error is the one the caller must see; the claim becomes stale and is removed later.
+				LOG.warn("Claim {} was not released after a failed authorization: {}", claim, releaseError.getMessage());
+				e.addSuppressed(releaseError);
+			}
 			throw e;
 		}
 		if (!accepted)
@@ -140,9 +155,17 @@ public class DefaultStripeOrderAuthorizationService implements StripeOrderAuthor
 			}
 			final ExecutorService executor = Executors.newSingleThreadExecutor(
 					new TenantAwareThreadFactory(Registry.getCurrentTenant(), JaloSession.getCurrentSession()));
+			final Future<T> result = executor.submit(operation);
 			try
 			{
-				return executor.submit(operation).get(CLAIM_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+				return result.get(CLAIM_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			}
+			catch (final TimeoutException e)
+			{
+				// The thread is interrupted. If its insert still commits, the claim has no owner and is removed when it
+				// is stale; until then other callers wait and retry.
+				result.cancel(true);
+				throw e;
 			}
 			finally
 			{

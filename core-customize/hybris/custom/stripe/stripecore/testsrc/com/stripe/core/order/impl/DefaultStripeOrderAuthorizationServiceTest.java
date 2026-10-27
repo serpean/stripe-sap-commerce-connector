@@ -168,6 +168,19 @@ public class DefaultStripeOrderAuthorizationServiceTest
 	}
 
 	@Test
+	public void failedClaimReleaseDoesNotHideTheAuthorizationError()
+	{
+		givenAuthorization(TransactionStatus.ERROR);
+		org.mockito.Mockito.doThrow(new IllegalStateException("release failed")).when(lockService).release(CLAIM);
+
+		final IllegalStateException error = assertThrows(IllegalStateException.class,
+				() -> service.authorizePendingOrder(order, paymentIntent));
+
+		assertFalse(error.getMessage().contains("release failed"));
+		assertEquals("release failed", error.getSuppressed()[0].getMessage());
+	}
+
+	@Test
 	public void acceptedAuthorizationKeepsTheClaim()
 	{
 		givenAuthorization(TransactionStatus.ACCEPTED);
