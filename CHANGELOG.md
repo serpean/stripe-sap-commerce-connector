@@ -4,6 +4,17 @@ All notable changes to the Stripe connector for SAP Commerce Cloud are listed he
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `StripePaymentInstructionsComponent` now lives in the entry point `sap-commerce-stripe-payment/root`
+  (it was in `/components`), and its outlets are provided by `StripePaymentRootModule`, so they exist before the
+  lazy payment feature loads. The order details page uses the order overview outlet; the order confirmation page
+  uses the outlet of the CMS component `OrderConfirmationThankMessageComponent`.
+- `stripefacades` requires `ordermanagementfacades` and overrides the `omsOrderFacade` bean: the SAP `isPartialCancel`
+  counted every request as a partial cancel, so a full cancel of an order with a pending payment was denied.
+
 ## [3.0.0] - 2026-10-21
 
 The connector is now a standard SAP connector. It plugs into the SAP checkout, order process, and

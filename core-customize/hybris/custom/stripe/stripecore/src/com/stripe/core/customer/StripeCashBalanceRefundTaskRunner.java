@@ -2,6 +2,8 @@ package com.stripe.core.customer;
 
 import com.stripe.core.customer.impl.DefaultStripeCashBalanceService;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.exception.StripeException;
+import com.stripe.model.StripeError;
 import de.hybris.platform.task.RetryLaterException;
 import de.hybris.platform.task.TaskModel;
 import de.hybris.platform.task.TaskRunner;
@@ -44,8 +46,9 @@ public class StripeCashBalanceRefundTaskRunner implements TaskRunner<TaskModel>
 		{
 			if (e instanceof StripeGatewayException gatewayError && !gatewayError.isRetryable())
 			{
-				LOG.error("Cash balance of Stripe customer {} ({}) is not refunded: Stripe error {}. "
-						+ "No retries; check the customer in Stripe", parts[0], parts[1], gatewayError.getStripeCode());
+				LOG.error("Cash balance of Stripe customer {} ({}) is not refunded: Stripe error {} ({}). "
+						+ "No retries; check the customer in Stripe", parts[0], parts[1], gatewayError.getStripeCode(),
+						describe(gatewayError));
 				return;
 			}
 			final int attempt = (task.getRetry() == null ? 0 : task.getRetry()) + 1;
@@ -87,5 +90,17 @@ public class StripeCashBalanceRefundTaskRunner implements TaskRunner<TaskModel>
 	public void setStripeCashBalanceService(final StripeCashBalanceService stripeCashBalanceService)
 	{
 		this.stripeCashBalanceService = stripeCashBalanceService;
+	}
+
+	/** The Stripe error type and message (Stripe messages hold no keys or card data), so that a null code can be read. */
+	private static String describe(final StripeGatewayException gatewayError)
+	{
+		if (gatewayError.getCause() instanceof StripeException stripeException && stripeException.getStripeError() != null)
+		{
+			final StripeError error = stripeException.getStripeError();
+			final String message = error.getMessage() == null ? "" : error.getMessage();
+			return "type " + error.getType() + ": " + (message.length() > 200 ? message.substring(0, 200) : message);
+		}
+		return "no Stripe error details";
 	}
 }

@@ -51,6 +51,10 @@
         <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
+    <!-- The SAP isPartialCancel of the OMS facade is always true, which made the denial of partial cancels deny every cancel. -->
+    <alias name="stripeOmsOrderFacade" alias="omsOrderFacade"/>
+    <bean id="stripeOmsOrderFacade" class="com.stripe.facades.order.impl.StripeOmsOrderFacade" parent="defaultOmsOrderFacade"/>
+
     <alias name="defaultStripeOrderPaymentPopulator" alias="stripeOrderPaymentPopulator"/>
     <bean id="defaultStripeOrderPaymentPopulator"
           class="com.stripe.facades.order.converters.populators.StripeOrderPaymentPopulator">

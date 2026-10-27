@@ -31,6 +31,7 @@ import { defaultStripeOccConfig } from './config/stripe-occ.config';
       component: StripePaymentInstructionsComponent,
     }),
     // Order confirmation page: it has no order overview. Its CMS components are wrapped in outlets by type code.
+    // A store that also renders CartOutlets.ORDER_OVERVIEW on that page shows the instructions twice: remove one outlet.
     provideOutlet({
       id: 'OrderConfirmationThankMessageComponent',
       position: OutletPosition.AFTER,
