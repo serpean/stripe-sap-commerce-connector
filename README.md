@@ -429,7 +429,15 @@ Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (defa
 
 #### Unit and integration tests
 
-From `hybris/bin/platform`, after `. ./setantenv.sh` with Java 17:
+To run the unit tests fast, use Gradle. It does not start SAP Commerce, and it works while the server runs. It needs Java 17 and a local platform where `ant all` ran once. The default platform is `/Volumes/e/y/stripe-ref-platform`. Change it with `HYBRIS_PLATFORM` or `--platform <dir>`.
+
+```bash
+scripts/dev/unit-tests.sh
+```
+
+It runs the `@UnitTest` classes of `stripecore`, `stripefacades` and `stripeocc`, and it exits with an error if one test fails. It needs `models.jar` and the `gensrc` folders of the extensions, so run `ant all` once if they are missing.
+
+Another way is `ant`. From `hybris/bin/platform`, after `. ./setantenv.sh` with Java 17:
 
 ```bash
 ant all

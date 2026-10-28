@@ -131,3 +131,7 @@ core-customize/hybris/custom/spartacus/spartacussampledata/
 
 # GitHub release output
 dist-release/
+
+# Fast unit tests (Gradle)
+tools/fast-unit-tests/build/
+.gradle/
