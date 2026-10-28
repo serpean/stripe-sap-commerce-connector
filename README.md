@@ -1,6 +1,6 @@
 # Stripe Connector for SAP Commerce Cloud
 
-Version 3.1.0.
+Version 4.0.0.
 
 Stripe provides payment infrastructure for the internet. This connector adds Stripe payments to SAP Commerce Cloud through the Payment Intents API. It supports cards and other Stripe payment methods, 3D Secure (SCA), and the standard SAP checkout, order process, and cancel and refund flows.
 
@@ -56,7 +56,7 @@ The repository holds two things. Only the connector is published.
 | `core-customize/hybris/custom/stripe/stripecore` | Item types, Stripe gateway, PaymentIntent service, authorization strategy, webhook processing, order process steps, cancel strategy |
 | `core-customize/hybris/custom/stripe/stripefacades` | Checkout facades (child beans), checkout authorizer, webhook facade, order payment populator |
 | `core-customize/hybris/custom/stripe/stripeocc` | OCC endpoints, error codes, place-order validator advice |
-| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 3.1.0) |
+| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 4.0.0) |
 
 ### Reference project (not published)
 
@@ -74,7 +74,7 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 
 > **Warning:** `stripesampledata` creates the OAuth client `mobile_android` with the well-known secret `secret` and the `password` and `client_credentials` grants. It is for local demos and tests only. Never deploy the reference project to an environment that other people can reach.
 
-Upgrade guides: [3.0.0 to 3.1.0](docs/migration/3.1.0.md), [2.0.0 to 3.0.0](docs/migration/standard-connector.md) and [1.0.0 to 2.0.0](docs/migration/cleanup.md). The history is in [CHANGELOG.md](CHANGELOG.md).
+Upgrade guides: [3.0.0 to 4.0.0](docs/migration/4.0.0.md), [2.0.0 to 3.0.0](docs/migration/standard-connector.md) and [1.0.0 to 2.0.0](docs/migration/cleanup.md). The history is in [CHANGELOG.md](CHANGELOG.md).
 
 # Installation and Usage
 
@@ -194,7 +194,7 @@ Rules:
 
 ## After purchase
 
-The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`). In both cases `stripefacades` requires the SAP extension `ordermanagementfacades` (since 3.1.0), so add it to `localextensions.xml` also when the project does not use OMS.
+The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`). In both cases `stripefacades` requires the SAP extension `ordermanagementfacades` (since 4.0.0), so add it to `localextensions.xml` also when the project does not use OMS.
 
 - **Capture.** `takePaymentAction` captures the current order total. If the order changed, the total is lower than the authorized amount, and Stripe releases the rest.
 - **Partial capture.** The same action captures a part of the authorized amount. When the PaymentIntent has line items, the capture sends line items that add up to the captured amount: the order lines when the order total is that amount, else one line "Order <code>". The line items never change the captured amount.
@@ -261,7 +261,7 @@ A bank transfer customer can send too much, or send money for an order that was 
 
 The connector acts only on Stripe Customers of this installation. A Stripe account can also hold customers of other systems (Stripe Invoicing, another shop, another SAP Commerce installation), and their money is not the connector's money. A customer is checked and refunded only when both are true:
 
-- its metadata has `sap_commerce_connector=true` (the connector sets this marker on every Stripe Customer it creates, since 3.1.0);
+- its metadata has `sap_commerce_connector=true` (the connector sets this marker on every Stripe Customer it creates, since 4.0.0);
 - this installation has a local row for it: a `StripeCustomer` item (registered customer), or for a guest customer a PaymentIntent record of the cart in its `cartCode` metadata.
 
 Any other customer is skipped, with an INFO log line, when the check is planned and again before the refund. Its balance stays in Stripe; the other system or the Dashboard must handle it.
@@ -311,7 +311,7 @@ The connector does not replace SAP classes with one alias. It adds to them.
 
 # Spartacus Frontend
 
-The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 3.1.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
+The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 4.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
 
 The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
 

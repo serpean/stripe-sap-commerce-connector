@@ -121,7 +121,7 @@
         <property name="modelService" ref="modelService"/>
     </bean>
 
-    <!-- Deprecated since 3.1.0: use stripePaymentDetailsCopier. -->
+    <!-- Deprecated since 4.0.0: use stripePaymentDetailsCopier. -->
     <alias name="defaultStripePaymentInfoUpdater" alias="stripePaymentInfoUpdater"/>
     <bean id="defaultStripePaymentInfoUpdater" class="com.stripe.core.payment.StripePaymentInfoUpdater">
         <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>

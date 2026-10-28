@@ -6,10 +6,10 @@ import com.stripe.model.PaymentIntent;
 /**
  * Copies the display data of a PaymentIntent to its Stripe payment info.
  *
- * @deprecated since 3.1.0, use {@link StripePaymentDetailsCopier} (bean {@code stripePaymentDetailsCopier}). This class
+ * @deprecated since 4.0.0, use {@link StripePaymentDetailsCopier} (bean {@code stripePaymentDetailsCopier}). This class
  *             only calls it and stays for compatibility with 3.0.0.
  */
-@Deprecated(since = "3.1.0")
+@Deprecated(since = "4.0.0")
 public class StripePaymentInfoUpdater
 {
 	private StripePaymentDetailsCopier stripePaymentDetailsCopier;

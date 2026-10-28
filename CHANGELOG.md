@@ -4,10 +4,10 @@ All notable changes to the Stripe connector for SAP Commerce Cloud are listed he
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
-## [3.1.0] - 2026-10-27
+## [4.0.0] - 2026-10-27
 
 More payment methods, and orders that wait for the money (Multibanco and bank transfer).
-See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
+See [docs/migration/4.0.0.md](docs/migration/4.0.0.md) for the upgrade steps.
 
 ### Added
 
@@ -45,7 +45,7 @@ See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
   connector extensions, the Spartacus package, and `SHA256SUMS`, and checks the tag against the library version
   and this file.
 - End-to-end battery of 38 cases. Option `E2E_VIDEO=on` records a video and a trace of every test.
-- Migration guide [docs/migration/3.1.0.md](docs/migration/3.1.0.md).
+- Migration guide [docs/migration/4.0.0.md](docs/migration/4.0.0.md).
 
 ### Changed
 
@@ -62,7 +62,7 @@ See [docs/migration/3.1.0.md](docs/migration/3.1.0.md) for the upgrade steps.
 - A Stripe refund that ends `failed` or `canceled` is final: the adjustment is `REJECTED`, an ERROR is
   logged, and there is no retry. Permanent Stripe codes (`charge_expired_for_capture`,
   `capture_charge_authorization_expired`, `charge_disputed`, `refund_disputed_payment`) are not retried.
-- The Spartacus library `sap-commerce-stripe-payment` is now version 3.1.0.
+- The Spartacus library `sap-commerce-stripe-payment` is now version 4.0.0.
 
 ### Fixed
 
