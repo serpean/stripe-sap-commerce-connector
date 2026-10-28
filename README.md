@@ -355,6 +355,18 @@ rsync -a --delete core-customize/installer/recipes/b2c_occ_stripe/ /path/to/plat
 
 The recipe installs the order management (OMS) extensions, so orders use the OMS order process (`order-process`).
 
+The reference platform uses PostgreSQL 16 in Docker. Start it before the platform:
+
+```bash
+scripts/dev/refdb.sh up
+```
+
+It starts the container `stripe-refdb` on `localhost:5433`, with the volume `stripe-refdb-data`. It creates the databases `hybris` and `hybris_junit` for the user `hybris`. The password is local and fixed: it is not a secret. `scripts/dev/refdb.sh down` stops the container and keeps the data. `scripts/dev/refdb.sh status` shows the container and the database that the platform uses.
+
+The platform needs the PostgreSQL JDBC driver in `hybris/bin/platform/lib/dbdriver`. SAP Commerce 2211 includes it. If it is missing, `refdb.sh use-postgres` downloads `postgresql-42.7.11.jar` from Maven Central and checks its SHA-256.
+
+HSQLDB is the alternative without Docker. Skip `refdb.sh` and the platform uses its HSQLDB files in `hybris/data/hsqldb`.
+
 ### 2. Stripe keys
 
 Put the test keys in a `.env` file in the repository root. Git ignores it.
@@ -371,11 +383,17 @@ Use Java 17.
 
 ```bash
 set -a; . ./.env; set +a
-cd /path/to/platform/installer
-./install.sh -r b2c_occ_stripe setup -A initAdminPassword=<password>
+export HYBRIS_PLATFORM=/path/to/platform
+(cd "$HYBRIS_PLATFORM/installer" && ./install.sh -r b2c_occ_stripe setup -A initAdminPassword=<password>)
+scripts/dev/refdb.sh use-postgres
+cd "$HYBRIS_PLATFORM/installer"
 ./install.sh -r b2c_occ_stripe initialize -A initAdminPassword=<password>
 ./install.sh -r b2c_occ_stripe start
 ```
+
+`setup` writes `local.properties` again, so run `refdb.sh use-postgres` after each `setup`. The script finds the platform in `HYBRIS_PLATFORM` (default `/Volumes/e/y/stripe-ref-platform`). It adds the `db.*` keys to `hybris/config/local.properties`, between the lines `# >>> refdb` and `# <<< refdb`. It also writes `hybris/config/local_tenant_junit.properties`, so the junit tenant uses the database `hybris_junit`.
+
+To go back to HSQLDB, run `scripts/dev/refdb.sh use-hsqldb`. It removes only that block and that file. A new database needs `initialize` once.
 
 ### 4. Stripe CLI and webhooks
 
@@ -445,6 +463,14 @@ ant unittests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc -Dtest
 ant yunitinit
 ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
 ```
+
+With PostgreSQL (`refdb.sh use-postgres`), the junit tenant has its own database, `hybris_junit`. `ant yunitinit` initializes it once. The integration tests then do not change the data of the master tenant, and they can run while the server runs. The running server holds the RMI port `2198` of `mediaconversion`, so give the tests another port:
+
+```bash
+y_os_rmiregistry_port=2199 ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
+```
+
+SAP Commerce reads a `y_` environment variable as a property (`y_os_rmiregistry_port` is `os.rmiregistry.port`). The server keeps its port.
 
 Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
 

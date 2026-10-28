@@ -135,3 +135,6 @@ dist-release/
 # Fast unit tests (Gradle)
 tools/fast-unit-tests/build/
 .gradle/
+
+# Init SQL of the reference database (a global *.sql ignore must not hide it)
+!tools/refdb/init/*.sql
