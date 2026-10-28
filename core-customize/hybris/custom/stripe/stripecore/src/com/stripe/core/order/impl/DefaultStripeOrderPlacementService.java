@@ -7,7 +7,7 @@ import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.StripeOrderPlacementService;
-import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentDetailsCopier;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
@@ -67,7 +67,10 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 
 	private static final String CART_BY_CODE_AND_SITE = "SELECT {pk} FROM {Cart} WHERE {code} = ?code AND {site} = ?site";
 	private static final Set<StripePaymentIntentStatus> PLACEABLE = EnumSet.of(StripePaymentIntentStatus.AUTHORIZED,
-			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING);
+			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING,
+			StripePaymentIntentStatus.AWAITING_FUNDS);
+	private static final Set<StripePaymentIntentStatus> PENDING = EnumSet.of(StripePaymentIntentStatus.PROCESSING,
+			StripePaymentIntentStatus.AWAITING_FUNDS);
 
 	private FlexibleSearchService flexibleSearchService;
 	private BaseSiteService baseSiteService;
@@ -78,7 +81,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	private StripePaymentIntentService stripePaymentIntentService;
 	private StripeAmountConverter stripeAmountConverter;
 	private ModelService modelService;
-	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
+	private StripePaymentDetailsCopier stripePaymentDetailsCopier;
 	private StripePaymentIntentChecks stripePaymentIntentChecks;
 	private StripeSiteContext stripeSiteContext;
 	private StripeOrderCancellationService stripeOrderCancellationService;
@@ -95,7 +98,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	protected Optional<OrderModel> placeOrderInSite(final PaymentIntent paymentIntent)
 	{
 		final String paymentIntentId = paymentIntent.getId();
-		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(paymentIntent.getStatus());
+		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(paymentIntent);
 		if (!PLACEABLE.contains(status))
 		{
 			LOG.info("Payment intent {} has status {}: no order is placed", paymentIntentId, status);
@@ -179,8 +182,9 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	}
 
 	/**
-	 * Copies the card display data to the payment info of the cart, authorizes and places the order, as the customer of
-	 * the cart. The copy comes first, so the payment info that the order clones has it.
+	 * Copies the payment details (card display data, payment instructions) to the payment info of the cart, authorizes
+	 * and places the order, as the customer of the cart. The copy comes first, so the payment info that the order clones
+	 * has it.
 	 *
 	 * @return the placed order, or null when the authorization was rejected
 	 */
@@ -197,7 +201,7 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		try
 		{
 			return impersonationService.<OrderModel, InvalidCartException> executeInContext(context, () -> {
-				stripePaymentInfoUpdater.copyPaymentMethod((StripePaymentInfoModel) cart.getPaymentInfo(), paymentIntent);
+				stripePaymentDetailsCopier.copy(paymentIntent, (StripePaymentInfoModel) cart.getPaymentInfo());
 				return authorize(cart, paymentIntent, status) ? placeOrder(cart) : null;
 			});
 		}
@@ -209,9 +213,9 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	}
 
 	/**
-	 * Authorizes a paid PaymentIntent as the checkout does. A processing payment gets no AUTHORIZATION entry: the order
-	 * waits for the payment. An ACCEPTED authorization already on the cart is used again only when the PaymentIntent
-	 * still holds all its money.
+	 * Authorizes a paid PaymentIntent as the checkout does. A processing payment, or one that waits for a voucher or
+	 * bank transfer payment (AWAITING_FUNDS), gets no AUTHORIZATION entry: the order waits for the payment. An ACCEPTED
+	 * authorization already on the cart is used again only when the PaymentIntent still holds all its money.
 	 *
 	 * @return false when the authorization was rejected (a final answer)
 	 * @throws IllegalStateException when there is no entry or the entry is not ACCEPTED or REJECTED (for example, Stripe
@@ -220,10 +224,10 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	protected boolean authorize(final CartModel cart, final PaymentIntent paymentIntent, final StripePaymentIntentStatus status)
 	{
 		final String paymentIntentId = paymentIntent.getId();
-		if (status == StripePaymentIntentStatus.PROCESSING)
+		if (PENDING.contains(status))
 		{
-			LOG.info("Payment intent {} of cart {} is processing: the order is placed without authorization",
-					paymentIntentId, cart.getCode());
+			LOG.info("Payment intent {} of cart {} is {}: the order is placed without authorization", paymentIntentId,
+					cart.getCode(), status);
 			return true;
 		}
 		if (stripeOrderAuthorizationService.hasAcceptedAuthorization(cart, paymentIntentId)
@@ -401,11 +405,6 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 		this.modelService = modelService;
 	}
 
-	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
-	{
-		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
-	}
-
 	public void setStripePaymentIntentChecks(final StripePaymentIntentChecks stripePaymentIntentChecks)
 	{
 		this.stripePaymentIntentChecks = stripePaymentIntentChecks;
@@ -424,5 +423,10 @@ public class DefaultStripeOrderPlacementService implements StripeOrderPlacementS
 	public void setStripeOrderCancellationService(final StripeOrderCancellationService stripeOrderCancellationService)
 	{
 		this.stripeOrderCancellationService = stripeOrderCancellationService;
+	}
+
+	public void setStripePaymentDetailsCopier(final StripePaymentDetailsCopier stripePaymentDetailsCopier)
+	{
+		this.stripePaymentDetailsCopier = stripePaymentDetailsCopier;
 	}
 }

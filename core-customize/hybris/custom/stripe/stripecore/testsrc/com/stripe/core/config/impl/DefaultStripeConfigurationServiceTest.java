@@ -61,11 +61,87 @@ public class DefaultStripeConfigurationServiceTest
 	{
 		assertEquals(StripeCaptureMode.MANUAL, service.getCaptureMode());
 		final Set<String> methods = service.getManualCaptureMethods();
-		assertEquals(3, methods.size());
-		assertEquals(Set.of("card", "paypal", "klarna"), methods);
+		assertEquals(Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay", "klarna", "sequra",
+				"scalapay", "billie"), methods);
 		assertEquals(Duration.ofSeconds(300), service.getWebhookGracePeriod());
 		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout());
 		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay());
+	}
+
+	@Test
+	public void pendingTimeoutPerMethod()
+	{
+		configuration.setProperty("stripe.payment.pending.timeout.sepa_debit.seconds", "864000");
+
+		assertEquals(Duration.ofSeconds(864000), service.getPendingPaymentTimeout("sepa_debit"));
+	}
+
+	@Test
+	public void pendingTimeoutPerMethodFallsBackToGlobal()
+	{
+		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout("card"));
+		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout(null));
+	}
+
+	@Test
+	public void pendingTimeoutPerMethodSiteOverride()
+	{
+		configuration.setProperty("stripe.payment.pending.timeout.sepa_debit.seconds", "864000");
+		configuration.setProperty("stripe.payment.pending.timeout.sepa_debit.seconds.electronics-spa", "60");
+
+		assertEquals(Duration.ofSeconds(60), service.getPendingPaymentTimeout("sepa_debit"));
+	}
+
+	@Test
+	public void defaultManualMethods()
+	{
+		assertEquals(Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay", "klarna", "sequra",
+				"scalapay", "billie"), service.getManualCaptureMethods());
+	}
+
+	@Test
+	public void customerAndCashBalanceDefaults()
+	{
+		assertEquals(true, service.isCustomerCreationEnabled());
+		assertEquals(Duration.ofSeconds(3600), service.getCashBalanceRefundDelay());
+	}
+
+	@Test
+	public void deferredMethodDefaults()
+	{
+		assertEquals(Duration.ofSeconds(1036800), service.getPendingPaymentTimeout("multibanco"));
+		assertEquals(Duration.ofSeconds(1209600), service.getPendingPaymentTimeout("customer_balance"));
+		assertEquals(Duration.ofSeconds(864000), service.getPendingPaymentTimeout("sepa_debit"));
+		assertEquals(Duration.ofSeconds(86400), service.getPendingPaymentTimeout("card"));
+	}
+
+	@Test
+	public void pendingRetryPerMethod()
+	{
+		assertEquals(Duration.ofSeconds(3600), service.getPendingPaymentRetryDelay("multibanco"));
+		assertEquals(Duration.ofSeconds(3600), service.getPendingPaymentRetryDelay("customer_balance"));
+		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay("sepa_debit"));
+		assertEquals(Duration.ofSeconds(300), service.getPendingPaymentRetryDelay(null));
+		configuration.setProperty("stripe.payment.pending.retry.multibanco.seconds", "7200");
+		configuration.setProperty("stripe.payment.pending.retry.multibanco.seconds.electronics-spa", "60");
+		assertEquals(Duration.ofSeconds(60), service.getPendingPaymentRetryDelay("multibanco"));
+	}
+
+	@Test
+	public void customerCreationCanBeDisabled()
+	{
+		configuration.setProperty("stripe.customer.create", "false");
+
+		assertEquals(false, service.isCustomerCreationEnabled());
+	}
+
+	@Test
+	public void customerCreationSiteOverride()
+	{
+		configuration.setProperty("stripe.customer.create", "true");
+		configuration.setProperty("stripe.customer.create.electronics-spa", "false");
+
+		assertEquals(false, service.isCustomerCreationEnabled());
 	}
 
 	@Test

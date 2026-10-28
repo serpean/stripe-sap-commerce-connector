@@ -1,6 +1,6 @@
 # Stripe Connector for SAP Commerce Cloud
 
-Version 3.0.0.
+Version 4.0.0.
 
 Stripe provides payment infrastructure for the internet. This connector adds Stripe payments to SAP Commerce Cloud through the Payment Intents API. It supports cards and other Stripe payment methods, 3D Secure (SCA), and the standard SAP checkout, order process, and cancel and refund flows.
 
@@ -21,7 +21,29 @@ Stripe provides payment infrastructure for the internet. This connector adds Str
 - **Webhooks**: a safety net that places the order when the browser does not come back.
 - **Capture**: manual (default) or automatic, and partial capture.
 - **After purchase**: capture, partial capture, cancel, and refund, with OMS or with the classic fulfilment process.
+- **Payment methods**: cards, wallets, redirect methods, buy now pay later, SEPA debit, Multibanco, and bank transfer. See [Payment methods](#payment-methods).
+- **Deferred payments**: Multibanco and bank transfer orders wait for the money. The storefront shows the payment instructions.
 - **Headless**: OCC endpoints and a Spartacus library.
+
+## Payment methods
+
+The connector groups the Stripe methods by behaviour. The Payment Element shows the methods that you enable in the Stripe Dashboard (Settings, Payment methods) for the account, the currency, and the country of the customer. The list is for a Stripe account in Spain.
+
+| Group | Methods | Confirmed | Manual capture (reserve) | Do this in the Dashboard |
+|-------|---------|-----------|--------------------------|--------------------------|
+| A. Cards and wallets | `card` (also Apple Pay, Google Pay, Samsung Pay), `link`, `paypal`, `amazon_pay`, `revolut_pay`, `mobilepay`, `satispay`, `alipay`, `wechat_pay` | At once. 3DS can ask for an action. | Yes, except `alipay` and `wechat_pay` | Apple Pay: register the domain of the shop. Google Pay: register the domain. PayPal: connect a PayPal account (live mode). |
+| B. Redirect and real-time | `bancontact`, `eps`, `ideal`, `wero`, `p24`, `blik`, `twint`, `swish`, `mb_way`, `bizum` | At once, after the redirect or the app | No | Bizum: the account needs the tax ID (NIF) for the capability to become active in live mode. |
+| C. Buy now, pay later | `klarna`, `sequra`, `scalapay`, `billie` | At once, after the approval | Yes. Klarna: 28 days. | seQura: Spain only, EUR, 29 to 3,000 EUR. The connector sends the order lines. |
+| D. Bank debit | `sepa_debit` | `processing` for about 6 business days | No | SEPA Direct Debit: finish the account verification. |
+| E. The customer pays later | `multibanco`, `customer_balance` (EU bank transfer) | Days later, or never | No | Multibanco and bank transfer: enable them for the account. |
+
+Notes:
+
+- The connector asks Stripe for manual capture only for the methods in `stripe.capture.manual.methods`. All other methods are captured at once.
+- Apple Pay and Google Pay need a registered domain. You cannot test them on `localhost`.
+- Bank transfer needs a Stripe Customer on the PaymentIntent. The connector creates it (see `stripe.customer.create`).
+- Not available for a Stripe account in Spain: Affirm, Afterpay/Clearpay, Zip, Cash App Pay, Boleto, OXXO, Konbini, Alma, Pay by Bank (UK), Bacs, BECS, ACH. Pix is for customers in Brazil only. The connector does not support Mondu.
+- The Stripe Dashboard is the source of truth for the limits of each method (amount, country, currency).
 
 ## Project Structure
 
@@ -34,7 +56,7 @@ The repository holds two things. Only the connector is published.
 | `core-customize/hybris/custom/stripe/stripecore` | Item types, Stripe gateway, PaymentIntent service, authorization strategy, webhook processing, order process steps, cancel strategy |
 | `core-customize/hybris/custom/stripe/stripefacades` | Checkout facades (child beans), checkout authorizer, webhook facade, order payment populator |
 | `core-customize/hybris/custom/stripe/stripeocc` | OCC endpoints, error codes, place-order validator advice |
-| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 3.0.0) |
+| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 4.0.0) |
 
 ### Reference project (not published)
 
@@ -52,7 +74,7 @@ Use it for demos and to run the end-to-end tests. Do not copy it into a customer
 
 > **Warning:** `stripesampledata` creates the OAuth client `mobile_android` with the well-known secret `secret` and the `password` and `client_credentials` grants. It is for local demos and tests only. Never deploy the reference project to an environment that other people can reach.
 
-Upgrade guides: [2.0.0 to 3.0.0](docs/migration/standard-connector.md) and [1.0.0 to 2.0.0](docs/migration/cleanup.md). The history is in [CHANGELOG.md](CHANGELOG.md).
+Upgrade guides: [3.0.0 to 4.0.0](docs/migration/4.0.0.md), [2.0.0 to 3.0.0](docs/migration/standard-connector.md) and [1.0.0 to 2.0.0](docs/migration/cleanup.md). The history is in [CHANGELOG.md](CHANGELOG.md).
 
 # Installation and Usage
 
@@ -93,7 +115,7 @@ ant clean all
 ant updatesystem
 ```
 
-6. In the Stripe Dashboard, add a webhook endpoint `https://<host>/occ/v2/<baseSiteUid>/payments/stripe/webhook`. Send at least these events: `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Put the signing secret in `stripe.webhook.secret`.
+6. In the Stripe Dashboard, add a webhook endpoint `https://<host>/occ/v2/<baseSiteUid>/payments/stripe/webhook`. Send at least these events: `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.requires_action`, `payment_intent.partially_funded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`, `cash_balance.funds_available`. Put the signing secret in `stripe.webhook.secret`.
 
 ## Configuration
 
@@ -116,12 +138,16 @@ Every property accepts a site override: `stripe.<name>.<baseSiteUid>`, for examp
 | `stripe.publishable.key` | empty | Stripe publishable key (`pk_...`). The backend serves it to the storefront. |
 | `stripe.webhook.secret` | empty | Webhook signing secret (`whsec_...`) |
 | `stripe.capture.mode` | `manual` | `manual` or `automatic` |
-| `stripe.capture.manual.methods` | `card,paypal,klarna` | Payment methods that support manual capture, comma-separated. Other methods are captured at once. |
+| `stripe.capture.manual.methods` | `card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie` | Payment methods that support manual capture, comma-separated. Other methods are captured at once. |
 | `stripe.statement.descriptor` | empty | Statement descriptor |
 | `stripe.descriptor.suffix` | empty | Statement descriptor suffix |
 | `stripe.webhook.graceperiod.seconds` | `300` | Wait before the webhook places an order. It counts from the time of the Stripe event. |
-| `stripe.payment.pending.timeout.seconds` | `86400` | A pending payment older than this cancels the order |
+| `stripe.payment.pending.timeout.seconds` | `86400` | A pending payment older than this cancels the order. This is the fallback for the per-method values. |
+| `stripe.payment.pending.timeout.<type>.seconds` | `864000` for `sepa_debit` (10 days), `1036800` for `multibanco` (12 days), `1209600` for `customer_balance` (14 days) | Timeout per payment method type (falls back to the global value) |
 | `stripe.payment.pending.retry.seconds` | `300` | Delay between checks of a pending payment |
+| `stripe.payment.pending.retry.<type>.seconds` | `3600` for `multibanco` and `customer_balance` | Delay between checks, per payment method type (falls back to the global value) |
+| `stripe.customer.create` | `true` | Create a Stripe Customer for each SAP customer (needed for bank transfer). Guests get one Customer for each cart. |
+| `stripe.cashbalance.refund.delay.seconds` | `3600` | Wait before the connector refunds money left in the cash balance of a customer (bank transfer) |
 
 ## Installing on SAP Commerce Cloud
 
@@ -163,14 +189,15 @@ Rules:
 | `automatic` | Stripe captures at once. The order process finds the payment captured. |
 
 - Only the methods in `stripe.capture.manual.methods` use manual capture. In manual mode the PaymentIntent is created with automatic capture, and only these methods get `capture_method=manual`. Methods without manual capture (for example Bancontact) are always captured at once.
+- If Stripe does not know the manual capture option of a method in the list (`parameter_unknown` on `payment_method_options[<method>]`), the PaymentIntent is created again without that option and a WARN names the method. Mondu is not in the default list for this reason.
 - **A card authorization expires after 7 days at Stripe.** Ship and capture before that, or the money is released.
 
 ## After purchase
 
-The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`).
+The connector wraps the standard SAP order process. It works with OMS (`yacceleratorordermanagement`) and with the classic fulfilment process (`yacceleratorfulfilmentprocess`). In both cases `stripefacades` requires the SAP extension `ordermanagementfacades` (since 4.0.0), so add it to `localextensions.xml` also when the project does not use OMS.
 
 - **Capture.** `takePaymentAction` captures the current order total. If the order changed, the total is lower than the authorized amount, and Stripe releases the rest.
-- **Partial capture.** The same action captures a part of the authorized amount.
+- **Partial capture.** The same action captures a part of the authorized amount. When the PaymentIntent has line items, the capture sends line items that add up to the captured amount: the order lines when the order total is that amount, else one line "Order <code>". The line items never change the captured amount.
 - **Cancel.** The cancel strategy reads the live PaymentIntent, not only the SAP entries:
   - authorized and the new total is 0: the authorization is voided;
   - authorized and the new total is above 0: nothing happens now, and the capture takes the current total;
@@ -185,7 +212,7 @@ The connector wraps the standard SAP order process. It works with OMS (`yacceler
 - **Signature:** the connector checks the `Stripe-Signature` header with `stripe.webhook.secret`. A bad or missing signature gives 400. A signed payload without an id is also refused.
 - **Idempotent intake:** the event is stored once (`StripeWebhookEvent`, unique by Stripe event id). A repeated event does not run twice.
 - **Processing:** the intake saves the event and schedules a SAP `Task` in one transaction. The task runner (`stripeWebhookEventTaskRunner`) processes it.
-- **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`. Other events are ignored.
+- **Events:** `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.processing`, `payment_intent.requires_action`, `payment_intent.partially_funded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`, `refund.updated`, `cash_balance.funds_available`. Other events are ignored.
 - **Retries:** a failure that can pass is retried after 30 s, 2 min, 8 min, and 30 min. After 5 attempts the event is `FAILED` with `lastError`, and an ERROR is logged.
 - **Recovery:** when Stripe sends a `FAILED` event again (a resend from the Stripe Dashboard or the Stripe CLI), the connector sets it to `RECEIVED`, clears `attempts` and `lastError`, and processes it again. See [Operations runbook](#operations-runbook).
 - **Unreadable events** (the payload cannot be read) fail at once with no retry.
@@ -193,16 +220,53 @@ The connector wraps the standard SAP order process. It works with OMS (`yacceler
 
 ## Pending payments
 
-Some methods confirm later (the PaymentIntent is `processing`). The order is created with the status `PAYMENT_PENDING`. The first action of the order process waits:
+Some methods confirm later (the PaymentIntent is `processing`, or it waits for the customer to send the money). The order is created with the status `PAYMENT_PENDING`. The first action of the order process waits:
 
 - payment accepted: the process goes on;
 - payment failed, cancelled, or refunded: the order is cancelled;
-- still pending: the process checks again after `stripe.payment.pending.retry.seconds`;
-- still pending after `stripe.payment.pending.timeout.seconds`: the order is cancelled.
+- still pending: the process checks again after the retry delay;
+- still pending after the timeout: the order is cancelled and the PaymentIntent is released (cancelled at Stripe; money already captured is refunded).
+
+The timeout and the retry delay depend on the payment method:
+
+| Method | Timeout | Retry delay |
+|--------|---------|-------------|
+| `sepa_debit` | `864000` s (10 days) | `stripe.payment.pending.retry.seconds` (300 s) |
+| `multibanco` | `1036800` s (12 days) | `3600` s |
+| `customer_balance` | `1209600` s (14 days) | `3600` s |
+| other methods | `stripe.payment.pending.timeout.seconds` (86400 s) | `stripe.payment.pending.retry.seconds` (300 s) |
 
 Each check reads the PaymentIntent from Stripe. When it is authorized or captured with all its money, the order is authorized and the process goes on, also when the webhook event was lost. When Stripe does not answer, the order is never cancelled: the process checks again later.
 
 The storefront shows the label `paymentPending` for this status (the connector adds it to `acceleratorStatusDisplayMap` when that bean exists).
+
+### Multibanco and bank transfer
+
+These two methods (group E) give the customer payment instructions. The PaymentIntent status is `requires_action` and the connector maps it to the internal status `AWAITING_FUNDS`. The record of the PaymentIntent gets the state `AWAITING_FUNDS`. The order is created at once, with the status `PAYMENT_PENDING` and no AUTHORIZATION entry. No order goes to sourcing before the money arrives.
+
+- **Instructions in OCC.** `stripePaymentInfo` of the cart and of the order has four more fields: `instructionsUrl` (the Stripe page with the voucher or the bank details), `paymentReference` (Multibanco: `<entity> <reference>`; bank transfer: the transfer reference), `instructionsExpireAt` (a date), and `amountRemaining` (a string; for bank transfer, the amount still to pay). `paymentStatus` is `PENDING`.
+- **Instructions in Spartacus.** The component `cx-stripe-payment-instructions` is in the entry point `sap-commerce-stripe-payment/root`, which loads with the app. It shows on the order confirmation page and on the order details page.
+- **Money arrives.** Stripe sends `payment_intent.succeeded`. The next check of the order process accepts the payment and the order goes on.
+- **Nothing arrives.** At the timeout the order is cancelled and the PaymentIntent is cancelled.
+- **Partial payment (bank transfer).** Stripe sends `payment_intent.partially_funded`. The order stays pending. The customer sends the rest.
+- **Stock.** The connector does not reserve stock before the payment arrives. This is the same as the SAP standard. A product can sell out while orders wait for money, and then the order cannot be sourced. Keep the risk low with a short timeout, or with a stock rule in your project.
+- **Partial cancel.** SAP denies a partial cancel while the payment is pending (denial code `7301`, text prefix `stripe-payment-pending:`). A full cancel is allowed and releases the PaymentIntent.
+
+#### Money left in the Stripe cash balance
+
+A bank transfer customer can send too much, or send money for an order that was cancelled. Stripe keeps this money in the cash balance of the customer. The connector reacts to `cash_balance.funds_available`, and after the connector cancels a bank transfer PaymentIntent. After `stripe.cashbalance.refund.delay.seconds` (default 1 hour) it checks the balance:
+
+- the customer has no open bank transfer in Stripe: the connector refunds the balance;
+- the customer has an open bank transfer of this shop (with an order, or younger than the bank transfer timeout): the balance stays for it (Stripe reconciles it by itself), and the connector checks again later.
+
+The connector acts only on Stripe Customers of this installation. A Stripe account can also hold customers of other systems (Stripe Invoicing, another shop, another SAP Commerce installation), and their money is not the connector's money. A customer is checked and refunded only when both are true:
+
+- its metadata has `sap_commerce_connector=true` (the connector sets this marker on every Stripe Customer it creates, since 4.0.0);
+- this installation has a local row for it: a `StripeCustomer` item (registered customer), or for a guest customer a PaymentIntent record of the cart in its `cartCode` metadata.
+
+Any other customer is skipped, with an INFO log line, when the check is planned and again before the refund. Its balance stays in Stripe; the other system or the Dashboard must handle it.
+
+The refund goes back to the bank account of the customer. Stripe emails the customer to collect the bank details, so the Stripe Customer needs an email. A Stripe test account can email only the account owner.
 
 ## OCC endpoints
 
@@ -215,7 +279,7 @@ Base path: `/occ/v2/{baseSiteId}`.
 | `POST /payments/stripe/webhook` | Stripe webhook. Returns `{status}` (the receipt) with 200. |
 | SAP `POST /users/{userId}/orders?cartId=` | Places the order. The connector adds the Stripe checks. |
 
-Carts and orders (all order DTOs) have a new field `stripePaymentInfo`: `paymentMethodType`, `cardBrand`, `cardLast4`, `cardExpMonth`, `cardExpYear`, `paymentStatus` (`ACCEPTED`, `PENDING`, `FAILED`, empty before a result).
+Carts and orders (all order DTOs) have a new field `stripePaymentInfo`: `paymentMethodType`, `cardBrand`, `cardLast4`, `cardExpMonth`, `cardExpYear`, `paymentStatus` (`ACCEPTED`, `PENDING`, `FAILED`, empty before a result), and for Multibanco and bank transfer `instructionsUrl`, `paymentReference`, `instructionsExpireAt`, `amountRemaining`.
 
 ### Error codes
 
@@ -243,11 +307,11 @@ The connector does not replace SAP classes with one alias. It adds to them.
   Orders that do not use Stripe go to the original bean. A bean that does not exist is not changed. A final class is replaced by the Stripe bean, with a warning.
 - **Cancel strategy:** the alias `orderCancelPaymentServiceStrategy` points to `stripeOrderCancelPaymentServiceStrategy`.
 - **Place-order validator:** the SAP validator rejects a cart with no card data (`cart.paymentInfoNotSet`). `StripePlaceOrderCartValidator` is advice on a class proxy of that bean. It drops that one error for a cart with a Stripe PaymentIntent. All other checks stay.
-- **Item types:** `StripePaymentInfo`, `StripePaymentIntentRecord`, `StripeOrderPlacementLock`, `StripeWebhookEvent`, and the order status `PAYMENT_PENDING`.
+- **Item types:** `StripePaymentInfo`, `StripePaymentIntentRecord` (its state enum `StripePaymentIntentState` has `AWAITING_FUNDS` for a payment that waits for a voucher or a bank transfer), `StripeOrderPlacementLock`, `StripeWebhookEvent`, `StripeCustomer` (the Stripe Customer of a registered SAP customer, per Stripe account), and the order status `PAYMENT_PENDING`.
 
 # Spartacus Frontend
 
-The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 3.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
+The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 4.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
 
 The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
 
@@ -344,6 +408,11 @@ The global setup (`e2e/global-setup.ts`) sets short timings on the running serve
 
 The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
 
+Refund checks of the bank transfer specs: a Stripe test account can only email its own verified address, and a refund of the cash balance makes Stripe email the customer. So these specs set the email of the Stripe test customer to the account email, and Stripe sends a refund email to the account owner on each run.
+
+Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report (`playwright-report/index.html`) embeds both.
+Without it, the battery keeps video and trace only for failed tests.
+
 Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_PATH` (default `product/816324/DSC-T20-Cyber-shot-Silver`, a product in stock).
 
 ### Unit and integration tests
@@ -392,6 +461,34 @@ Send the event again from Stripe. Do not change the tables by hand.
 
 The connector sets the event to `RECEIVED` and processes it again. For a paid PaymentIntent without an order, it places the order from the cart, or gives the money back when the cart is gone or its total changed. Run the queries again: the event must be `PROCESSED` or `IGNORED`, and the record must have an order or the state `CANCELED` or `REFUNDED`. If an event fails again, read `lastError` and the ERROR lines of the log for that PaymentIntent.
 
+## Refund outside the method window
+
+Each payment method has a refund window at Stripe (90 to 730 days). A refund after the window gets a Stripe error that the connector cannot tell from a short failure. It retries 5 times, then the adjustment stays in `ERROR` and the log has an ERROR line.
+
+1. Find the ERROR line of the order in the log (search for the order code or the PaymentIntent id).
+2. In the Stripe Dashboard, open the PaymentIntent and check the refund error.
+3. Give the money back by hand: a bank transfer to the customer, or a refund in the Dashboard when it is still possible.
+4. Write a note on the order.
+
+A refund that Stripe ends as `failed` or `canceled` is final. The connector sets it to `REJECTED`, logs an ERROR, and does not retry. Handle it by hand the same way.
+
+## Authorization expired
+
+A manual capture reservation expires at Stripe (card: 7 days; PayPal: 10 days; Klarna: 28 days; see the Stripe documentation for the others). The capture then fails with a permanent Stripe code (`charge_expired_for_capture` or `capture_charge_authorization_expired`). The connector does not retry it. The money is released to the customer. Ask the customer to pay again, or create a new order.
+
+## Bank transfer balance refunded
+
+When a bank transfer customer pays too much, or pays an order that is already cancelled, the connector refunds the cash balance after `stripe.cashbalance.refund.delay.seconds`. To check:
+
+1. In the Stripe Dashboard, open the customer and read the cash balance. It must be 0 after the refund.
+2. Look for a refund with the origin `customer_balance` on the customer.
+3. If the refund does not exist, read the ERROR lines of `StripeCashBalanceRefundTaskRunner`. A common cause: the Stripe Customer has no email.
+4. An INFO line "was not created by this connector" or "has no local customer or payment in this installation" means the customer is not of this installation (see [Money left in the Stripe cash balance](#money-left-in-the-stripe-cash-balance)). The connector does not refund it. Refund it by hand in the Dashboard if the money belongs to this shop.
+
+## Partial cancel denied
+
+While the payment of an order is pending, a partial cancel is denied with the code `7301` and a text that starts with `stripe-payment-pending:`. This is on purpose. Wait for the payment, or cancel the whole order. A full cancel releases the PaymentIntent.
+
 # Known limitations
 
 - `PAYMENT_PENDING` cannot be tested end to end with a Stripe test account in Spain: no method stays in `processing`. Integration and unit tests cover the retry path.
@@ -399,6 +496,14 @@ The connector sets the event to `RECEIVED` and processes it again. For a paid Pa
 - A retry of a cancel adjustment can replay a Stripe failure that Stripe saved for the same idempotency key. Stripe keeps keys for 24 hours.
 - HSQLDB has no row locks. The locks on the PaymentIntent record and on the webhook event do nothing there. Use a real database (not HSQLDB) to test concurrency.
 - A card authorization expires after 7 days.
+- **One Stripe account for these checks.** The cash balance checks and the OMS `refundFollowOn` use the global Stripe key. Per-site keys on different Stripe accounts do not work for them. In that case the server logs a WARN "does not exist in the Stripe account of the global key" and the balance stays in Stripe: refund it by hand in the Dashboard.
+- **Refund outside the method window.** It stays in `ERROR` after 5 retries. Refund by hand in the Dashboard (see the runbook). A refund that ends `failed` or `canceled` is final and is not retried.
+- **Accelerator is not supported.** The payment instructions and the new methods are for Spartacus only.
+- **No instructions email.** The connector shows the Multibanco or bank transfer instructions in the storefront and in the Stripe page (`instructionsUrl`). It does not send them by email.
+- **Apple Pay and Google Pay** need a registered domain. You cannot test them on `localhost`.
+- **Stripe test accounts** email only the account owner. The refund of a bank transfer balance sends an email to the customer, so the e2e tests set the email of the Stripe test customer to the account email.
+- **End-to-end cases not run:** a Bizum payment that fails (Stripe test mode returns to the shop at once, so it cannot be simulated); seQura line items (the line items test pays by card); a Klarna decline (no spec uses the Stripe test helper); the real expiry of a manual capture; the update of a PaymentIntent with line items to an amount without line items. Unit and integration tests cover the logic of these cases. The SEPA failure spec failed once in many runs and did not fail again.
+- A pending Multibanco or bank transfer order does not reserve stock (SAP standard). See [Pending payments](#pending-payments).
 
 # Support
 

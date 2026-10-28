@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -60,6 +61,7 @@ public class StripeAwaitPaymentCheckOrderActionTest
 	private StripeOrderCancellationService cancellationService;
 	private ModelService modelService;
 	private StripeGateway gateway;
+	private StripeConfigurationService configurationService;
 	private StripeSiteContext siteContext;
 	private BaseSiteModel site;
 	private StripeAwaitPaymentCheckOrderAction action;
@@ -75,9 +77,9 @@ public class StripeAwaitPaymentCheckOrderActionTest
 		authorizationService = mock(StripeOrderAuthorizationService.class);
 		cancellationService = mock(StripeOrderCancellationService.class);
 		modelService = mock(ModelService.class);
-		final StripeConfigurationService configurationService = mock(StripeConfigurationService.class);
-		when(configurationService.getPendingPaymentTimeout()).thenReturn(TIMEOUT);
-		when(configurationService.getPendingPaymentRetryDelay()).thenReturn(RETRY);
+		configurationService = mock(StripeConfigurationService.class);
+		when(configurationService.getPendingPaymentTimeout(nullable(String.class))).thenReturn(TIMEOUT);
+		when(configurationService.getPendingPaymentRetryDelay(nullable(String.class))).thenReturn(RETRY);
 		final TimeService timeService = mock(TimeService.class);
 		when(timeService.getCurrentTime()).thenReturn(Date.from(NOW));
 
@@ -320,6 +322,95 @@ public class StripeAwaitPaymentCheckOrderActionTest
 
 		verify(delegate).executeAction(process);
 		verifyNoInteractions(recordDao, authorizationService, cancellationService);
+	}
+
+	@Test
+	public void sepaUsesItsOwnTimeout() throws Exception
+	{
+		givenMethod("sepa_debit", Duration.ofDays(10), RETRY);
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("processing");
+		order.setDate(Date.from(NOW.minus(Duration.ofDays(2))));
+
+		assertRetry(RETRY);
+
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void awaitingFundsWaits() throws Exception
+	{
+		givenRecord(StripePaymentIntentState.AWAITING_FUNDS);
+		givenLive("requires_action");
+		order.setDate(Date.from(NOW.minus(Duration.ofHours(2))));
+
+		assertRetry(RETRY);
+
+		assertEquals(OrderStatus.PAYMENT_PENDING, order.getStatus());
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void deadlineDoesNotCancelWhenLiveIntentIsPaid() throws Exception
+	{
+		givenMethod("multibanco", Duration.ofDays(12), Duration.ofHours(1));
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		order.setDate(Date.from(NOW.minus(Duration.ofDays(12))));
+		final PaymentIntent live = givenLive("requires_capture");
+		when(authorizationService.authorizePendingOrder(order, live)).thenReturn(true);
+
+		assertEquals("OK", action.execute(process));
+
+		verify(delegate).executeAction(process);
+		verifyNoInteractions(cancellationService);
+	}
+
+	@Test
+	public void multibancoProcessingAfterVoucherExpiryKeepsWaitingUntilDeadline() throws Exception
+	{
+		givenMethod("multibanco", Duration.ofDays(12), Duration.ofHours(1));
+		givenRecord(StripePaymentIntentState.PROCESSING);
+		givenLive("processing");
+		order.setDate(Date.from(NOW.minus(Duration.ofDays(8))));
+
+		assertRetry(Duration.ofHours(1));
+		verifyNoInteractions(cancellationService);
+
+		order.setDate(Date.from(NOW.minus(Duration.ofDays(12))));
+		assertEquals("NOK", action.execute(process));
+		verify(cancellationService).cancelForFailedPayment(order);
+	}
+
+	@Test
+	public void deferredMethodsUseLongerRetry() throws Exception
+	{
+		givenMethod("customer_balance", Duration.ofDays(14), Duration.ofHours(1));
+		givenRecord(StripePaymentIntentState.AWAITING_FUNDS);
+		givenLive("requires_action");
+
+		assertRetry(Duration.ofHours(1));
+
+		verify(configurationService).getPendingPaymentRetryDelay("customer_balance");
+	}
+
+	private void givenMethod(final String type, final Duration timeout, final Duration retry)
+	{
+		((StripePaymentInfoModel) order.getPaymentInfo()).setPaymentMethodType(type);
+		when(configurationService.getPendingPaymentTimeout(type)).thenReturn(timeout);
+		when(configurationService.getPendingPaymentRetryDelay(type)).thenReturn(retry);
+	}
+
+	private void assertRetry(final Duration delay) throws Exception
+	{
+		try
+		{
+			action.execute(process);
+			fail("RetryLaterException expected");
+		}
+		catch (final RetryLaterException e)
+		{
+			assertEquals(delay.toMillis(), e.getDelay());
+		}
 	}
 
 	private PaymentIntent givenLive(final String status)

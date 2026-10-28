@@ -95,4 +95,47 @@ public class DefaultStripeGatewayTest
 				gateway.isRetryable(new IdempotencyException("mismatch", "req_4", "idempotency_error", 400)));
 		assertFalse(gateway.isRetryable(new CardException("declined", "req_5", "card_declined", null, null, null, 402, null)));
 	}
+
+	@Test
+	public void accountKeyIsAskedOncePerSecretKeyAndMarksMode()
+	{
+		final int[] calls = { 0 };
+		final DefaultStripeGateway counting = new DefaultStripeGateway()
+		{
+			@Override
+			@SuppressWarnings("unchecked")
+			protected <T> T call(final String operation, final StripeCall<T> stripeCall)
+			{
+				calls[0]++;
+				final com.stripe.model.Account account = new com.stripe.model.Account();
+				account.setId("acct_1");
+				return (T) account;
+			}
+		};
+		counting.setStripeConfigurationService(configuration);
+		when(configuration.getSecretKey()).thenReturn("sk_test_abc");
+
+		assertEquals("acct_1:test", counting.retrieveAccountKey());
+		assertEquals("acct_1:test", counting.retrieveAccountKey());
+		assertEquals(1, calls[0]);
+
+		when(configuration.getSecretKey()).thenReturn("rk_live_abc");
+		assertEquals("acct_1:live", counting.retrieveAccountKey());
+		assertEquals(2, calls[0]);
+	}
+
+	@Test
+	public void accountKeyNeedsSecretKey()
+	{
+		when(configuration.getSecretKey()).thenReturn("");
+		try
+		{
+			gateway.retrieveAccountKey();
+			fail("A missing key must throw");
+		}
+		catch (final StripeGatewayException e)
+		{
+			assertEquals("secret_key_missing", e.getStripeCode());
+		}
+	}
 }

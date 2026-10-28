@@ -3,9 +3,12 @@ package com.stripe.core.commands.impl;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import com.google.gson.JsonParser;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.model.Charge;
@@ -59,6 +62,18 @@ final class StripeCommandTestSupport
 			charge.setAmountRefunded(0L);
 			intent.setLatestChargeObject(charge);
 		}
+		return intent;
+	}
+
+	/**
+	 * A PaymentIntent whose raw JSON holds expanded line items, as the gateway retrieve returns it.
+	 */
+	static PaymentIntent intentWithLineItems(final String status, final long amount, final String currency)
+	{
+		final PaymentIntent intent = spy(intent(status, amount, currency));
+		doReturn(JsonParser.parseString("{\"id\":\"" + PI_ID + "\",\"amount_details\":{\"line_items\":{\"object\":\"list\","
+				+ "\"data\":[{\"product_name\":\"Thing\",\"quantity\":2,\"unit_cost\":" + amount / 2 + "}]}}}")
+				.getAsJsonObject()).when(intent).getRawJsonObject();
 		return intent;
 	}
 }

@@ -2,11 +2,13 @@ package com.stripe.core.payment.impl;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -18,6 +20,9 @@ import static org.mockito.Mockito.when;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.testsupport.StripeLogCapture;
+import com.stripe.core.customer.StripeCashBalanceService;
+import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
@@ -27,6 +32,7 @@ import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripeLineItemsBuilder;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.model.Charge;
@@ -58,6 +64,9 @@ public class DefaultStripePaymentIntentServiceTest
 	private StripeOrderPlacementLockService lockService;
 	private StripePaymentIntentRecordService recordService;
 	private StripeOrderAuthorizationService authorizationService;
+	private StripeLineItemsBuilder lineItemsBuilder;
+	private StripeCustomerService customerService;
+	private StripeCashBalanceService cashBalanceService;
 	private DefaultStripePaymentIntentService service;
 	private CartModel cart;
 
@@ -93,6 +102,14 @@ public class DefaultStripePaymentIntentServiceTest
 		service.setStripeOrderPlacementLockService(lockService);
 		service.setStripePaymentIntentRecordService(recordService);
 		service.setStripeOrderAuthorizationService(authorizationService);
+		lineItemsBuilder = mock(StripeLineItemsBuilder.class);
+		when(lineItemsBuilder.build(any(), anyLong())).thenReturn(Map.of());
+		service.setStripeLineItemsBuilder(lineItemsBuilder);
+		customerService = mock(StripeCustomerService.class);
+		when(customerService.customerIdFor(any())).thenReturn(Optional.empty());
+		service.setStripeCustomerService(customerService);
+		cashBalanceService = mock(StripeCashBalanceService.class);
+		service.setStripeCashBalanceService(cashBalanceService);
 
 		final CurrencyModel currency = new CurrencyModel();
 		currency.setIsocode("EUR");
@@ -194,6 +211,176 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
+	public void createSendsLineItems()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), params.toMap().get("amount_details"));
+		assertEquals(1200L, params.toMap().get("amount"));
+	}
+
+	@Test
+	public void createWithoutLineItemsKeepsTheAmount()
+	{
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		assertFalse(params.toMap().containsKey("amount_details"));
+		assertEquals(1200L, params.toMap().get("amount"));
+	}
+
+	@Test
+	public void updateSendsLineItems()
+	{
+		cartHasIntent("pi_1");
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), captor.getValue().toMap().get("amount_details"));
+		assertEquals(1200L, captor.getValue().toMap().get("amount"));
+	}
+
+	@Test
+	public void updateWithEmptyLineItemsClearsAmountDetails()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals("", captor.getValue().toMap().get("amount_details"));
+		assertEquals(1200L, captor.getValue().toMap().get("amount"));
+	}
+
+	private StripeGatewayException lineItemsRejection()
+	{
+		return new StripeGatewayException("Stripe call failed", "amount_details_amount_mismatch", false, false, null);
+	}
+
+	@Test
+	public void unknownPaymentMethodOptionIsDroppedAndRetried()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card", "sequra", "scalapay"));
+		final StripeGatewayException unknown = new StripeGatewayException("Stripe call failed", "parameter_unknown", false,
+				false, new com.stripe.exception.InvalidRequestException("Received unknown parameter: payment_method_options[sequra]",
+						"payment_method_options[sequra]", "req_1", "parameter_unknown", 400, null));
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1"))).thenThrow(unknown);
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1-without-sequra")))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		final StripeIntentData data;
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentIntentService.class))
+		{
+			data = service.prepareForCart(cart);
+
+			assertTrue(log.hasWarn("sequra"));
+		}
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertTrue(options(captor.getAllValues().get(0)).containsKey("sequra"));
+		final Map<String, Object> retried = options(captor.getAllValues().get(1));
+		assertFalse(retried.containsKey("sequra"));
+		assertEquals(Map.of("capture_method", "manual"), retried.get("card"));
+		assertEquals(Map.of("capture_method", "manual"), retried.get("scalapay"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void otherUnknownParameterIsNotRetried()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card"));
+		final StripeGatewayException unknown = new StripeGatewayException("Stripe call failed", "parameter_unknown", false,
+				false, new com.stripe.exception.InvalidRequestException("Received unknown parameter: foo", "foo", "req_1",
+						"parameter_unknown", 400, null));
+		when(gateway.createPaymentIntent(any(), anyString())).thenThrow(unknown);
+
+		final StripeGatewayException thrown = org.junit.Assert.assertThrows(StripeGatewayException.class,
+				() -> service.prepareForCart(cart));
+
+		assertSame(unknown, thrown);
+		verify(gateway, times(1)).createPaymentIntent(any(), anyString());
+	}
+
+	@Test
+	public void createRetriesWithoutLineItemsWhenStripeRejectsThem()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1"))).thenThrow(lineItemsRejection());
+		when(gateway.createPaymentIntent(any(), eq("cart-c1-g1-pi-1-nolines")))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertTrue(captor.getAllValues().get(0).toMap().containsKey("amount_details"));
+		assertFalse(captor.getAllValues().get(1).toMap().containsKey("amount_details"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void updateRetriesWithoutLineItemsWhenStripeRejectsThem()
+	{
+		cartHasIntent("pi_1");
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 1000));
+		when(gateway.updatePaymentIntent(eq("pi_1"), any(), argThat(key -> !key.endsWith("-nolines"))))
+				.thenThrow(lineItemsRejection());
+		when(gateway.updatePaymentIntent(eq("pi_1"), any(), argThat(key -> key.endsWith("-nolines"))))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway, times(2)).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertEquals(Map.of("shipping", Map.of("amount", 100L)), captor.getAllValues().get(0).toMap().get("amount_details"));
+		assertEquals("", captor.getAllValues().get(1).toMap().get("amount_details"));
+		assertEquals(1200L, captor.getAllValues().get(1).toMap().get("amount"));
+	}
+
+	@Test
+	public void otherStripeErrorsOnCreateAreNotRetried()
+	{
+		when(lineItemsBuilder.build(cart, 1200L))
+				.thenReturn(Map.of("amount_details", Map.of("shipping", Map.of("amount", 100L))));
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("Stripe call failed", "api_error", true, false, null));
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("expected StripeGatewayException");
+		}
+		catch (final StripeGatewayException expected)
+		{
+			verify(gateway, times(1)).createPaymentIntent(any(), anyString());
+		}
+	}
+
+	@Test
 	public void doesNotUpdateWhenAmountAndCurrencyMatch()
 	{
 		cartHasIntent("pi_1");
@@ -220,6 +407,78 @@ public class DefaultStripePaymentIntentServiceTest
 		verify(lockService).tryAcquire("pi_old");
 		verify(lockService, never()).release(anyString());
 		verify(authorizationService).removeAuthorizations(cart, "pi_old");
+	}
+
+	@Test
+	public void intentWithIssuedInstructionsIsReplacedNotUpdated()
+	{
+		cartHasIntent("pi_old");
+		final PaymentIntent voucher = withInstructions(intent("pi_old", "requires_action", 1000));
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(voucher);
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_new", "requires_payment_method", 1200));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+		verify(lockService).tryAcquire("pi_old");
+		verify(recordService).findLiveOrder("pi_old");
+		verify(gateway).cancelPaymentIntent(eq("pi_old"), eq("release-pi_old-cancel"));
+		verify(authorizationService).removeAuthorizations(cart, "pi_old");
+		assertEquals("pi_new", data.getPaymentIntentId());
+		assertEquals("pi_new", ((StripePaymentInfoModel) cart.getPaymentInfo()).getStripePaymentIntentId());
+	}
+
+	@Test
+	public void intentWithIssuedInstructionsAndAnOrderIsNotReleased()
+	{
+		cartHasIntent("pi_old");
+		when(gateway.retrievePaymentIntent("pi_old")).thenReturn(withInstructions(intent("pi_old", "requires_action", 1000)));
+		when(recordService.findLiveOrder("pi_old")).thenReturn(Optional.of(new OrderModel()));
+
+		assertPaymentInProgress();
+
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+	}
+
+	@Test
+	public void missingRecordOfIntentWithIssuedInstructionsIsAwaitingFunds()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(withInstructions(intent("pi_1", "requires_action", 1200)));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<StripePaymentIntentRecordModel> captor = ArgumentCaptor
+				.forClass(StripePaymentIntentRecordModel.class);
+		verify(modelService).save(captor.capture());
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, captor.getValue().getState());
+	}
+
+	@Test
+	public void threeDsIntentIsStillUpdated()
+	{
+		cartHasIntent("pi_1");
+		final PaymentIntent threeDs = intent("pi_1", "requires_action", 1000);
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("use_stripe_sdk");
+		threeDs.setNextAction(nextAction);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(threeDs);
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString())).thenReturn(intent("pi_1", "requires_action", 1200));
+
+		service.prepareForCart(cart);
+
+		verify(gateway).updatePaymentIntent(eq("pi_1"), any(), anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
+	}
+
+	private static PaymentIntent withInstructions(final PaymentIntent intent)
+	{
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("multibanco_display_details");
+		intent.setNextAction(nextAction);
+		return intent;
 	}
 
 	@Test
@@ -303,6 +562,49 @@ public class DefaultStripePaymentIntentServiceTest
 		assertFalse(options.containsKey("bancontact"));
 		assertFalse(options.containsKey("paypal"));
 		assertEquals("automatic", params.toMap().get("capture_method"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void manualCaptureForEveryConfiguredMethod()
+	{
+		final Set<String> eleven = Set.of("card", "link", "paypal", "amazon_pay", "revolut_pay", "mobilepay", "satispay",
+				"klarna", "sequra", "scalapay", "billie");
+		when(config.getManualCaptureMethods()).thenReturn(eleven);
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final PaymentIntentCreateParams params = createdParams();
+		final Map<String, Object> options = options(params);
+		for (final String type : eleven)
+		{
+			assertEquals(type, Map.of("capture_method", "manual"), options.get(type));
+		}
+		assertEquals(11, options.size());
+		assertFalse(options.containsKey("mondu"));
+		assertFalse(options.containsKey("sepa_debit"));
+		assertFalse(options.containsKey("bancontact"));
+		final String form = com.stripe.net.FormEncoder.createQueryString(params.toMap());
+		assertTrue(form, form.contains("payment_method_options[sequra][capture_method]=manual"));
+		assertTrue(form, form.contains("payment_method_options[link][capture_method]=manual"));
+	}
+
+	@Test
+	public void unknownManualMethodIsIgnored()
+	{
+		when(config.getManualCaptureMethods()).thenReturn(Set.of("card", "sepa_debit"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentIntentService.class))
+		{
+			service.prepareForCart(cart);
+
+			assertTrue(log.hasWarn("sepa_debit"));
+		}
+		final Map<String, Object> options = options(createdParams());
+		assertEquals(Map.of("capture_method", "manual"), options.get("card"));
+		assertFalse(options.containsKey("sepa_debit"));
 	}
 
 	@Test
@@ -416,6 +718,64 @@ public class DefaultStripePaymentIntentServiceTest
 	}
 
 	@Test
+	public void cancellingTransferIntentSchedulesRefundCheck()
+	{
+		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
+		transfer.setCustomer("cus_1");
+		transfer.setCurrency("eur");
+		transfer.setPaymentMethodTypes(java.util.List.of("card", "customer_balance"));
+		final PaymentIntent.NextAction action = new PaymentIntent.NextAction();
+		action.setType("display_bank_transfer_instructions");
+		transfer.setNextAction(action);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(gateway).cancelPaymentIntent("pi_1", "release-pi_1-cancel");
+		verify(cashBalanceService).scheduleRefundCheck("cus_1", "eur");
+	}
+
+	@Test
+	public void schedulingFailureNeverBreaksTheCancel()
+	{
+		final PaymentIntent transfer = intent("pi_1", "requires_action", 1000);
+		transfer.setCustomer("cus_1");
+		transfer.setCurrency("eur");
+		final PaymentIntent.NextAction action = new PaymentIntent.NextAction();
+		action.setType("display_bank_transfer_instructions");
+		transfer.setNextAction(action);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(transfer);
+		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(record));
+		doThrow(new IllegalStateException("db down")).when(cashBalanceService).scheduleRefundCheck(anyString(), anyString());
+
+		service.releaseFunds("pi_1", "test");
+
+		assertEquals(StripePaymentIntentState.CANCELED, record.getState());
+	}
+
+	@Test
+	public void cancellingCardIntentSchedulesNothing()
+	{
+		final PaymentIntent card = intent("pi_1", "requires_capture", 1000);
+		card.setCustomer("cus_1");
+		card.setCurrency("eur");
+		card.setPaymentMethodTypes(java.util.List.of("card", "customer_balance"));
+		final Charge charge = new Charge();
+		final Charge.PaymentMethodDetails details = new Charge.PaymentMethodDetails();
+		details.setType("card");
+		charge.setPaymentMethodDetails(details);
+		card.setLatestChargeObject(charge);
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(card);
+		when(recordDao.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(new StripePaymentIntentRecordModel()));
+
+		service.releaseFunds("pi_1", "test");
+
+		verify(cashBalanceService, never()).scheduleRefundCheck(anyString(), anyString());
+	}
+
+	@Test
 	public void unchangedCartKeepsConfirmedIntent()
 	{
 		cartHasIntent("pi_1");
@@ -426,6 +786,21 @@ public class DefaultStripePaymentIntentServiceTest
 		assertEquals("pi_1", data.getPaymentIntentId());
 		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
 		verify(gateway, never()).createRefund(anyString(), anyLong(), anyString());
+		verify(gateway, never()).createPaymentIntent(any(), anyString());
+		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
+	}
+
+	@Test
+	public void unchangedCartKeepsIntentWithIssuedInstructions()
+	{
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(withInstructions(intent("pi_1", "requires_action", 1200)));
+
+		final StripeIntentData data = service.prepareForCart(cart);
+
+		assertEquals("pi_1", data.getPaymentIntentId());
+		verify(lockService, never()).tryAcquire(anyString());
+		verify(gateway, never()).cancelPaymentIntent(anyString(), anyString());
 		verify(gateway, never()).createPaymentIntent(any(), anyString());
 		verify(gateway, never()).updatePaymentIntent(anyString(), any(), anyString());
 	}
@@ -481,5 +856,105 @@ public class DefaultStripePaymentIntentServiceTest
 		assertEquals("pi_1", captor.getValue().getPaymentIntentId());
 		assertEquals(StripePaymentIntentState.AUTHORIZED, captor.getValue().getState());
 		assertEquals(Long.valueOf(1200), captor.getValue().getAmount());
+	}
+
+	@Test
+	public void customerIsSentOnCreate()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertEquals("cus_1", createdParams().toMap().get("customer"));
+	}
+
+	@Test
+	public void updateNeverSendsCustomer()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		cartHasIntent("pi_1");
+		when(gateway.retrievePaymentIntent("pi_1")).thenReturn(intent("pi_1", "requires_payment_method", 900));
+		when(gateway.updatePaymentIntent(anyString(), any(), anyString()))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentUpdateParams> captor = ArgumentCaptor.forClass(PaymentIntentUpdateParams.class);
+		verify(gateway).updatePaymentIntent(eq("pi_1"), captor.capture(), anyString());
+		assertFalse(captor.getValue().toMap().containsKey("customer"));
+		verify(customerService, never()).customerIdFor(any());
+	}
+
+	@Test
+	public void customerServiceRuntimeFailureDoesNotBlockPayment()
+	{
+		when(customerService.customerIdFor(cart)).thenThrow(new IllegalStateException("boom"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertFalse(createdParams().toMap().containsKey("customer"));
+	}
+
+	@Test
+	public void createKeyHoldsCustomerId()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_1"));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		verify(gateway).createPaymentIntent(any(), eq("cart-c1-g1-pi-1-cus-cus_1"));
+	}
+
+	@Test
+	public void customerFailureDoesNotBlockPayment()
+	{
+		when(customerService.customerIdFor(cart))
+				.thenThrow(new StripeGatewayException("down", "api_connection_error", true, false, null));
+		when(gateway.createPaymentIntent(any(), anyString())).thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		assertFalse(createdParams().toMap().containsKey("customer"));
+	}
+
+	@Test
+	public void missingStripeCustomerIsRecreated()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_old"));
+		when(customerService.replaceCustomer(cart, "cus_old")).thenReturn("cus_new");
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("missing", "resource_missing", false, false, null))
+				.thenReturn(intent("pi_1", "requires_payment_method", 1200));
+
+		service.prepareForCart(cart);
+
+		final ArgumentCaptor<PaymentIntentCreateParams> captor = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+		verify(gateway, times(2)).createPaymentIntent(captor.capture(), anyString());
+		assertEquals("cus_old", captor.getAllValues().get(0).toMap().get("customer"));
+		assertEquals("cus_new", captor.getAllValues().get(1).toMap().get("customer"));
+		verify(customerService).replaceCustomer(cart, "cus_old");
+	}
+
+	@Test
+	public void missingStripeCustomerIsRecreatedOnlyOnce()
+	{
+		when(customerService.customerIdFor(cart)).thenReturn(Optional.of("cus_old"));
+		when(customerService.replaceCustomer(cart, "cus_old")).thenReturn("cus_new");
+		when(gateway.createPaymentIntent(any(), anyString()))
+				.thenThrow(new StripeGatewayException("missing", "resource_missing", false, false, null));
+
+		try
+		{
+			service.prepareForCart(cart);
+			org.junit.Assert.fail("The second failure must be thrown");
+		}
+		catch (final StripeGatewayException e)
+		{
+			assertEquals("resource_missing", e.getStripeCode());
+		}
+		verify(gateway, times(2)).createPaymentIntent(any(), anyString());
 	}
 }

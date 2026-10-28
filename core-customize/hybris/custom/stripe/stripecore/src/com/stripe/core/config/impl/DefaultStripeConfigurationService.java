@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -24,14 +25,27 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	private static final String MANUAL_METHODS = "stripe.capture.manual.methods";
 	private static final String GRACE_PERIOD = "stripe.webhook.graceperiod.seconds";
 	private static final String PENDING_TIMEOUT = "stripe.payment.pending.timeout.seconds";
+	private static final String PENDING_TIMEOUT_PREFIX = "stripe.payment.pending.timeout.";
+	private static final String PENDING_TIMEOUT_SUFFIX = ".seconds";
+	private static final String CUSTOMER_CREATION = "stripe.customer.create";
+	private static final String CASH_BALANCE_REFUND_DELAY = "stripe.cashbalance.refund.delay.seconds";
 	private static final String PENDING_RETRY = "stripe.payment.pending.retry.seconds";
+	private static final String PENDING_RETRY_PREFIX = "stripe.payment.pending.retry.";
 	private static final String STATEMENT_DESCRIPTOR = "stripe.statement.descriptor";
 	private static final String DESCRIPTOR_SUFFIX = "stripe.descriptor.suffix";
 
-	private static final String DEFAULT_MANUAL_METHODS = "card,paypal,klarna";
+	private static final String DEFAULT_MANUAL_METHODS = "card,link,paypal,amazon_pay,revolut_pay,mobilepay,satispay,klarna,sequra,scalapay,billie";
 	private static final long DEFAULT_GRACE_PERIOD_SECONDS = 300L;
 	private static final long DEFAULT_PENDING_TIMEOUT_SECONDS = 86400L;
+	private static final Map<String, Long> DEFAULT_METHOD_TIMEOUT_SECONDS = Map.of(
+			"sepa_debit", 864000L,
+			"multibanco", 1036800L,
+			"customer_balance", 1209600L);
+	private static final long DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS = 3600L;
 	private static final long DEFAULT_PENDING_RETRY_SECONDS = 300L;
+	private static final Map<String, Long> DEFAULT_METHOD_RETRY_SECONDS = Map.of(
+			"multibanco", 3600L,
+			"customer_balance", 3600L);
 
 	private ConfigurationService configurationService;
 	private BaseSiteService baseSiteService;
@@ -88,9 +102,47 @@ public class DefaultStripeConfigurationService implements StripeConfigurationSer
 	}
 
 	@Override
+	public Duration getPendingPaymentTimeout(final String paymentMethodType)
+	{
+		final Duration global = getPendingPaymentTimeout();
+		if (StringUtils.isBlank(paymentMethodType))
+		{
+			return global;
+		}
+		final String type = paymentMethodType.trim();
+		return readSeconds(PENDING_TIMEOUT_PREFIX + type + PENDING_TIMEOUT_SUFFIX,
+				DEFAULT_METHOD_TIMEOUT_SECONDS.getOrDefault(type, global.getSeconds()));
+	}
+
+	@Override
+	public boolean isCustomerCreationEnabled()
+	{
+		return !"false".equalsIgnoreCase(readString(CUSTOMER_CREATION, "true").trim());
+	}
+
+	@Override
+	public Duration getCashBalanceRefundDelay()
+	{
+		return readSeconds(CASH_BALANCE_REFUND_DELAY, DEFAULT_CASH_BALANCE_REFUND_DELAY_SECONDS);
+	}
+
+	@Override
 	public Duration getPendingPaymentRetryDelay()
 	{
 		return readSeconds(PENDING_RETRY, DEFAULT_PENDING_RETRY_SECONDS);
+	}
+
+	@Override
+	public Duration getPendingPaymentRetryDelay(final String paymentMethodType)
+	{
+		final Duration global = getPendingPaymentRetryDelay();
+		if (StringUtils.isBlank(paymentMethodType))
+		{
+			return global;
+		}
+		final String type = paymentMethodType.trim();
+		return readSeconds(PENDING_RETRY_PREFIX + type + PENDING_TIMEOUT_SUFFIX,
+				DEFAULT_METHOD_RETRY_SECONDS.getOrDefault(type, global.getSeconds()));
 	}
 
 	@Override

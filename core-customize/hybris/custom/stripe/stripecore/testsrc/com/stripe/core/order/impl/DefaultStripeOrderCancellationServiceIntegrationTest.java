@@ -16,6 +16,9 @@ import de.hybris.platform.core.enums.OrderStatus;
 import de.hybris.platform.core.model.order.OrderEntryModel;
 import de.hybris.platform.core.model.order.OrderModel;
 import de.hybris.platform.core.model.product.ProductModel;
+import de.hybris.platform.ordercancel.CancelDecision;
+import de.hybris.platform.ordercancel.DefaultOrderCancelDenialReason;
+import de.hybris.platform.ordercancel.OrderCancelService;
 import de.hybris.platform.ordercancel.model.OrderCancelConfigModel;
 import de.hybris.platform.product.ProductService;
 import de.hybris.platform.servicelayer.ServicelayerTransactionalTest;
@@ -46,6 +49,8 @@ public class DefaultStripeOrderCancellationServiceIntegrationTest extends Servic
 	private StripeOrderCancellationService stripeOrderCancellationService;
 	@Resource
 	private ModelService modelService;
+	@Resource
+	private OrderCancelService orderCancelService;
 	@Resource
 	private UserService userService;
 	@Resource
@@ -94,6 +99,31 @@ public class DefaultStripeOrderCancellationServiceIntegrationTest extends Servic
 		}
 		modelService.refresh(order);
 		assertEquals(OrderStatus.COMPLETED, order.getStatus());
+	}
+
+	@Test
+	public void partialCancelOfPendingOrderIsDeniedByOrderCancelService()
+	{
+		final OrderModel order = pendingStripeOrder("stripe-cancel-it-3", OrderStatus.PAYMENT_PENDING);
+		setRecordState(StripePaymentIntentState.AWAITING_FUNDS);
+
+		final CancelDecision partial = orderCancelService.isCancelPossible(order, userService.getAdminUser(), true, false);
+		final CancelDecision full = orderCancelService.isCancelPossible(order, userService.getAdminUser(), false, false);
+
+		assertTrue("partial cancel denied", !partial.isAllowed());
+		assertTrue(partial.getDenialReasons().stream()
+				.anyMatch(reason -> ((DefaultOrderCancelDenialReason) reason).getDescription().startsWith("stripe-payment-pending")));
+		assertTrue("full cancel is not denied by Stripe", full.getDenialReasons().stream()
+				.noneMatch(reason -> ((DefaultOrderCancelDenialReason) reason).getDescription().startsWith("stripe-payment-pending")));
+	}
+
+	private void setRecordState(final StripePaymentIntentState state)
+	{
+		final StripePaymentIntentRecordModel record = flexibleSearchService.<StripePaymentIntentRecordModel> search(
+				new FlexibleSearchQuery("SELECT {pk} FROM {StripePaymentIntentRecord} WHERE {paymentIntentId} = ?id",
+						java.util.Map.of("id", PI_ID))).getResult().get(0);
+		record.setState(state);
+		modelService.save(record);
 	}
 
 	private OrderModel pendingStripeOrder(final String code, final OrderStatus status)

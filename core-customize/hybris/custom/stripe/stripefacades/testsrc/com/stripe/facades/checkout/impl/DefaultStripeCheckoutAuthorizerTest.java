@@ -23,10 +23,10 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.order.impl.DefaultStripeOrderAuthorizationService;
-import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.impl.DefaultStripePaymentDetailsCopier;
 import com.stripe.facades.checkout.StripeCheckoutException;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -108,9 +108,9 @@ public class DefaultStripeCheckoutAuthorizerTest
 		recordService = mock(StripePaymentIntentRecordService.class);
 		when(recordService.findLiveOrder(PI_ID)).thenReturn(Optional.empty());
 		authorizer.setStripePaymentIntentRecordService(recordService);
-		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
-		paymentInfoUpdater.setModelService(mock(ModelService.class));
-		authorizer.setStripePaymentInfoUpdater(paymentInfoUpdater);
+		final DefaultStripePaymentDetailsCopier detailsCopier = new DefaultStripePaymentDetailsCopier();
+		detailsCopier.setModelService(mock(ModelService.class));
+		authorizer.setStripePaymentDetailsCopier(detailsCopier);
 		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
 		checks.setStripeAmountConverter(converter);
 		authorizer.setStripePaymentIntentChecks(checks);
@@ -158,6 +158,59 @@ public class DefaultStripeCheckoutAuthorizerTest
 		assertEquals(StripePaymentIntentState.PROCESSING, record.getState());
 		assertEquals("sepa_debit", paymentInfo.getPaymentMethodType());
 		verify(lockService, never()).release(anyString());
+	}
+
+	@Test
+	public void awaitingFundsIsAcceptedAsPending()
+	{
+		final PaymentIntent intent = givenIntent("requires_action", 1999L, "eur");
+		intent.setPaymentMethodObject(paymentMethod("customer_balance", "pm_bt"));
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("display_bank_transfer_instructions");
+		final PaymentIntent.NextAction.DisplayBankTransferInstructions instructions = new PaymentIntent.NextAction.DisplayBankTransferInstructions();
+		instructions.setReference("QHJ7RZ2MXN4P");
+		instructions.setHostedInstructionsUrl("https://payments.stripe.com/bank_transfers/instructions/test_1");
+		instructions.setAmountRemaining(1999L);
+		nextAction.setDisplayBankTransferInstructions(instructions);
+		intent.setNextAction(nextAction);
+
+		assertTrue(authorizer.authorize(cart));
+
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+		assertEquals(StripePaymentIntentState.AWAITING_FUNDS, record.getState());
+		assertEquals("customer_balance", paymentInfo.getPaymentMethodType());
+		assertEquals("QHJ7RZ2MXN4P", paymentInfo.getPaymentReference());
+		assertEquals("https://payments.stripe.com/bank_transfers/instructions/test_1", paymentInfo.getInstructionsUrl());
+		assertEquals(Long.valueOf(1999L), paymentInfo.getAmountRemaining());
+		verify(lockService, never()).release(anyString());
+	}
+
+	@Test
+	public void threeDsRequiresActionIsStillPaymentFailed()
+	{
+		final PaymentIntent intent = givenIntent("requires_action", 1999L, "eur");
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("use_stripe_sdk");
+		intent.setNextAction(nextAction);
+
+		assertReason(StripeCheckoutException.Reason.PAYMENT_FAILED);
+
+		verify(lockService).release(PI_ID);
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+		assertNull(record.getState());
+	}
+
+	@Test
+	public void awaitingFundsWithAmountMismatchReleasesTheInstructions()
+	{
+		final PaymentIntent intent = givenIntent("requires_action", 1000L, "eur");
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("multibanco_display_details");
+		intent.setNextAction(nextAction);
+
+		assertReason(StripeCheckoutException.Reason.AMOUNT_MISMATCH);
+
+		verify(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
 	}
 
 	@Test

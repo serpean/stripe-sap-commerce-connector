@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const recordAll = process.env['E2E_VIDEO'] === 'on';
+
 // Reference project e2e tests. Needs the SAP Commerce server, the storefront and core-customize/scripts/stripe-listen.sh.
 export default defineConfig({
   testDir: './e2e',
@@ -13,8 +15,9 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4200',
     ignoreHTTPSErrors: true,
-    trace: 'retain-on-failure',
+    trace: recordAll ? 'on' : 'retain-on-failure',
     screenshot: 'only-on-failure',
+    video: recordAll ? { mode: 'on', size: { width: 1280, height: 720 } } : 'retain-on-failure',
   },
   projects: [
     { name: 'checkout', testDir: './e2e/checkout' },

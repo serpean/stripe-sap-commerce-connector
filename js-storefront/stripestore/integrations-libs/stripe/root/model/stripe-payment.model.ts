@@ -34,9 +34,17 @@ export interface StripePaymentInfo {
   paymentMethodType?: string;
   cardBrand?: string;
   cardLast4?: string;
-  cardExpMonth?: string;
-  cardExpYear?: string;
+  cardExpMonth?: number;
+  cardExpYear?: number;
   paymentStatus?: StripePaymentStatus;
+  /** Hosted page with the voucher or bank transfer instructions. */
+  instructionsUrl?: string;
+  /** Payment reference. Multibanco: "<entity> <reference>". */
+  paymentReference?: string;
+  /** ISO date after which the payment instructions expire. */
+  instructionsExpireAt?: string;
+  /** Formatted amount still to pay, with currency. */
+  amountRemaining?: string;
 }
 
 // Module augmentation for Spartacus OccEndpoints

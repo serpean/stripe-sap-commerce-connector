@@ -20,10 +20,10 @@ import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderCancellationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
-import com.stripe.core.payment.StripePaymentInfoUpdater;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.payment.impl.DefaultStripePaymentDetailsCopier;
 import com.stripe.core.site.StripeSiteContext;
 import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.model.Charge;
@@ -117,9 +117,9 @@ public class DefaultStripeOrderPlacementServiceTest
 		service.setStripePaymentIntentService(paymentIntentService);
 		service.setStripeAmountConverter(amountConverter);
 		service.setModelService(modelService);
-		final StripePaymentInfoUpdater paymentInfoUpdater = new StripePaymentInfoUpdater();
-		paymentInfoUpdater.setModelService(modelService);
-		service.setStripePaymentInfoUpdater(paymentInfoUpdater);
+		final DefaultStripePaymentDetailsCopier detailsCopier = new DefaultStripePaymentDetailsCopier();
+		detailsCopier.setModelService(modelService);
+		service.setStripePaymentDetailsCopier(detailsCopier);
 		final StripePaymentIntentChecks checks = new StripePaymentIntentChecks();
 		checks.setStripeAmountConverter(amountConverter);
 		service.setStripePaymentIntentChecks(checks);
@@ -527,6 +527,44 @@ public class DefaultStripeOrderPlacementServiceTest
 		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
 		verify(commerceCheckoutService).placeOrder(any(CommerceCheckoutParameter.class));
 		verify(recordService).linkOrder(PI_ID, order);
+	}
+
+	@Test
+	public void awaitingFundsPlacesPendingOrderWithoutAuthorization() throws Exception
+	{
+		paymentIntent.setStatus("requires_action");
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("multibanco_display_details");
+		final PaymentIntent.NextAction.MultibancoDisplayDetails voucher = new PaymentIntent.NextAction.MultibancoDisplayDetails();
+		voucher.setEntity("12345");
+		voucher.setReference("123456789");
+		voucher.setHostedVoucherUrl("https://payments.stripe.com/multibanco/voucher/test_1");
+		nextAction.setMultibancoDisplayDetails(voucher);
+		paymentIntent.setNextAction(nextAction);
+
+		assertSame(order, service.placeOrderFor(paymentIntent).get());
+
+		verify(commerceCheckoutService, never()).authorizePayment(any(CommerceCheckoutParameter.class));
+		final InOrder inOrder = inOrder(paymentInfo, commerceCheckoutService);
+		inOrder.verify(paymentInfo).setPaymentReference("12345 123456789");
+		inOrder.verify(commerceCheckoutService).placeOrder(any(CommerceCheckoutParameter.class));
+		verify(paymentInfo).setInstructionsUrl("https://payments.stripe.com/multibanco/voucher/test_1");
+		verify(recordService).linkOrder(PI_ID, order);
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+	}
+
+	@Test
+	public void threeDsRequiresActionPlacesNoOrder() throws Exception
+	{
+		paymentIntent.setStatus("requires_action");
+		final PaymentIntent.NextAction nextAction = new PaymentIntent.NextAction();
+		nextAction.setType("use_stripe_sdk");
+		paymentIntent.setNextAction(nextAction);
+
+		assertFalse(service.placeOrderFor(paymentIntent).isPresent());
+
+		verify(lockService, never()).tryAcquire(anyString());
+		verify(commerceCheckoutService, never()).placeOrder(any(CommerceCheckoutParameter.class));
 	}
 
 	@Test

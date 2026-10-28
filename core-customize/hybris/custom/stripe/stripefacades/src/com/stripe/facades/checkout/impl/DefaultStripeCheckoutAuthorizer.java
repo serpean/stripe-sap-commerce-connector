@@ -8,7 +8,7 @@ import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
-import com.stripe.core.payment.StripePaymentInfoUpdater;
+import com.stripe.core.payment.StripePaymentDetailsCopier;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
@@ -31,6 +31,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Default {@link StripeCheckoutAuthorizer}. Reads the PaymentIntent of the cart; it never creates or changes one.
+ * <p>
+ * A PaymentIntent that is processing, or that waits for a voucher or bank transfer payment (AWAITING_FUNDS: status
+ * requires_action with payment instructions), places a pending order: no AUTHORIZATION entry, the record state tells
+ * which. Any other requires_action (3D Secure, redirect) places no order.
  */
 public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 {
@@ -39,7 +43,8 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	private static final String AUTHORIZATION_REJECTED = "authorization-rejected";
 
 	private static final Set<StripePaymentIntentStatus> WITH_MONEY = EnumSet.of(StripePaymentIntentStatus.AUTHORIZED,
-			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING);
+			StripePaymentIntentStatus.CAPTURED, StripePaymentIntentStatus.PROCESSING,
+			StripePaymentIntentStatus.AWAITING_FUNDS);
 
 	private StripeGateway stripeGateway;
 	private StripePaymentIntentService stripePaymentIntentService;
@@ -48,7 +53,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	private StripeAmountConverter stripeAmountConverter;
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
 	private ModelService modelService;
-	private StripePaymentInfoUpdater stripePaymentInfoUpdater;
+	private StripePaymentDetailsCopier stripePaymentDetailsCopier;
 	private StripePaymentIntentChecks stripePaymentIntentChecks;
 	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
@@ -59,7 +64,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		final StripePaymentInfoModel paymentInfo = stripePaymentInfoOf(cart);
 		final String paymentIntentId = paymentInfo.getStripePaymentIntentId();
 		final PaymentIntent intent = stripeGateway.retrievePaymentIntent(paymentIntentId);
-		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(intent.getStatus());
+		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(intent);
 
 		if (!stripePaymentIntentChecks.matchesAmount(cart, intent))
 		{
@@ -106,7 +111,7 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 							intent.getId());
 					return true;
 				}
-				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
+				stripePaymentDetailsCopier.copy(intent, paymentInfo);
 				final PaymentTransactionEntryModel entry = commerceCheckoutService.authorizePayment(createParameter(cart));
 				if (hasStatus(entry, TransactionStatus.REJECTED))
 				{
@@ -126,14 +131,16 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 						? StripePaymentIntentState.CAPTURED : StripePaymentIntentState.AUTHORIZED);
 				return true;
 			case PROCESSING:
+			case AWAITING_FUNDS:
 				if (stripeOrderAuthorizationService.hasAcceptedAuthorization(cart, intent.getId()))
 				{
-					LOG.warn("Cart {} has an accepted authorization of payment intent {}, which is processing again",
-							cart.getCode(), intent.getId());
+					LOG.warn("Cart {} has an accepted authorization of payment intent {}, which is {} again",
+							cart.getCode(), intent.getId(), status);
 					return false;
 				}
-				stripePaymentInfoUpdater.copyPaymentMethod(paymentInfo, intent);
-				updateRecordState(intent.getId(), StripePaymentIntentState.PROCESSING);
+				stripePaymentDetailsCopier.copy(intent, paymentInfo);
+				updateRecordState(intent.getId(), status == StripePaymentIntentStatus.AWAITING_FUNDS
+						? StripePaymentIntentState.AWAITING_FUNDS : StripePaymentIntentState.PROCESSING);
 				return true;
 			default:
 				throw new StripeCheckoutException(Reason.PAYMENT_FAILED,
@@ -266,11 +273,6 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 		this.modelService = modelService;
 	}
 
-	public void setStripePaymentInfoUpdater(final StripePaymentInfoUpdater stripePaymentInfoUpdater)
-	{
-		this.stripePaymentInfoUpdater = stripePaymentInfoUpdater;
-	}
-
 	public void setStripePaymentIntentChecks(final StripePaymentIntentChecks stripePaymentIntentChecks)
 	{
 		this.stripePaymentIntentChecks = stripePaymentIntentChecks;
@@ -284,5 +286,10 @@ public class DefaultStripeCheckoutAuthorizer implements StripeCheckoutAuthorizer
 	public void setStripePaymentIntentRecordService(final StripePaymentIntentRecordService stripePaymentIntentRecordService)
 	{
 		this.stripePaymentIntentRecordService = stripePaymentIntentRecordService;
+	}
+
+	public void setStripePaymentDetailsCopier(final StripePaymentDetailsCopier stripePaymentDetailsCopier)
+	{
+		this.stripePaymentDetailsCopier = stripePaymentDetailsCopier;
 	}
 }

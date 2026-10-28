@@ -9,11 +9,13 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  inject,
   OnDestroy,
   OnInit,
   ViewChild,
 } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
+import { ActiveCartFacade } from '@spartacus/cart/base/root';
 import { CheckoutFlowOrchestratorService } from '@spartacus/checkout/base/components';
 import {
   GlobalMessageService,
@@ -27,7 +29,7 @@ import {
   StripePaymentElement,
   StripeElementsOptions,
 } from '@stripe/stripe-js';
-import { Subscription, take } from 'rxjs';
+import { Subscription, mergeMap, take } from 'rxjs';
 import {
   StripePaymentService,
   getStripeErrorReason,
@@ -58,6 +60,7 @@ export class StripePaymentFormComponent
   protected stripeSetup = false;
   protected placingOrder = false;
   protected isReturningFromRedirect = false;
+  protected activeCartFacade = inject(ActiveCartFacade);
 
   constructor(
     protected stripeService: StripePaymentService,
@@ -185,9 +188,21 @@ export class StripePaymentFormComponent
     }
     this.isLoading = true;
     this.error = undefined;
+    const { stripe, elements, clientSecret } = this;
     this.subscription.add(
-      this.stripeService
-        .confirmPayment(this.stripe, this.elements, this.clientSecret)
+      this.activeCartFacade
+        .getActive()
+        .pipe(
+          take(1),
+          mergeMap((cart) =>
+            this.stripeService.confirmPayment(
+              stripe,
+              elements,
+              clientSecret,
+              this.billingEmail(cart?.user?.uid)
+            )
+          )
+        )
         .subscribe({
           next: (result) => {
             this.isLoading = false;
@@ -217,6 +232,16 @@ export class StripePaymentFormComponent
           },
         })
     );
+  }
+
+  /** The cart user id is the email; for a guest it is "<guid>|<email>". */
+  protected billingEmail(uid?: string): string | undefined {
+    if (!uid) {
+      return undefined;
+    }
+    const separator = uid.indexOf('|');
+    const email = separator >= 0 ? uid.substring(separator + 1) : uid;
+    return email.includes('@') && email !== 'anonymous' ? email : undefined;
   }
 
   ngOnDestroy(): void {

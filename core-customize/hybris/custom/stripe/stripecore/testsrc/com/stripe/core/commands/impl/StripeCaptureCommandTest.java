@@ -3,9 +3,11 @@ package com.stripe.core.commands.impl;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.EUR;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.PI_ID;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.intent;
+import static com.stripe.core.commands.impl.StripeCommandTestSupport.intentWithLineItems;
 import static com.stripe.core.commands.impl.StripeCommandTestSupport.wire;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -15,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.model.PaymentIntent;
 import de.hybris.bootstrap.annotations.UnitTest;
 import de.hybris.platform.payment.commands.request.CaptureRequest;
 import de.hybris.platform.payment.commands.result.CaptureResult;
@@ -51,6 +54,21 @@ public class StripeCaptureCommandTest
 	}
 
 	@Test
+	public void fullCaptureSendsNoAmountDetails()
+	{
+		final PaymentIntent withLines = intentWithLineItems("requires_capture", 1999L, "eur");
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(withLines);
+		when(gateway.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1"))
+				.thenReturn(intent("succeeded", 1999L, "eur"));
+
+		final CaptureResult result = command.perform(request());
+
+		assertEquals(TransactionStatus.ACCEPTED, result.getTransactionStatus());
+		verify(gateway).capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
+		verify(gateway, never()).capturePaymentIntent(anyString(), anyLong(), anyMap(), anyString());
+	}
+
+	@Test
 	public void captureUsesStableIdempotencyKey()
 	{
 		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));
@@ -77,13 +95,30 @@ public class StripeCaptureCommandTest
 		assertEquals(TransactionStatus.ERROR, retryable.getTransactionStatus());
 		assertEquals(TransactionStatusDetails.COMMUNICATION_PROBLEM, retryable.getTransactionStatusDetails());
 
-		doThrow(new StripeGatewayException("expired", "charge_expired_for_capture", false, false, null)).when(gateway)
+		doThrow(new StripeGatewayException("declined", "card_declined", false, false, null)).when(gateway)
 				.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
 
-		final CaptureResult permanent = command.perform(request());
+		final CaptureResult other = command.perform(request());
 
-		assertEquals(TransactionStatus.ERROR, permanent.getTransactionStatus());
-		assertEquals(TransactionStatusDetails.GENERAL_SYSTEM_ERROR, permanent.getTransactionStatusDetails());
+		assertEquals(TransactionStatus.ERROR, other.getTransactionStatus());
+		assertEquals(TransactionStatusDetails.GENERAL_SYSTEM_ERROR, other.getTransactionStatusDetails());
+	}
+
+	@Test
+	public void expiredAuthorizationIsRejectedNotRetried()
+	{
+		when(gateway.retrievePaymentIntent(PI_ID)).thenReturn(intent("requires_capture", 1999L, "eur"));
+		for (final String code : new String[]
+		{ "charge_expired_for_capture", "capture_charge_authorization_expired" })
+		{
+			doThrow(new StripeGatewayException("expired", code, false, false, null)).when(gateway)
+					.capturePaymentIntent(PI_ID, 1999L, "capture-txn-1-CAPTURE-1");
+
+			final CaptureResult result = command.perform(request());
+
+			assertEquals(TransactionStatus.REJECTED, result.getTransactionStatus());
+			assertEquals("stripe:" + code, result.getRequestToken());
+		}
 	}
 
 	private static CaptureRequest request()

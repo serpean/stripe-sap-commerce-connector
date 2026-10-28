@@ -1,0 +1,25 @@
+<section class="cx-stripe-instructions" *ngIf="info$ | async as info">
+  <h3>{{ 'stripePayment.instructionsTitle' | cxTranslate }}</h3>
+  <dl>
+    <ng-container *ngIf="info.paymentReference">
+      <dt>{{ 'stripePayment.instructionsReference' | cxTranslate }}</dt>
+      <dd>{{ info.paymentReference }}</dd>
+    </ng-container>
+    <ng-container *ngIf="info.amountRemaining">
+      <dt>{{ 'stripePayment.instructionsAmount' | cxTranslate }}</dt>
+      <dd>{{ info.amountRemaining }}</dd>
+    </ng-container>
+    <ng-container *ngIf="info.instructionsExpireAt">
+      <dt>{{ 'stripePayment.instructionsExpire' | cxTranslate }}</dt>
+      <dd>{{ info.instructionsExpireAt | cxDate }}</dd>
+    </ng-container>
+  </dl>
+  <a
+    class="btn btn-secondary"
+    [href]="info.instructionsUrl"
+    target="_blank"
+    rel="noopener"
+  >
+    {{ 'stripePayment.instructionsLink' | cxTranslate }}
+  </a>
+</section>

@@ -1,10 +1,24 @@
 import { expect, test } from '@playwright/test';
-import { getOrderCodesOfCustomer, getPaymentIntentRecord, getPaymentIntentRecordsOfCart, getWebhookEvents, waitFor } from '../support/backend';
+import { getOrderCodesOfCustomer, getPaymentIntentRecord, getPaymentIntentRecordsOfCart, getWebhookEvents, setConfig, waitFor } from '../support/backend';
+import { TEST_TIMINGS } from '../global-setup';
 import { checkoutToPayment, payWithBancontact } from '../support/checkout';
 import { getCart, updateCartEntry } from '../support/occ';
 import { findEvents, listRefunds, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
+const GRACE = 'stripe.webhook.graceperiod.seconds';
+
+// The cart must change before the grace period ends. The 20 s of the other tests is too short when the machine is slow:
+// the webhook then places the order first (correctly, the amounts still match) and the cart is gone.
+test.beforeEach(async () => {
+  await setConfig(GRACE, '120');
+});
+
+test.afterEach(async () => {
+  await setConfig(GRACE, TEST_TIMINGS[GRACE]);
+});
+
 test('10. the amount does not match when the webhook arrives: no order, the money is returned', async ({ browser }) => {
+  test.setTimeout(600_000);
   const page = await browser.newPage();
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const [record] = await getPaymentIntentRecordsOfCart(session.cart.code);
@@ -17,7 +31,7 @@ test('10. the amount does not match when the webhook arrives: no order, the mone
   const intent = await waitFor(async () => {
     const live = await retrievePaymentIntent(record.paymentIntentId);
     return live.status === 'succeeded' && live.amount_received > 0 && netCaptured(live) === 0 ? live : undefined;
-  }, 120_000, 'the refund of the payment');
+  }, 300_000, 'the refund of the payment');
   const refunds = await listRefunds(intent.id);
   expect(refunds.reduce((sum, r) => sum + r.amount, 0)).toBe(intent.amount_received);
 

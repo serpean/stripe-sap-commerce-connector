@@ -3,23 +3,33 @@ package com.stripe.core.payment.impl;
 import com.stripe.core.amount.StripeAmountConverter;
 import com.stripe.core.config.StripeCaptureMode;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
+import com.stripe.core.customer.StripeCustomerService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.order.StripeOrderAuthorizationService;
 import com.stripe.core.order.StripeOrderPlacementLockService;
 import com.stripe.core.payment.StripeIntentData;
+import com.stripe.core.payment.StripeLineItemsBuilder;
+import com.stripe.core.payment.StripePaymentMethodGroups;
 import com.stripe.core.payment.StripePaymentInProgressException;
 import com.stripe.core.payment.StripePaymentIntentRecordService;
 import com.stripe.core.payment.StripePaymentIntentService;
+import com.stripe.core.status.StripePaymentIntentStatus;
 import com.stripe.model.Charge;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import de.hybris.platform.core.model.order.CartModel;
 import de.hybris.platform.servicelayer.model.ModelService;
+import java.util.EnumSet;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
@@ -33,8 +43,14 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 {
 	private static final Logger LOG = LoggerFactory.getLogger(DefaultStripePaymentIntentService.class);
 
-	private static final Set<String> EDITABLE_STATUSES = Set.of("requires_payment_method", "requires_confirmation",
-			"requires_action");
+	/**
+	 * Statuses in which the PaymentIntent holds no money and has issued nothing to the customer, so its amount can
+	 * change: requires_payment_method (FAILED), requires_confirmation and requires_action without payment instructions
+	 * (REQUIRES_ACTION). A PaymentIntent that issued a voucher or bank transfer instructions (AWAITING_FUNDS) is not
+	 * changed: the customer may pay the old amount, so it is released and replaced like a confirmed one.
+	 */
+	private static final Set<StripePaymentIntentStatus> EDITABLE_STATUSES = EnumSet.of(StripePaymentIntentStatus.FAILED,
+			StripePaymentIntentStatus.REQUIRES_ACTION);
 
 	private StripeGateway stripeGateway;
 	private StripeConfigurationService stripeConfigurationService;
@@ -43,6 +59,9 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	private StripeOrderPlacementLockService stripeOrderPlacementLockService;
 	private StripePaymentIntentRecordService stripePaymentIntentRecordService;
 	private StripeOrderAuthorizationService stripeOrderAuthorizationService;
+	private StripeLineItemsBuilder stripeLineItemsBuilder;
+	private StripeCustomerService stripeCustomerService;
+	private StripeCashBalanceService stripeCashBalanceService;
 	private ModelService modelService;
 
 	@Override
@@ -59,7 +78,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 
 		final PaymentIntent existing = stripeGateway.retrievePaymentIntent(existingId);
 		ensureRecord(existing, cart);
-		if ("canceled".equals(existing.getStatus()))
+		final StripePaymentIntentStatus status = StripePaymentIntentStatus.of(existing);
+		if (status == StripePaymentIntentStatus.CANCELED)
 		{
 			releaseFunds(existingId, "cart " + cart.getCode() + " had a canceled payment intent");
 			stripeOrderAuthorizationService.removeAuthorizations(cart, existingId);
@@ -71,11 +91,11 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		{
 			return toData(existing);
 		}
-		if (EDITABLE_STATUSES.contains(existing.getStatus()))
+		if (EDITABLE_STATUSES.contains(status))
 		{
 			return toData(update(cart, existing, amount, currencyIso));
 		}
-		if ("processing".equals(existing.getStatus()))
+		if (status == StripePaymentIntentStatus.PROCESSING)
 		{
 			throw new StripePaymentInProgressException(existingId);
 		}
@@ -84,7 +104,8 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	}
 
 	/**
-	 * Releases a confirmed PaymentIntent (authorized or captured) of a cart that changed. An order may be placed for it
+	 * Releases a confirmed PaymentIntent (authorized, captured, or with issued payment instructions) of a cart that
+	 * changed. An order may be placed for it
 	 * at the same time (for example in another browser tab), so the release happens only under its order placement
 	 * lock and only when no order exists for it. Otherwise nothing changes and the customer is told that the payment is
 	 * in progress. The lock stays after the release: the PaymentIntent is never used for an order again. When Stripe
@@ -143,6 +164,40 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				stripeGateway.cancelPaymentIntent(paymentIntentId, "release-" + paymentIntentId + "-cancel");
 			}
 			updateRecordState(paymentIntentId, StripePaymentIntentState.CANCELED);
+			scheduleCashBalanceCheck(intent);
+		}
+	}
+
+	/**
+	 * The refund of a succeeded transfer PaymentIntent does not return to the cash balance. The Refunds API sends it to
+	 * the bank account of the customer (Stripe emails the customer); only the Dashboard offers the cash balance as
+	 * destination. So only a cancel needs a cash balance check.
+	 */
+	private static boolean isBankTransfer(final PaymentIntent intent)
+	{
+		return StripePaymentMethodGroups.isBankTransfer(intent);
+	}
+
+	/**
+	 * A cancelled bank transfer PaymentIntent returns the money it received to the cash balance of the customer, and
+	 * Stripe sends no event for it. A check of the balance is planned, so that money without an order is refunded. A
+	 * failure to plan never breaks the cancel.
+	 */
+	private void scheduleCashBalanceCheck(final PaymentIntent intent)
+	{
+		if (StringUtils.isBlank(intent.getCustomer()) || StringUtils.isBlank(intent.getCurrency())
+				|| !isBankTransfer(intent))
+		{
+			return;
+		}
+		try
+		{
+			stripeCashBalanceService.scheduleRefundCheck(intent.getCustomer(), intent.getCurrency());
+		}
+		catch (final RuntimeException e)
+		{
+			LOG.warn("Cash balance check of Stripe customer {} is not planned after the cancel of {}: {}",
+					intent.getCustomer(), intent.getId(), e.getMessage());
 		}
 	}
 
@@ -172,8 +227,24 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final int created = stripePaymentIntentRecordDao.countByCartCode(cart.getCode());
 		final String idempotencyKey = "cart-" + cart.getCode() + "-" + cart.getGuid() + "-pi-" + (created + 1);
 
-		final PaymentIntent intent = stripeGateway.createPaymentIntent(buildCreateParams(cart, amount, currencyIso),
-				idempotencyKey);
+		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		final String customerId = customerIdFor(cart);
+		PaymentIntent intent;
+		try
+		{
+			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, customerId,
+					customerSuffix(idempotencyKey, customerId));
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (customerId == null || !isMissingCustomer(e))
+			{
+				throw e;
+			}
+			final String replacement = replaceCustomer(cart, customerId);
+			intent = createWithLineItemsFallback(cart, amount, currencyIso, lineItems, replacement,
+					customerSuffix(idempotencyKey, replacement));
+		}
 
 		saveRecord(intent, cart, amount, currencyIso, StripePaymentIntentState.CREATED);
 
@@ -194,11 +265,115 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return intent;
 	}
 
+	private PaymentIntent createWithLineItemsFallback(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
+	{
+		try
+		{
+			return createWithOptionsFallback(cart, amount, currencyIso, lineItems, customerId, idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is created without them", cart.getCode());
+			return createWithOptionsFallback(cart, amount, currencyIso, Map.of(), customerId, idempotencyKey + "-nolines");
+		}
+	}
+
+	/**
+	 * Creates the PaymentIntent. When Stripe does not know the manual capture option of one payment method (the account
+	 * or the API version has no such option), the PaymentIntent is created once more without that option: a method in
+	 * the manual capture list never blocks the payment. The second call has its own stable idempotency key.
+	 */
+	private PaymentIntent createWithOptionsFallback(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final String idempotencyKey)
+	{
+		try
+		{
+			return stripeGateway.createPaymentIntent(
+					buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of()), idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			final String method = unknownPaymentMethodOption(e);
+			if (method == null)
+			{
+				throw e;
+			}
+			LOG.warn("Stripe does not know the manual capture option of payment method [{}] (property "
+					+ "stripe.capture.manual.methods): the payment intent of cart {} is created without it", method,
+					cart.getCode());
+			return stripeGateway.createPaymentIntent(
+					buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of(method)),
+					idempotencyKey + "-without-" + method);
+		}
+	}
+
+	/**
+	 * The payment method whose {@code payment_method_options} Stripe does not know ({@code parameter_unknown} on
+	 * {@code payment_method_options[<method>]...}), or null for any other error.
+	 */
+	protected String unknownPaymentMethodOption(final StripeGatewayException e)
+	{
+		if (!"parameter_unknown".equals(e.getStripeCode()) || !(e.getCause() instanceof InvalidRequestException))
+		{
+			return null;
+		}
+		final String param = ((InvalidRequestException) e.getCause()).getParam();
+		final String prefix = "payment_method_options[";
+		if (!StringUtils.startsWith(param, prefix))
+		{
+			return null;
+		}
+		final String method = StringUtils.substringBefore(param.substring(prefix.length()), "]");
+		return StringUtils.isBlank(method) ? null : method;
+	}
+
+	/**
+	 * The Stripe Customer of the cart user. A failure here never blocks the payment: the PaymentIntent is made without a
+	 * customer (a method that needs a customer is then refused by Stripe).
+	 */
+	protected String customerIdFor(final CartModel cart)
+	{
+		try
+		{
+			return stripeCustomerService.customerIdFor(cart).orElse(null);
+		}
+		catch (final RuntimeException e)
+		{
+			LOG.warn("No Stripe customer for cart {}: the payment intent is made without one ({})", cart.getCode(),
+					e.getClass().getSimpleName());
+			return null;
+		}
+	}
+
+	private String replaceCustomer(final CartModel cart, final String missingCustomerId)
+	{
+		LOG.warn("Stripe customer {} of cart {} is missing at Stripe: a new one is created", missingCustomerId, cart.getCode());
+		return stripeCustomerService.replaceCustomer(cart, missingCustomerId);
+	}
+
+	/**
+	 * True when Stripe says that the customer of the request does not exist.
+	 */
+	protected boolean isMissingCustomer(final StripeGatewayException e)
+	{
+		if (!"resource_missing".equals(e.getStripeCode()))
+		{
+			return false;
+		}
+		return !(e.getCause() instanceof InvalidRequestException)
+				|| "customer".equals(((InvalidRequestException) e.getCause()).getParam());
+	}
+
 	protected void ensureRecord(final PaymentIntent intent, final CartModel cart)
 	{
 		if (stripePaymentIntentRecordDao.findByPaymentIntentId(intent.getId()).isEmpty())
 		{
-			saveRecord(intent, cart, intent.getAmount(), intent.getCurrency().toUpperCase(), stateOf(intent.getStatus()));
+			saveRecord(intent, cart, intent.getAmount(), intent.getCurrency().toUpperCase(), stateOf(intent));
 		}
 	}
 
@@ -216,17 +391,19 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		modelService.save(record);
 	}
 
-	private StripePaymentIntentState stateOf(final String stripeStatus)
+	private StripePaymentIntentState stateOf(final PaymentIntent intent)
 	{
-		switch (stripeStatus)
+		switch (StripePaymentIntentStatus.of(intent))
 		{
-			case "requires_capture":
+			case AUTHORIZED:
 				return StripePaymentIntentState.AUTHORIZED;
-			case "succeeded":
+			case CAPTURED:
 				return StripePaymentIntentState.CAPTURED;
-			case "processing":
+			case PROCESSING:
 				return StripePaymentIntentState.PROCESSING;
-			case "canceled":
+			case AWAITING_FUNDS:
+				return StripePaymentIntentState.AWAITING_FUNDS;
+			case CANCELED:
 				return StripePaymentIntentState.CANCELED;
 			default:
 				return StripePaymentIntentState.CREATED;
@@ -239,9 +416,23 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		final long changed = cart.getModifiedtime() == null ? 0L : cart.getModifiedtime().getTime();
 		final String idempotencyKey = "update-" + existing.getId() + "-" + amount + "-" + currencyIso.toLowerCase() + "-"
 				+ changed;
-		final PaymentIntent updated = stripeGateway.updatePaymentIntent(existing.getId(),
-				PaymentIntentUpdateParams.builder().setAmount(amount).setCurrency(currencyIso.toLowerCase()).build(),
-				idempotencyKey);
+		final Map<String, Object> lineItems = stripeLineItemsBuilder.build(cart, amount);
+		PaymentIntent updated;
+		try
+		{
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, lineItems),
+					idempotencyKey);
+		}
+		catch (final StripeGatewayException e)
+		{
+			if (lineItems.isEmpty() || !isLineItemsRejection(e))
+			{
+				throw e;
+			}
+			LOG.warn("Stripe rejected the line items of cart {}: the payment intent is updated without them", cart.getCode());
+			updated = stripeGateway.updatePaymentIntent(existing.getId(), buildUpdateParams(amount, currencyIso, Map.of()),
+					idempotencyKey + "-nolines");
+		}
 
 		stripePaymentIntentRecordDao.findByPaymentIntentId(existing.getId()).ifPresent(record -> {
 			record.setAmount(amount);
@@ -251,7 +442,61 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return updated;
 	}
 
+	private String customerSuffix(final String idempotencyKey, final String customerId)
+	{
+		return customerId == null ? idempotencyKey : idempotencyKey + "-cus-" + customerId;
+	}
+
+	/**
+	 * Update parameters. Without line items, amount_details is cleared: Stripe keeps the old line items otherwise and
+	 * refuses a new amount that does not match them.
+	 */
+	protected PaymentIntentUpdateParams buildUpdateParams(final long amount, final String currencyIso,
+			final Map<String, Object> lineItems)
+	{
+		final PaymentIntentUpdateParams.Builder builder = PaymentIntentUpdateParams.builder().setAmount(amount)
+				.setCurrency(currencyIso.toLowerCase());
+		if (lineItems.isEmpty())
+		{
+			builder.putExtraParam("amount_details", "");
+		}
+		else
+		{
+			builder.putAllExtraParam(lineItems);
+		}
+		return builder.build();
+	}
+
+	/**
+	 * True when Stripe refused the request because of the amount_details parameters.
+	 */
+	protected boolean isLineItemsRejection(final StripeGatewayException e)
+	{
+		if (e.getStripeCode() != null && e.getStripeCode().startsWith("amount_details"))
+		{
+			return true;
+		}
+		return e.getCause() instanceof InvalidRequestException
+				&& StringUtils.startsWith(((InvalidRequestException) e.getCause()).getParam(), "amount_details");
+	}
+
 	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso)
+	{
+		return buildCreateParams(cart, amount, currencyIso, stripeLineItemsBuilder.build(cart, amount), null);
+	}
+
+	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId)
+	{
+		return buildCreateParams(cart, amount, currencyIso, lineItems, customerId, Set.of());
+	}
+
+	/**
+	 * @param skippedManualMethods
+	 *           payment methods of the manual capture list whose option is not sent (Stripe does not know it)
+	 */
+	protected PaymentIntentCreateParams buildCreateParams(final CartModel cart, final long amount, final String currencyIso,
+			final Map<String, Object> lineItems, final String customerId, final Set<String> skippedManualMethods)
 	{
 		final boolean manual = stripeConfigurationService.getCaptureMode() == StripeCaptureMode.MANUAL;
 		final PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
@@ -263,10 +508,17 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 				.putMetadata("cartCode", cart.getCode())
 				.putMetadata("baseSiteUid", siteUid(cart))
 				.putMetadata("userUid", userUid(cart))
-				.putMetadata("currencyIso", currencyIso);
+				.putMetadata("currencyIso", currencyIso)
+				.putAllExtraParam(lineItems);
+		if (customerId != null)
+		{
+			builder.setCustomer(customerId);
+		}
 		if (manual)
 		{
-			builder.setPaymentMethodOptions(buildPaymentMethodOptions(stripeConfigurationService.getManualCaptureMethods()));
+			final Set<String> manualMethods = new LinkedHashSet<>(stripeConfigurationService.getManualCaptureMethods());
+			manualMethods.removeAll(skippedManualMethods);
+			builder.setPaymentMethodOptions(buildPaymentMethodOptions(manualMethods));
 		}
 		final String suffix = stripeConfigurationService.getStatementDescriptorSuffix();
 		if (StringUtils.isNotBlank(suffix))
@@ -276,35 +528,41 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 		return builder.build();
 	}
 
+	/**
+	 * Asks for manual capture for each configured method. Methods with an options class in stripe-java use it; sequra
+	 * and scalapay have none, so their options go in as a nested extra parameter, which stripe-java encodes as
+	 * payment_method_options[type][capture_method]. Any other type is ignored with a WARN. Mondu is not supported:
+	 * Stripe answers parameter_unknown for payment_method_options[mondu].
+	 */
 	protected PaymentIntentCreateParams.PaymentMethodOptions buildPaymentMethodOptions(final Set<String> manualMethods)
 	{
 		final PaymentIntentCreateParams.PaymentMethodOptions.Builder builder = PaymentIntentCreateParams.PaymentMethodOptions
 				.builder();
-		if (manualMethods.contains("card"))
+		for (final String method : manualMethods)
 		{
-			builder.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Card.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("paypal"))
-		{
-			builder.setPaypal(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("klarna"))
-		{
-			builder.setKlarna(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("affirm"))
-		{
-			builder.setAffirm(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Affirm.CaptureMethod.MANUAL).build());
-		}
-		if (manualMethods.contains("afterpay_clearpay"))
-		{
-			builder.setAfterpayClearpay(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.builder()
-					.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.AfterpayClearpay.CaptureMethod.MANUAL)
-					.build());
+			switch (method)
+			{
+				case "card" -> builder.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Card.CaptureMethod.MANUAL).build());
+				case "link" -> builder.setLink(PaymentIntentCreateParams.PaymentMethodOptions.Link.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Link.CaptureMethod.MANUAL).build());
+				case "paypal" -> builder.setPaypal(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.CaptureMethod.MANUAL).build());
+				case "amazon_pay" -> builder.setAmazonPay(PaymentIntentCreateParams.PaymentMethodOptions.AmazonPay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.AmazonPay.CaptureMethod.MANUAL).build());
+				case "revolut_pay" -> builder.setRevolutPay(PaymentIntentCreateParams.PaymentMethodOptions.RevolutPay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.RevolutPay.CaptureMethod.MANUAL).build());
+				case "mobilepay" -> builder.setMobilepay(PaymentIntentCreateParams.PaymentMethodOptions.Mobilepay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Mobilepay.CaptureMethod.MANUAL).build());
+				case "satispay" -> builder.setSatispay(PaymentIntentCreateParams.PaymentMethodOptions.Satispay.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Satispay.CaptureMethod.MANUAL).build());
+				case "klarna" -> builder.setKlarna(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Klarna.CaptureMethod.MANUAL).build());
+				case "billie" -> builder.setBillie(PaymentIntentCreateParams.PaymentMethodOptions.Billie.builder()
+						.setCaptureMethod(PaymentIntentCreateParams.PaymentMethodOptions.Billie.CaptureMethod.MANUAL).build());
+				case "sequra", "scalapay" -> builder.putExtraParam(method, Map.of("capture_method", "manual"));
+				default -> LOG.warn("Payment method [{}] in the manual capture list is unknown: ignored", method);
+			}
 		}
 		return builder.build();
 	}
@@ -359,6 +617,21 @@ public class DefaultStripePaymentIntentService implements StripePaymentIntentSer
 	public void setStripePaymentIntentRecordDao(final StripePaymentIntentRecordDao stripePaymentIntentRecordDao)
 	{
 		this.stripePaymentIntentRecordDao = stripePaymentIntentRecordDao;
+	}
+
+	public void setStripeLineItemsBuilder(final StripeLineItemsBuilder stripeLineItemsBuilder)
+	{
+		this.stripeLineItemsBuilder = stripeLineItemsBuilder;
+	}
+
+	public void setStripeCashBalanceService(final StripeCashBalanceService stripeCashBalanceService)
+	{
+		this.stripeCashBalanceService = stripeCashBalanceService;
+	}
+
+	public void setStripeCustomerService(final StripeCustomerService stripeCustomerService)
+	{
+		this.stripeCustomerService = stripeCustomerService;
 	}
 
 	public void setModelService(final ModelService modelService)

@@ -1,5 +1,6 @@
 package com.stripe.core.order;
 
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -14,12 +15,17 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.stripe.core.amount.StripeAmountConverter;
+import com.stripe.core.dao.StripePaymentIntentRecordDao;
+import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.gateway.StripeGateway;
+import com.stripe.core.model.StripePaymentIntentRecordModel;
+import com.stripe.core.payment.StripePaymentIntentService;
 import com.stripe.core.gateway.StripeGatewayException;
 import com.stripe.core.model.StripePaymentInfoModel;
 import com.stripe.core.order.impl.DefaultStripePaymentAdjustmentService;
 import com.stripe.core.payment.StripePaymentIntentChecks;
 import com.stripe.core.site.StripeSiteContext;
+import com.stripe.core.testsupport.StripeLogCapture;
 import com.stripe.core.testsupport.StripeSiteContextMocks;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
@@ -45,6 +51,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.InOrder;
@@ -63,6 +70,8 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	private TaskModel retryTask;
 	private PaymentService paymentService;
 	private StripeGateway stripeGateway;
+	private StripePaymentIntentRecordDao recordDao;
+	private StripePaymentIntentService paymentIntentService;
 	private StripeAmountConverter amountConverter;
 	private StripeOrderCancelPaymentServiceStrategy strategy;
 	private OrderModel order;
@@ -96,6 +105,10 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		adjustmentService.setModelService(modelService);
 		adjustmentService.setTaskService(taskService);
 		adjustmentService.setTimeService(timeService);
+		recordDao = mock(StripePaymentIntentRecordDao.class);
+		paymentIntentService = mock(StripePaymentIntentService.class);
+		adjustmentService.setStripePaymentIntentRecordDao(recordDao);
+		adjustmentService.setStripePaymentIntentService(paymentIntentService);
 
 		strategy = new StripeOrderCancelPaymentServiceStrategy();
 		strategy.setCalculationService(calculationService);
@@ -127,6 +140,51 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 		transaction.setCode("txn-cancel");
 		transaction.setEntries(new ArrayList<>(List.of(authorization)));
 		order.setPaymentTransactions(new ArrayList<>(List.of(transaction)));
+	}
+
+	@Test
+	public void fullCancelOfPendingTransferOrderReleasesTheIntent() throws Exception
+	{
+		givenPendingOrderFullyCancelled("requires_action", StripePaymentIntentState.AWAITING_FUNDS);
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(calculationService).calculateTotals(order, true);
+		verify(paymentIntentService).releaseFunds(eq(PI_ID), anyString());
+		verify(taskService, never()).scheduleTask(any());
+	}
+
+	@Test
+	public void fullCancelOfProcessingSepaOrderDoesNotFail() throws Exception
+	{
+		givenPendingOrderFullyCancelled("processing", StripePaymentIntentState.PROCESSING);
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(calculationService).calculateTotals(order, true);
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+		verify(taskService, never()).scheduleTask(any());
+	}
+
+	@Test
+	public void partialCancelOfPendingOrderReleasesNothing() throws Exception
+	{
+		givenPendingOrderFullyCancelled("requires_action", StripePaymentIntentState.AWAITING_FUNDS);
+		order.getEntries().get(0).setQuantity(1L);
+
+		strategy.recalculateOrderAndModifyPayments(order);
+
+		verify(paymentIntentService, never()).releaseFunds(anyString(), anyString());
+	}
+
+	private void givenPendingOrderFullyCancelled(final String stripeStatus, final StripePaymentIntentState state)
+	{
+		transaction.setEntries(new ArrayList<>());
+		order.getEntries().get(0).setQuantity(0L);
+		final StripePaymentIntentRecordModel record = new StripePaymentIntentRecordModel();
+		record.setState(state);
+		when(recordDao.findByPaymentIntentId(PI_ID)).thenReturn(Optional.of(record));
+		livePaymentIntent(stripeStatus, 0L, null);
 	}
 
 	@Test
@@ -284,11 +342,29 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	}
 
 	@Test
-	public void rejectedRefundSchedulesAdjustmentRetry() throws Exception
+	public void rejectedRefundIsFinalAndSchedulesNoRetry() throws Exception
 	{
 		livePaymentIntent("succeeded", 10000L, 0L);
 		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
-		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.REJECTED));
+		final PaymentTransactionEntryModel rejected = entry(TransactionStatus.REJECTED);
+		rejected.setRequestToken("stripe:charge_disputed");
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(rejected);
+
+		try (StripeLogCapture log = StripeLogCapture.of(DefaultStripePaymentAdjustmentService.class))
+		{
+			strategy.recalculateOrderAndModifyPayments(order);
+
+			assertTrue("ERROR log with order and Stripe code", log.hasError("order-cancel", "stripe:charge_disputed"));
+		}
+		verifyNoInteractions(taskService);
+	}
+
+	@Test
+	public void erroredRefundSchedulesAdjustmentRetry() throws Exception
+	{
+		livePaymentIntent("succeeded", 10000L, 0L);
+		when(amountConverter.chargeAmountMinor(order)).thenReturn(6000L);
+		when(paymentService.refundFollowOn(eq(transaction), any())).thenReturn(entry(TransactionStatus.ERROR));
 
 		strategy.recalculateOrderAndModifyPayments(order);
 
@@ -296,7 +372,7 @@ public class StripeOrderCancelPaymentServiceStrategyTest
 	}
 
 	@Test
-	public void rejectedVoidSchedulesAdjustmentRetry() throws Exception
+	public void erroredVoidSchedulesAdjustmentRetry() throws Exception
 	{
 		livePaymentIntent("requires_capture", 0L, null);
 		order.setStatus(OrderStatus.CANCELLED);

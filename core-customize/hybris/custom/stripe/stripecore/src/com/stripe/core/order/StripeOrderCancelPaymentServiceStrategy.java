@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
  * <li>SAP recalculates the order totals ({@code super});</li>
  * <li>{@link StripePaymentAdjustmentService#adjust} voids or refunds the money above the order amount.</li>
  * </ol>
+ * An order without an accepted authorization, fully cancelled while its payment is pending, releases its PaymentIntent.
  * When the adjustment fails after the recalculation (refund or void not ACCEPTED, or an exception), a retry task is
  * scheduled, so SAP and Stripe do not stay different. The work runs in the site of the order, so the Stripe settings
  * of that site are used. Other orders get only the SAP behaviour.
@@ -50,6 +51,7 @@ public class StripeOrderCancelPaymentServiceStrategy extends DefaultOrderCancelP
 		if (paymentIntent.isEmpty())
 		{
 			LOG.info("Order {} has no accepted Stripe authorization: no Stripe payment to adjust", order.getCode());
+			releasePendingPayment(order);
 			return;
 		}
 
@@ -64,6 +66,27 @@ public class StripeOrderCancelPaymentServiceStrategy extends DefaultOrderCancelP
 			adjusted = false;
 		}
 		if (!adjusted)
+		{
+			stripePaymentAdjustmentService.scheduleRetry(order);
+		}
+	}
+
+	/**
+	 * A fully cancelled order with a pending payment releases its PaymentIntent. A failure schedules the retry task.
+	 */
+	private void releasePendingPayment(final OrderModel order)
+	{
+		boolean released;
+		try
+		{
+			released = stripePaymentAdjustmentService.adjustToOrderTotal(order);
+		}
+		catch (final RuntimeException e)
+		{
+			LOG.warn("Release of the pending Stripe payment of order {} failed: {}", order.getCode(), e.getMessage());
+			released = false;
+		}
+		if (!released)
 		{
 			stripePaymentAdjustmentService.scheduleRetry(order);
 		}

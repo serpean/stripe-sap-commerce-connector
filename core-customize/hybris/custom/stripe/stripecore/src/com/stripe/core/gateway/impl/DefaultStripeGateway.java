@@ -5,22 +5,36 @@ import com.stripe.StripeClient;
 import com.stripe.core.config.StripeConfigurationService;
 import com.stripe.core.gateway.StripeGateway;
 import com.stripe.core.gateway.StripeGatewayException;
+import com.stripe.core.util.StripeDigests;
 import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.RateLimitException;
 import com.stripe.exception.SignatureVerificationException;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.exception.StripeException;
+import com.stripe.model.Account;
+import com.stripe.model.CashBalance;
+import com.stripe.model.Customer;
+import com.stripe.model.CustomerCashBalanceTransaction;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.Webhook;
+import com.stripe.param.CustomerCashBalanceTransactionListParams;
+import com.stripe.param.CustomerCreateParams;
+import com.stripe.param.CustomerUpdateParams;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCaptureParams;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.PaymentIntentListParams;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.stripe.param.PaymentIntentUpdateParams;
 import com.stripe.param.RefundCreateParams;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +47,14 @@ public class DefaultStripeGateway implements StripeGateway
 	private static final int MAX_NETWORK_RETRIES = 2;
 	private static final int HTTP_SERVER_ERROR = 500;
 	private static final int HTTP_CONFLICT = 409;
+	private static final Long OPEN_PAYMENT_INTENT_LIMIT = 100L;
+	private static final Set<String> OPEN_STATUSES = Set.of("requires_action", "requires_confirmation", "processing");
 	private static final Set<String> RETRYABLE_CODES = Set.of("idempotency_key_in_use", "lock_timeout");
 
 	private StripeConfigurationService stripeConfigurationService;
+
+	/** Account key by SHA-256 of the secret key. The secret key itself is never kept. */
+	private final Map<String, String> accountKeys = new ConcurrentHashMap<>();
 
 	@Override
 	public PaymentIntent createPaymentIntent(final PaymentIntentCreateParams params, final String idempotencyKey)
@@ -59,6 +78,7 @@ public class DefaultStripeGateway implements StripeGateway
 		final PaymentIntentRetrieveParams params = PaymentIntentRetrieveParams.builder()
 				.addExpand("payment_method")
 				.addExpand("latest_charge")
+				.addExpand("amount_details.line_items")
 				.build();
 		return call("retrieve_payment_intent", () -> client.v1().paymentIntents().retrieve(id, params));
 	}
@@ -74,10 +94,21 @@ public class DefaultStripeGateway implements StripeGateway
 	@Override
 	public PaymentIntent capturePaymentIntent(final String id, final long amountToCapture, final String idempotencyKey)
 	{
+		return capturePaymentIntent(id, amountToCapture, Map.of(), idempotencyKey);
+	}
+
+	@Override
+	public PaymentIntent capturePaymentIntent(final String id, final long amountToCapture,
+			final Map<String, Object> amountDetails, final String idempotencyKey)
+	{
 		final StripeClient client = newClient();
-		final PaymentIntentCaptureParams params = PaymentIntentCaptureParams.builder()
-				.setAmountToCapture(amountToCapture)
-				.build();
+		final PaymentIntentCaptureParams.Builder builder = PaymentIntentCaptureParams.builder()
+				.setAmountToCapture(amountToCapture);
+		if (!amountDetails.isEmpty())
+		{
+			builder.putExtraParam("amount_details", amountDetails);
+		}
+		final PaymentIntentCaptureParams params = builder.build();
 		return call("capture_payment_intent", () -> client.v1().paymentIntents().capture(id, params, options(idempotencyKey)));
 	}
 
@@ -90,6 +121,97 @@ public class DefaultStripeGateway implements StripeGateway
 				.setAmount(amount)
 				.build();
 		return call("create_refund", () -> client.v1().refunds().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Customer createCustomer(final CustomerCreateParams params, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("create_customer", () -> client.v1().customers().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Customer updateCustomer(final String id, final CustomerUpdateParams params, final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		return call("update_customer", () -> client.v1().customers().update(id, params, options(idempotencyKey)));
+	}
+
+	@Override
+	public Customer retrieveCustomer(final String id)
+	{
+		final StripeClient client = newClient();
+		return call("retrieve_customer", () -> client.v1().customers().retrieve(id));
+	}
+
+	@Override
+	public long retrieveCashBalance(final String customerId, final String currency)
+	{
+		final StripeClient client = newClient();
+		final CashBalance balance = call("retrieve_cash_balance", () -> client.v1().customers().cashBalance().retrieve(customerId));
+		final Map<String, Long> available = balance.getAvailable();
+		final Long amount = available == null ? null : available.get(currency.toLowerCase(Locale.ROOT));
+		return amount == null ? 0L : amount;
+	}
+
+	@Override
+	public String retrieveLatestCashBalanceTransactionId(final String customerId)
+	{
+		final StripeClient client = newClient();
+		final CustomerCashBalanceTransactionListParams params = CustomerCashBalanceTransactionListParams.builder()
+				.setLimit(1L).build();
+		return call("list_cash_balance_transactions",
+				() -> client.v1().customers().cashBalanceTransactions().list(customerId, params).getData().stream()
+						.findFirst().map(CustomerCashBalanceTransaction::getId).orElse(null));
+	}
+
+	@Override
+	public Refund createCashBalanceRefund(final String customerId, final long amount, final String currency,
+			final String idempotencyKey)
+	{
+		final StripeClient client = newClient();
+		final RefundCreateParams params = RefundCreateParams.builder()
+				.setCustomer(customerId)
+				.setOrigin(RefundCreateParams.Origin.CUSTOMER_BALANCE)
+				.setAmount(amount)
+				.setCurrency(currency.toLowerCase(Locale.ROOT))
+				.build();
+		return call("create_cash_balance_refund", () -> client.v1().refunds().create(params, options(idempotencyKey)));
+	}
+
+	@Override
+	public List<PaymentIntent> listOpenPaymentIntents(final String customerId)
+	{
+		final StripeClient client = newClient();
+		final PaymentIntentListParams params = PaymentIntentListParams.builder()
+				.setCustomer(customerId)
+				.setLimit(OPEN_PAYMENT_INTENT_LIMIT)
+				.build();
+		return call("list_payment_intents", () -> client.v1().paymentIntents().list(params).getData().stream()
+				.filter(paymentIntent -> OPEN_STATUSES.contains(paymentIntent.getStatus()))
+				.toList());
+	}
+
+	@Override
+	public String retrieveAccountKey()
+	{
+		final String secretKey = stripeConfigurationService.getSecretKey();
+		if (StringUtils.isBlank(secretKey))
+		{
+			throw new StripeGatewayException("Stripe secret key is not configured", "secret_key_missing", false, false, null);
+		}
+		final String cacheKey = StripeDigests.sha256Hex(secretKey);
+		final String cached = accountKeys.get(cacheKey);
+		if (cached != null)
+		{
+			return cached;
+		}
+		final StripeClient client = newClient();
+		final Account account = call("retrieve_account", () -> client.v1().accounts().retrieveCurrent());
+		final String mode = secretKey.startsWith("sk_live_") || secretKey.startsWith("rk_live_") ? ":live" : ":test";
+		final String accountKey = account.getId() + mode;
+		accountKeys.put(cacheKey, accountKey);
+		return accountKey;
 	}
 
 	@Override
@@ -134,8 +256,9 @@ public class DefaultStripeGateway implements StripeGateway
 		}
 		catch (final StripeException e)
 		{
-			LOG.warn("Stripe call {} failed: code={}, status={}, requestId={}", operation, e.getCode(), e.getStatusCode(),
-					e.getRequestId());
+			final String param = e instanceof InvalidRequestException ? ((InvalidRequestException) e).getParam() : null;
+			LOG.warn("Stripe call {} failed: code={}, param={}, status={}, requestId={}", operation, e.getCode(), param,
+					e.getStatusCode(), e.getRequestId());
 			throw new StripeGatewayException("Stripe call " + operation + " failed", e.getCode(), isRetryable(e), false, e);
 		}
 	}

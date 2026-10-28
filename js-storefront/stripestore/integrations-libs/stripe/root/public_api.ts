@@ -8,3 +8,4 @@ export * from './config/index';
 export * from './model/index';
 export * from './feature-name';
 export * from './stripe-payment-root.module';
+export * from './stripe-payment-instructions/index';

@@ -13,6 +13,11 @@
     "paymentPending": "Your payment is still in progress. We will confirm your order when it completes.",
     "amountChanged": "The order total changed. Please review the payment details and try again.",
     "verificationFailed": "We could not verify your payment. Please try again.",
-    "alreadyPlaced": "Your order was already placed."
+    "alreadyPlaced": "Your order was already placed.",
+    "instructionsTitle": "Complete your payment",
+    "instructionsReference": "Payment reference",
+    "instructionsAmount": "Amount to pay",
+    "instructionsExpire": "Pay before",
+    "instructionsLink": "View payment instructions"
   }
 }

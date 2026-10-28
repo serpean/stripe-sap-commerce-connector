@@ -1,13 +1,16 @@
 package com.stripe.core.dao.impl;
 
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
+import com.stripe.core.customer.dao.StripeCustomerDao;
 import com.stripe.core.dao.StripeWebhookEventDao;
+import com.stripe.core.model.StripeCustomerModel;
 import com.stripe.core.model.StripeOrderPlacementLockModel;
 import com.stripe.core.model.StripePaymentIntentRecordModel;
 import com.stripe.core.model.StripeWebhookEventModel;
 import de.hybris.bootstrap.annotations.IntegrationTest;
 import de.hybris.platform.core.model.c2l.CurrencyModel;
 import de.hybris.platform.core.model.order.OrderModel;
+import de.hybris.platform.core.model.user.CustomerModel;
 import de.hybris.platform.core.model.user.UserModel;
 import de.hybris.platform.servicelayer.ServicelayerTransactionalTest;
 import de.hybris.platform.servicelayer.exceptions.ModelSavingException;
@@ -26,6 +29,7 @@ import java.util.Optional;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 @IntegrationTest
 public class StripeRecordsIntegrationTest extends ServicelayerTransactionalTest
@@ -36,6 +40,8 @@ public class StripeRecordsIntegrationTest extends ServicelayerTransactionalTest
 	private StripePaymentIntentRecordDao stripePaymentIntentRecordDao;
 	@Resource
 	private StripeWebhookEventDao stripeWebhookEventDao;
+	@Resource
+	private StripeCustomerDao stripeCustomerDao;
 	@Resource
 	private UserService userService;
 	@Resource
@@ -148,6 +154,43 @@ public class StripeRecordsIntegrationTest extends ServicelayerTransactionalTest
 		modelService.save(clone);
 
 		assertTrue(stripePaymentIntentRecordDao.findByPaymentIntentId("pi_clone").isPresent());
+	}
+
+	private StripeCustomerModel newStripeCustomer(final CustomerModel customer, final String accountKey, final String stripeId)
+	{
+		final StripeCustomerModel model = modelService.create(StripeCustomerModel.class);
+		model.setCustomer(customer);
+		model.setAccountKey(accountKey);
+		model.setStripeCustomerId(stripeId);
+		return model;
+	}
+
+	@Test
+	public void stripeCustomerIsUniquePerAccount()
+	{
+		final CustomerModel customer = modelService.create(CustomerModel.class);
+		customer.setUid("stripe-cust-test@example.com");
+		customer.setName("Stripe Customer Test");
+		modelService.save(customer);
+		modelService.save(newStripeCustomer(customer, "default", "cus_1"));
+
+		try
+		{
+			modelService.save(newStripeCustomer(customer, "default", "cus_2"));
+			fail("Second StripeCustomer for the same customer and account key must fail");
+		}
+		catch (final ModelSavingException expected)
+		{
+			// expected
+		}
+
+		modelService.save(newStripeCustomer(customer, "other", "cus_3"));
+
+		assertEquals("cus_1", stripeCustomerDao.find(customer, "default").orElseThrow().getStripeCustomerId());
+		assertEquals("cus_3", stripeCustomerDao.find(customer, "other").orElseThrow().getStripeCustomerId());
+		assertEquals("other", stripeCustomerDao.findByStripeCustomerId("cus_3").orElseThrow().getAccountKey());
+		assertFalse(stripeCustomerDao.find(customer, "missing").isPresent());
+		assertFalse(stripeCustomerDao.findByStripeCustomerId("cus_missing").isPresent());
 	}
 
 	private OrderModel newOrder(final String code)

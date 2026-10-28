@@ -31,16 +31,32 @@
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
+    <alias name="defaultStripeLineItemsBuilder" alias="stripeLineItemsBuilder"/>
+    <bean id="defaultStripeLineItemsBuilder" class="com.stripe.core.payment.impl.DefaultStripeLineItemsBuilder">
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+    </bean>
+
     <alias name="defaultStripePaymentIntentService" alias="stripePaymentIntentService"/>
     <bean id="defaultStripePaymentIntentService" class="com.stripe.core.payment.impl.DefaultStripePaymentIntentService">
         <property name="stripeGateway" ref="stripeGateway"/>
         <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
+        <property name="stripeLineItemsBuilder" ref="stripeLineItemsBuilder"/>
+        <property name="stripeCustomerService" ref="stripeCustomerService"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
         <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
         <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
+    </bean>
+
+    <alias name="defaultStripeCustomerService" alias="stripeCustomerService"/>
+    <bean id="defaultStripeCustomerService" class="com.stripe.core.customer.impl.DefaultStripeCustomerService">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="stripeCustomerDao" ref="stripeCustomerDao"/>
+        <property name="modelService" ref="modelService"/>
     </bean>
 
     <alias name="defaultStripeTransactionLookup" alias="stripeTransactionLookup"/>
@@ -50,6 +66,11 @@
 
     <alias name="defaultStripeWebhookEventDao" alias="stripeWebhookEventDao"/>
     <bean id="defaultStripeWebhookEventDao" class="com.stripe.core.dao.impl.DefaultStripeWebhookEventDao">
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+    </bean>
+
+    <alias name="defaultStripeCustomerDao" alias="stripeCustomerDao"/>
+    <bean id="defaultStripeCustomerDao" class="com.stripe.core.customer.dao.impl.DefaultStripeCustomerDao">
         <property name="flexibleSearchService" ref="flexibleSearchService"/>
     </bean>
 
@@ -86,6 +107,8 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="i18nService" ref="i18nService"/>
         <property name="modelService" ref="modelService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="stripeOrderPlacementLockService" ref="stripeOrderPlacementLockService"/>
     </bean>
 
     <alias name="defaultStripePaymentIntentChecks" alias="stripePaymentIntentChecks"/>
@@ -93,9 +116,15 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
+    <alias name="defaultStripePaymentDetailsCopier" alias="stripePaymentDetailsCopier"/>
+    <bean id="defaultStripePaymentDetailsCopier" class="com.stripe.core.payment.impl.DefaultStripePaymentDetailsCopier">
+        <property name="modelService" ref="modelService"/>
+    </bean>
+
+    <!-- Deprecated since 4.0.0: use stripePaymentDetailsCopier. -->
     <alias name="defaultStripePaymentInfoUpdater" alias="stripePaymentInfoUpdater"/>
     <bean id="defaultStripePaymentInfoUpdater" class="com.stripe.core.payment.StripePaymentInfoUpdater">
-        <property name="modelService" ref="modelService"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
     </bean>
 
     <alias name="defaultStripeOrderPlacementService" alias="stripeOrderPlacementService"/>
@@ -109,11 +138,22 @@
         <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="modelService" ref="modelService"/>
-        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
         <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
         <property name="stripeOrderCancellationService" ref="stripeOrderCancellationService"/>
         <property name="stripeSiteContext" ref="stripeSiteContext"/>
+    </bean>
+
+    <!-- Partial cancel is denied while the payment is pending. Merged into the cancel service SAP uses (orderCancelService). -->
+    <alias name="defaultStripePendingPaymentCancelDenialStrategy" alias="stripePendingPaymentCancelDenialStrategy"/>
+    <bean id="defaultStripePendingPaymentCancelDenialStrategy"
+          class="com.stripe.core.order.StripePendingPaymentCancelDenialStrategy">
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+    </bean>
+    <bean id="stripeCancelDenialStrategiesMergeDirective" depends-on="orderCancelService" parent="listMergeDirective">
+        <property name="add" ref="stripePendingPaymentCancelDenialStrategy"/>
+        <property name="listPropertyDescriptor" value="cancelDenialStrategies"/>
     </bean>
 
     <alias name="defaultStripeOrderCancellationService" alias="stripeOrderCancellationService"/>
@@ -141,6 +181,8 @@
         <property name="modelService" ref="modelService"/>
         <property name="timeService" ref="timeService"/>
         <property name="stripeSiteContext" ref="stripeSiteContext"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
     </bean>
 
     <alias name="defaultStripeRefundEventHandler" alias="stripeRefundEventHandler"/>
@@ -154,6 +196,24 @@
         <property name="timeService" ref="timeService"/>
         <property name="stripePaymentIntentEventHandler" ref="stripePaymentIntentEventHandler"/>
         <property name="stripeRefundEventHandler" ref="stripeRefundEventHandler"/>
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
+    </bean>
+
+    <!-- Bank transfer money that Stripe holds as cash balance and no open transfer can use is refunded. -->
+    <alias name="defaultStripeCashBalanceService" alias="stripeCashBalanceService"/>
+    <bean id="defaultStripeCashBalanceService" class="com.stripe.core.customer.impl.DefaultStripeCashBalanceService">
+        <property name="stripeGateway" ref="stripeGateway"/>
+        <property name="stripeConfigurationService" ref="stripeConfigurationService"/>
+        <property name="modelService" ref="modelService"/>
+        <property name="taskService" ref="taskService"/>
+        <property name="timeService" ref="timeService"/>
+        <property name="flexibleSearchService" ref="flexibleSearchService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripeCustomerDao" ref="stripeCustomerDao"/>
+    </bean>
+
+    <bean id="stripeCashBalanceRefundTaskRunner" class="com.stripe.core.customer.StripeCashBalanceRefundTaskRunner">
+        <property name="stripeCashBalanceService" ref="stripeCashBalanceService"/>
     </bean>
 
     <!-- Order process: replaces the SAP beans checkOrderAction and takePaymentAction (by name, whichever extension
@@ -193,6 +253,8 @@
         <property name="modelService" ref="modelService"/>
         <property name="taskService" ref="taskService"/>
         <property name="timeService" ref="timeService"/>
+        <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="stripePaymentIntentService" ref="stripePaymentIntentService"/>
     </bean>
 
     <bean id="stripePaymentAdjustmentTaskRunner" class="com.stripe.core.order.StripePaymentAdjustmentTaskRunner">

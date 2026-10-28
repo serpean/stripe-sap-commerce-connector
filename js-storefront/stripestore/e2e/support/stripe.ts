@@ -53,7 +53,33 @@ export interface PaymentIntent {
   capture_method: string;
   metadata: Record<string, string>;
   last_payment_error?: { code?: string; type?: string } | null;
+  payment_method_types?: string[];
+  amount_details?: AmountDetails | null;
   latest_charge?: { id: string; amount: number; amount_captured: number; amount_refunded: number; captured: boolean } | null;
+}
+
+export interface AmountDetails {
+  discount_amount?: number | null;
+  shipping?: { amount?: number | null } | null;
+  tax?: { total_tax_amount?: number | null } | null;
+  line_items?: { data: { product_name: string; quantity: number; unit_cost: number; product_code?: string | null }[] } | null;
+}
+
+/** The PaymentIntent with its amount details and line items (expand[]=amount_details.line_items). */
+export function retrievePaymentIntentWithLineItems(id: string): Promise<PaymentIntent> {
+  return stripeGet(`/payment_intents/${id}`, { 'expand[]': 'amount_details.line_items' });
+}
+
+/** A form POST to Stripe, for the checks that need a PaymentIntent that the connector did not create. */
+export async function stripePost(path: string, form: Record<string, string>): Promise<any> {
+  return withApi(async (api) => {
+    const response = await api.post(`${STRIPE_API}${path}`, { headers: { Authorization: `Bearer ${secretKey()}` }, form });
+    const body = await response.json();
+    if (!response.ok()) {
+      throw new Error(`Stripe POST ${path} failed: ${response.status()} ${body?.error?.message}`);
+    }
+    return body;
+  });
 }
 
 export function retrievePaymentIntent(id: string): Promise<PaymentIntent> {
@@ -120,4 +146,74 @@ export function netCaptured(intent: PaymentIntent): number {
 /** Converts an amount of a two-decimal currency (EUR, USD) to the minor unit. */
 export function minor(amount: number): number {
   return Math.round(amount * 100);
+}
+
+export interface CashBalance {
+  available?: Record<string, number> | null;
+}
+
+/** The cash balance of the Stripe customer (bank transfers that no PaymentIntent has used yet), by currency in the minor unit. */
+export async function getCashBalance(customerId: string): Promise<Record<string, number>> {
+  return (await stripeGet(`/customers/${customerId}/cash_balance`) as CashBalance).available ?? {};
+}
+
+/** The reference of the bank transfer instructions of a PaymentIntent in AWAITING_FUNDS (requires_action). */
+export async function bankTransferReference(paymentIntentId: string): Promise<string> {
+  const intent = await stripeGet(`/payment_intents/${paymentIntentId}`);
+  const reference = intent.next_action?.display_bank_transfer_instructions?.reference;
+  if (!reference) {
+    throw new Error(`PaymentIntent ${paymentIntentId} has no bank transfer reference (status ${intent.status})`);
+  }
+  return reference;
+}
+
+/**
+ * Simulates an incoming bank transfer (docs.stripe.com/payments/bank-transfers/accept-a-payment, "Test your
+ * integration"): POST /v1/test_helpers/customers/{id}/fund_cash_balance. The reference matches the funds to the open
+ * PaymentIntent. The currency is EUR (EU bank transfer).
+ */
+export async function fundCashBalance(customerId: string, amountMinor: number, reference: string): Promise<void> {
+  await stripePost(`/test_helpers/customers/${customerId}/fund_cash_balance`, {
+    amount: String(amountMinor),
+    currency: 'eur',
+    reference,
+  });
+}
+
+export interface CustomerBalanceRefund {
+  id: string;
+  amount: number;
+  status: string;
+  origin?: string | null;
+  customer?: string | null;
+}
+
+/**
+ * The refunds with origin customer_balance created after the time (epoch s) that came out of the cash balance of the
+ * customer. Stripe leaves the customer field of these refunds empty, so each refund must match a return_initiated
+ * cash balance transaction of the customer with the same amount.
+ */
+export async function listCustomerBalanceRefunds(customerId: string, createdAfter: number): Promise<CustomerBalanceRefund[]> {
+  const refunds: CustomerBalanceRefund[] = (await stripeGet('/refunds', { limit: '100', 'created[gte]': String(createdAfter) })).data;
+  const returns = (await listCashBalanceTransactions(customerId)).filter((t) => t.type === 'return_initiated');
+  return refunds.filter((r) => r.origin === 'customer_balance' && returns.some((t) => -t.net_amount === r.amount));
+}
+
+/** The cash balance transactions of the customer, newest first (funded, applied_to_payment, return_initiated...). */
+export async function listCashBalanceTransactions(customerId: string): Promise<{ id: string; type: string; net_amount: number }[]> {
+  return (await stripeGet(`/customers/${customerId}/cash_balance_transactions`, { limit: '100' })).data;
+}
+
+/**
+ * Gives the Stripe customer the email of the Stripe account. A cash balance refund (origin=customer_balance) makes
+ * Stripe email the customer to collect the bank details, and a Stripe test account can only send email to its own
+ * verified address ("Cannot send email ... verify the email address first"). The test customers have example.com
+ * addresses, so the refund checks use the account email. The email is never printed.
+ */
+export async function useAccountEmailForRefunds(customerId: string): Promise<void> {
+  const account = await stripeGet('/account');
+  if (!account.email) {
+    throw new Error('The Stripe account has no email: cash balance refunds cannot be tested');
+  }
+  await stripePost(`/customers/${customerId}`, { email: account.email });
 }

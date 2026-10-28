@@ -23,7 +23,23 @@ public interface StripeConfigurationService
 
 	Duration getPendingPaymentTimeout();
 
+	/**
+	 * Reads {@code stripe.payment.pending.timeout.<type>.seconds}. Falls back to the global timeout when the type is
+	 * {@code null} or has no property.
+	 */
+	Duration getPendingPaymentTimeout(String paymentMethodType);
+
 	Duration getPendingPaymentRetryDelay();
+
+	/**
+	 * Reads {@code stripe.payment.pending.retry.<type>.seconds}. Falls back to the global retry delay when the type is
+	 * {@code null} or has no property.
+	 */
+	Duration getPendingPaymentRetryDelay(String paymentMethodType);
+
+	boolean isCustomerCreationEnabled();
+
+	Duration getCashBalanceRefundDelay();
 
 	String getStatementDescriptor();
 

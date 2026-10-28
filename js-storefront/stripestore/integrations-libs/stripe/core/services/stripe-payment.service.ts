@@ -83,6 +83,7 @@ export class StripePaymentService {
     stripe: Stripe,
     elements: StripeElements,
     currentClientSecret?: string,
+    billingEmail?: string,
   ): Observable<StripePaymentResult> {
     return this.ensureIntent().pipe(
       mergeMap((intent): Observable<StripePaymentResult> => {
@@ -96,7 +97,7 @@ export class StripePaymentService {
           mergeMap((update) =>
             update.error
               ? of<StripePaymentResult>({ error: 'stripePayment.genericError' })
-              : this.confirm(stripe, elements),
+              : this.confirm(stripe, elements, billingEmail),
           ),
         );
       }),
@@ -121,11 +122,17 @@ export class StripePaymentService {
   protected confirm(
     stripe: Stripe,
     elements: StripeElements,
+    billingEmail?: string,
   ): Observable<StripePaymentResult> {
     return from(
       stripe.confirmPayment({
         elements,
-        confirmParams: { return_url: this.currentUrl() },
+        confirmParams: {
+          return_url: this.currentUrl(),
+          ...(billingEmail
+            ? { payment_method_data: { billing_details: { email: billingEmail } } }
+            : {}),
+        },
         redirect: 'if_required',
       }),
     ).pipe(

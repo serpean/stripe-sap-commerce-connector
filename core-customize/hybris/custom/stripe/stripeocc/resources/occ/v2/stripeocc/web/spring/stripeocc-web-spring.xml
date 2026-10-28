@@ -56,8 +56,8 @@
         <property name="levelMapping">
             <map>
                 <entry key="BASIC" value="paymentMethodType,paymentStatus"/>
-                <entry key="DEFAULT" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear"/>
-                <entry key="FULL" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear"/>
+                <entry key="DEFAULT" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear,instructionsUrl,paymentReference,instructionsExpireAt,amountRemaining"/>
+                <entry key="FULL" value="paymentMethodType,paymentStatus,cardBrand,cardLast4,cardExpMonth,cardExpYear,instructionsUrl,paymentReference,instructionsExpireAt,amountRemaining"/>
             </map>
         </property>
     </bean>

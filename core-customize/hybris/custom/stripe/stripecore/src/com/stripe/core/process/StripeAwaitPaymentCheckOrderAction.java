@@ -19,6 +19,7 @@ import de.hybris.platform.orderprocessing.model.OrderProcessModel;
 import de.hybris.platform.processengine.action.AbstractSimpleDecisionAction;
 import de.hybris.platform.servicelayer.time.TimeService;
 import de.hybris.platform.task.RetryLaterException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.EnumSet;
@@ -35,9 +36,11 @@ import org.slf4j.LoggerFactory;
  * <li>payment authorized or captured with all its money: the order is authorized and the wrapped action runs; a
  * rejected authorization cancels the order and gives the money back;</li>
  * <li>payment failed, canceled or refunded (also when this connector released the funds), or still pending after
- * {@code stripe.payment.pending.timeout.seconds}: the order is cancelled and the action ends with NOK;</li>
+ * the timeout of its payment method
+ * ({@code stripe.payment.pending.timeout.<type>.seconds}): the order is cancelled and the action ends with NOK;</li>
  * <li>payment pending, or Stripe does not answer: the order gets the status PAYMENT_PENDING and the action runs again
- * after {@code stripe.payment.pending.retry.seconds}. Without an answer of Stripe the order is never cancelled.</li>
+ * after the retry delay of its payment method ({@code stripe.payment.pending.retry.<type>.seconds}). PROCESSING and
+ * AWAITING_FUNDS wait. Without an answer of Stripe the order is never cancelled.</li>
  * </ul>
  * The record row of the PaymentIntent is locked first, so the action and the webhook handler do not decide at the same
  * time. The decision runs in the site of the order, so the Stripe settings of that site are used. Orders not paid with
@@ -121,18 +124,19 @@ public class StripeAwaitPaymentCheckOrderAction extends AbstractSimpleDecisionAc
 		}
 
 		final Instant now = timeService.getCurrentTime().toInstant();
-		final Instant deadline = placedAt(order).plus(stripeConfigurationService.getPendingPaymentTimeout());
+		final String methodType = StripePaymentInfos.paymentMethodType(order);
+		final Duration timeout = stripeConfigurationService.getPendingPaymentTimeout(methodType);
+		final Instant deadline = placedAt(order).plus(timeout);
 		if (!now.isBefore(deadline))
 		{
 			if (status != null)
 			{
 				LOG.warn("Payment intent {} of order {} is still {} after {}: cancelling the order", paymentIntentId,
-						order.getCode(), status, stripeConfigurationService.getPendingPaymentTimeout());
+						order.getCode(), status, timeout);
 				return cancel(order);
 			}
 			LOG.error("Payment of order {} is pending after {} but payment intent {} cannot be read: checking again later "
-					+ "instead of cancelling", order.getCode(), stripeConfigurationService.getPendingPaymentTimeout(),
-					paymentIntentId);
+					+ "instead of cancelling", order.getCode(), timeout, paymentIntentId);
 		}
 		return waitForPayment(order, paymentIntentId);
 	}
@@ -189,7 +193,7 @@ public class StripeAwaitPaymentCheckOrderAction extends AbstractSimpleDecisionAc
 		LOG.info("Payment intent {} of order {} is pending: checking again later", paymentIntentId, order.getCode());
 		final RetryLaterException retry = new RetryLaterException("Payment of order " + order.getCode() + " is pending");
 		retry.setMethod(RetryLaterException.Method.LINEAR);
-		retry.setDelay(stripeConfigurationService.getPendingPaymentRetryDelay().toMillis());
+		retry.setDelay(stripeConfigurationService.getPendingPaymentRetryDelay(StripePaymentInfos.paymentMethodType(order)).toMillis());
 		retry.setRollBack(false);
 		throw retry;
 	}
@@ -215,7 +219,7 @@ public class StripeAwaitPaymentCheckOrderAction extends AbstractSimpleDecisionAc
 	{
 		try
 		{
-			return StripePaymentIntentStatus.of(paymentIntent.getStatus());
+			return StripePaymentIntentStatus.of(paymentIntent);
 		}
 		catch (final IllegalArgumentException e)
 		{

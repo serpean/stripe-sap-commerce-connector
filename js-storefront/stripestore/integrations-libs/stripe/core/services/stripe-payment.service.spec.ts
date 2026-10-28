@@ -144,6 +144,68 @@ describe('StripePaymentService', () => {
       });
     });
 
+    ['multibanco_display_details', 'display_bank_transfer_instructions'].forEach(
+      (type) =>
+        it(`multibanco voucher after confirm places the order (${type})`, (done) => {
+          occService.ensureIntent.and.returnValue(
+            of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
+          );
+          stripe.confirmPayment.and.resolveTo({
+            paymentIntent: {
+              id: 'pi_1',
+              status: 'requires_action',
+              client_secret: 'cs_1',
+              next_action: { type },
+            },
+          } as any);
+          const service = createService();
+
+          service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
+            expect(result.error).toBeUndefined();
+            expect(result.intent?.status).toBe('requires_action');
+            done();
+          });
+        })
+    );
+
+    it('non-instruction requires_action is left to the server', (done) => {
+      occService.ensureIntent.and.returnValue(
+        of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
+      );
+      stripe.confirmPayment.and.resolveTo({
+        paymentIntent: {
+          id: 'pi_1',
+          status: 'requires_action',
+          client_secret: 'cs_1',
+          next_action: { type: 'use_stripe_sdk' },
+        },
+      } as any);
+      const service = createService();
+
+      service.confirmPayment(stripe, elements, 'cs_1').subscribe((result) => {
+        expect(result.error).toBeUndefined();
+        expect(result.intent?.status).toBe('requires_action');
+        done();
+      });
+    });
+
+    it('sends the billing email to Stripe', (done) => {
+      occService.ensureIntent.and.returnValue(
+        of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })
+      );
+      const service = createService();
+
+      service
+        .confirmPayment(stripe, elements, 'cs_1', 'ana@example.com')
+        .subscribe(() => {
+          const args = stripe.confirmPayment.calls.mostRecent().args[0] as any;
+          expect(
+            args.confirmParams.payment_method_data.billing_details.email
+          ).toBe('ana@example.com');
+          done();
+        });
+    });
+
     it('does not confirm and reports genericError when fetchUpdates fails', (done) => {
       occService.ensureIntent.and.returnValue(
         of({ paymentIntentId: 'pi_1', clientSecret: 'cs_1' })

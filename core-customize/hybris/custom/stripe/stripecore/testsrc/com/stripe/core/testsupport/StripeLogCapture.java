@@ -48,6 +48,17 @@ public final class StripeLogCapture extends AbstractAppender implements AutoClos
 				.anyMatch(message -> Arrays.stream(texts).allMatch(message::contains));
 	}
 
+	/**
+	 * @return true when a WARN event was logged whose message holds all the given texts
+	 */
+	public boolean hasWarn(final String... texts)
+	{
+		return events.stream()
+				.filter(event -> Level.WARN.equals(event.getLevel()))
+				.map(event -> event.getMessage().getFormattedMessage())
+				.anyMatch(message -> Arrays.stream(texts).allMatch(message::contains));
+	}
+
 	@Override
 	public void close()
 	{

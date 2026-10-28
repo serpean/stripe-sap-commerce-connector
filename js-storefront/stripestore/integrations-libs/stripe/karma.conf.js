@@ -26,6 +26,13 @@ module.exports = function (config) {
     },
     reporters: ['progress', 'kjhtml'],
     browsers: ['Chrome'],
+    // CI runners (for example GitHub ubuntu-latest) cannot use the Chrome sandbox: use --browsers=ChromeHeadlessCI.
+    customLaunchers: {
+      ChromeHeadlessCI: {
+        base: 'ChromeHeadless',
+        flags: ['--no-sandbox'],
+      },
+    },
     restartOnFileChange: true,
   });
 };

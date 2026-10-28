@@ -8,6 +8,8 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -21,6 +23,7 @@ import static org.mockito.Mockito.when;
 import com.google.gson.JsonObject;
 import com.stripe.Stripe;
 import com.stripe.core.config.StripeConfigurationService;
+import com.stripe.core.customer.StripeCashBalanceService;
 import com.stripe.core.dao.StripePaymentIntentRecordDao;
 import com.stripe.core.enums.StripePaymentIntentState;
 import com.stripe.core.enums.StripeWebhookEventState;
@@ -80,6 +83,7 @@ public class StripeWebhookEventTaskRunnerTest
 	private Instant eventCreated = NOW.minus(Duration.ofHours(2));
 	private TaskModel task;
 	private TimeService timeService;
+	private StripeCashBalanceService cashBalanceService;
 
 	@Before
 	public void setUp()
@@ -122,6 +126,8 @@ public class StripeWebhookEventTaskRunnerTest
 		runner.setTimeService(timeService);
 		runner.setStripePaymentIntentEventHandler(paymentIntentHandler);
 		runner.setStripeRefundEventHandler(refundHandler);
+		cashBalanceService = mock(StripeCashBalanceService.class);
+		runner.setStripeCashBalanceService(cashBalanceService);
 
 		event = spy(new StripeWebhookEventModel());
 		doReturn(PK.fromLong(7L)).when(event).getPk();
@@ -130,6 +136,25 @@ public class StripeWebhookEventTaskRunnerTest
 		event.setAttempts(0);
 		task = mock(TaskModel.class);
 		when(task.getContextItem()).thenReturn(event);
+	}
+
+	@Test
+	public void fundsAvailableSchedulesRefundCheck()
+	{
+		final JsonObject available = new JsonObject();
+		available.addProperty("eur", 5000);
+		available.addProperty("usd", 0);
+		final JsonObject balance = new JsonObject();
+		balance.addProperty("object", "cash_balance");
+		balance.addProperty("customer", "cus_1");
+		balance.add("available", available);
+		givenEvent("cash_balance.funds_available", balance, Stripe.API_VERSION);
+
+		runner.run(taskService, task);
+
+		assertEquals(StripeWebhookEventState.PROCESSED, event.getState());
+		verify(cashBalanceService).scheduleRefundCheck("cus_1", "eur");
+		verify(cashBalanceService, never()).scheduleRefundCheck("cus_1", "usd");
 	}
 
 	@Test
@@ -357,6 +382,26 @@ public class StripeWebhookEventTaskRunnerTest
 
 		verify(modelService).refresh(event);
 		assertEquals(StripeWebhookEventState.IGNORED, event.getState());
+	}
+
+	@Test
+	public void routesRequiresActionAndPartiallyFunded() throws Exception
+	{
+		final StripePaymentIntentEventHandler handler = mock(StripePaymentIntentEventHandler.class);
+		when(handler.handle(anyString(), any(PaymentIntent.class), any())).thenReturn(StripeWebhookOutcome.PROCESSED);
+		runner.setStripePaymentIntentEventHandler(handler);
+
+		for (final String type : List.of("payment_intent.requires_action", "payment_intent.partially_funded"))
+		{
+			event.setState(StripeWebhookEventState.RECEIVED);
+			givenPaymentIntentEvent(type, "requires_action");
+
+			runner.run(taskService, task);
+
+			verify(handler).handle(eq(type), argThat(paymentIntent -> PI_ID.equals(paymentIntent.getId())),
+					eq(Instant.ofEpochSecond(eventCreated.getEpochSecond())));
+			assertEquals(StripeWebhookEventState.PROCESSED, event.getState());
+		}
 	}
 
 	@Test

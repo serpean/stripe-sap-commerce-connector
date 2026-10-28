@@ -22,7 +22,7 @@
         <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
         <property name="modelService" ref="modelService"/>
-        <property name="stripePaymentInfoUpdater" ref="stripePaymentInfoUpdater"/>
+        <property name="stripePaymentDetailsCopier" ref="stripePaymentDetailsCopier"/>
         <property name="stripePaymentIntentChecks" ref="stripePaymentIntentChecks"/>
         <property name="stripeOrderAuthorizationService" ref="stripeOrderAuthorizationService"/>
         <property name="stripePaymentIntentRecordService" ref="stripePaymentIntentRecordService"/>
@@ -51,10 +51,16 @@
         <property name="stripePlaceOrderGuard" ref="stripePlaceOrderGuard"/>
     </bean>
 
+    <!-- The SAP isPartialCancel of the OMS facade is always true, which made the denial of partial cancels deny every cancel. -->
+    <alias name="stripeOmsOrderFacade" alias="omsOrderFacade"/>
+    <bean id="stripeOmsOrderFacade" class="com.stripe.facades.order.impl.StripeOmsOrderFacade" parent="defaultOmsOrderFacade"/>
+
     <alias name="defaultStripeOrderPaymentPopulator" alias="stripeOrderPaymentPopulator"/>
     <bean id="defaultStripeOrderPaymentPopulator"
           class="com.stripe.facades.order.converters.populators.StripeOrderPaymentPopulator">
         <property name="stripePaymentIntentRecordDao" ref="stripePaymentIntentRecordDao"/>
+        <property name="priceDataFactory" ref="priceDataFactory"/>
+        <property name="stripeAmountConverter" ref="stripeAmountConverter"/>
     </bean>
 
     <bean parent="modifyPopulatorList">

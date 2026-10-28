@@ -102,16 +102,20 @@ export async function addDefaultAddress(customer: Customer): Promise<void> {
 
 const productCache = new Map<Currency, Product>();
 
+/** Stock statuses of the product detail that the shop can sell. */
+const SELLABLE = new Set(['inStock', 'lowStock']);
+
+interface Candidate extends Product {
+  /** Stock status from the product detail, which asks the stock service (the search status comes from Solr). */
+  stockStatus?: string;
+}
+
 /**
- * Finds a product that is in stock and has a price in the currency. The tests do not depend on the stock of one
- * product. The cheapest suitable product above 20 is used, so that the amounts stay small but not trivial.
+ * The products that {@link findInStockProduct} can pick for the currency, cheapest first: in stock in the search index,
+ * purchasable, with a price of at least 20 in the currency. At most 10. The global setup refills their stock.
  */
-export async function findInStockProduct(currency: Currency): Promise<Product> {
-  const cached = productCache.get(currency);
-  if (cached) {
-    return cached;
-  }
-  const product = await withApi(async (api) => {
+export async function findProductCandidates(currency: Currency): Promise<Candidate[]> {
+  return withApi(async (api) => {
     const search = await expectOk(
       await api.get(`${OCC_BASE}/products/search`, {
         params: { query: ':relevance', pageSize: '100', fields: 'products(code,name,stock(FULL))', curr: currency },
@@ -121,7 +125,7 @@ export async function findInStockProduct(currency: Currency): Promise<Product> {
     const inStock = ((await search.json()).products ?? []).filter(
       (p: { stock?: { stockLevelStatus?: string } }) => p.stock?.stockLevelStatus === 'inStock'
     );
-    const priced: Product[] = [];
+    const priced: Candidate[] = [];
     for (const candidate of inStock) {
       const detail = await api.get(`${OCC_BASE}/products/${candidate.code}`, {
         params: { fields: 'code,name,price(value,currencyIso),stock(FULL),purchasable', curr: currency },
@@ -131,18 +135,31 @@ export async function findInStockProduct(currency: Currency): Promise<Product> {
       }
       const body = await detail.json();
       if (body.purchasable && body.price?.currencyIso === currency && body.price.value >= 20) {
-        priced.push({ code: body.code, name: body.name, price: body.price.value });
+        priced.push({ code: body.code, name: body.name, price: body.price.value, stockStatus: body.stock?.stockLevelStatus });
       }
       if (priced.length >= 10) {
         break;
       }
     }
-    priced.sort((a, b) => a.price - b.price);
-    if (!priced.length) {
-      throw new Error(`No product in stock with a ${currency} price`);
-    }
-    return priced[0];
+    return priced.sort((a, b) => a.price - b.price);
   });
+}
+
+/**
+ * Finds a product that is in stock and has a price in the currency. The tests do not depend on the stock of one
+ * product. The cheapest suitable product above 20 is used, so that the amounts stay small but not trivial. The search
+ * index can be older than the stock, so the stock status of the product detail must be sellable too.
+ */
+export async function findInStockProduct(currency: Currency): Promise<Product> {
+  const cached = productCache.get(currency);
+  if (cached) {
+    return cached;
+  }
+  const sellable = (await findProductCandidates(currency)).find((p) => SELLABLE.has(p.stockStatus ?? ''));
+  if (!sellable) {
+    throw new Error(`No product in stock with a ${currency} price`);
+  }
+  const product: Product = { code: sellable.code, name: sellable.name, price: sellable.price };
   productCache.set(currency, product);
   return product;
 }

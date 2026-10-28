@@ -34,7 +34,7 @@ public class StripePaymentIntentChecks
 	public boolean holdsAllMoney(final PaymentIntent paymentIntent)
 	{
 		if (paymentIntent.getStatus() == null
-				|| StripePaymentIntentStatus.of(paymentIntent.getStatus()) != StripePaymentIntentStatus.CAPTURED)
+				|| StripePaymentIntentStatus.of(paymentIntent) != StripePaymentIntentStatus.CAPTURED)
 		{
 			return true;
 		}
