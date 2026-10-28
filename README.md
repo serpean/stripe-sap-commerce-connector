@@ -236,21 +236,26 @@ The connector wraps the standard SAP order process. It works with OMS (`yacceler
 
 ### Pending payments
 
-Some methods confirm later (the PaymentIntent is `processing`, or it waits for the customer to send the money). The order is created with the status `PAYMENT_PENDING`. The first action of the order process waits:
+Some payment methods confirm later. The PaymentIntent stays `processing`, or Stripe waits for the customer to send the money. The order gets the status `PAYMENT_PENDING`, and the order process stops at its first step until the payment is decided:
 
-- payment accepted: the process goes on;
-- payment failed, cancelled, or refunded: the order is cancelled;
-- still pending: the process checks again after the retry delay;
-- still pending after the timeout: the order is cancelled and the PaymentIntent is released (cancelled at Stripe; money already captured is refunded).
+- The payment succeeds: the process goes on.
+- The payment fails, is cancelled, or is refunded: the order is cancelled.
+- The payment is still pending: the process checks again after the retry delay.
+- The payment is still pending after the timeout: the order is cancelled. The connector cancels the PaymentIntent at Stripe and refunds any money already captured.
 
 The timeout and the retry delay depend on the payment method:
 
 | Method | Timeout | Retry delay |
 | --- | --- | --- |
-| `sepa_debit` | `864000` s (10 days) | `stripe.payment.pending.retry.seconds` (300 s) |
-| `multibanco` | `1036800` s (12 days) | `3600` s |
-| `customer_balance` | `1209600` s (14 days) | `3600` s |
-| other methods | `stripe.payment.pending.timeout.seconds` (86400 s) | `stripe.payment.pending.retry.seconds` (300 s) |
+| SEPA Direct Debit (`sepa_debit`) | 10 days | 5 minutes |
+| Multibanco (`multibanco`) | 12 days | 1 hour |
+| Bank transfer (`customer_balance`) | 14 days | 1 hour |
+| Other methods | 1 day | 5 minutes |
+
+To change them, set these properties in seconds:
+
+- `stripe.payment.pending.timeout.<method>.seconds` and `stripe.payment.pending.retry.<method>.seconds` for one method, for example `stripe.payment.pending.timeout.sepa_debit.seconds=864000`.
+- `stripe.payment.pending.timeout.seconds` (default `86400`) and `stripe.payment.pending.retry.seconds` (default `300`) for all other methods.
 
 Each check reads the PaymentIntent from Stripe. When it is authorized or captured with all its money, the order is authorized and the process goes on, also when the webhook event was lost. When Stripe does not answer, the order is never cancelled: the process checks again later.
 
