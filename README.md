@@ -533,7 +533,16 @@ Keep the server running. For each task, run these three steps:
 
 Before you publish, run the full battery: `npm run e2e`.
 
-# Operations runbook
+### stripesampledata
+
+The extension is for the reference project only. It contains:
+
+- `store.impex`: `paymentProvider=Stripe` on the `electronics` BaseStore, the currency EUR added to the store, and `submitOrderProcessCode=order-process` (the OMS process).
+- `prices.impex`: EUR prices for the electronics products (same value as the USD price), so the EUR site can sell them. The reference site uses EUR.
+- `warehouses.impex`: OMS sourcing data: `Default_Formula`, `SourcingConfig` `Hybris_OMS_Config`, and the delivery modes of the warehouses. Without it OMS cannot source an order and suspends it.
+- `oauth-clients.impex`: the demo OAuth client `mobile_android` (secret `secret`). See the warning above.
+
+## Operations runbook
 
 Do these checks every day, and after an outage of Stripe or of the shop. Run the queries in the HAC (Console, FlexibleSearch).
 
