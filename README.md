@@ -478,8 +478,11 @@ Scripts:
 | `npm run e2e` | `parallel`, then `serial`, then `slow`. A failed phase does not stop the next. The exit code is the worst one. |
 | `npm run e2e:fast` | `parallel` and `serial`, without `slow`. |
 | `npm run e2e:area -- @sepa @card` | Only the tests with one of the tags, in the three projects. |
+| `npm run e2e:changed` | Chooses the tags from the files that the branch changes, and runs them. Runs `npm run e2e` if the result is `ALL`. Runs nothing if no e2e is needed. |
 
 Each test has one or more area tags: `@card`, `@redirect`, `@sepa`, `@multibanco`, `@bank-transfer`, `@after-purchase`, `@webhooks`, `@line-items`. Other Playwright options go after `--`, for example `npm run e2e -- --retries=0`. A plain `npx playwright test --project=parallel` uses 1 worker unless you add `--workers`.
+
+`e2e:changed` reads `git diff <base>...HEAD`, the uncommitted files and the untracked files. The base is `origin/main`; change it with `npm run e2e:changed -- --base <ref>`. The map is `e2e/select/areas.json`: an ordered list of `{ "pattern", "tags" }`, and the first rule that matches a file wins. A rule with no tags means that the file needs no e2e (for example `README.md`). A file that no rule matches, a change in the e2e support code, and a change in `areas.json` or the selector select `ALL`. To see the result without a run, use `node e2e/select/select-areas.mjs`. Test the selector with `npm run e2e:select:test`. When you add a Java package or a library folder, add a rule: the test fails if a tracked Java file has none.
 
 A failed test runs once more (`retries: 1`). The report lists a test that passed on the retry as flaky. Each phase writes its own report (`playwright-report/<project>/index.html`) and its own results (`test-results/<project>`).
 
@@ -520,16 +523,17 @@ SAP Commerce reads a `y_` environment variable as a property (`y_os_rmiregistry_
 
 Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
 
-### stripesampledata
+### Cycle of a task
 
-The extension is for the reference project only. It contains:
+Keep the server running. For each task, run these three steps:
 
-- `store.impex`: `paymentProvider=Stripe` on the `electronics` BaseStore, the currency EUR added to the store, and `submitOrderProcessCode=order-process` (the OMS process).
-- `prices.impex`: EUR prices for the electronics products (same value as the USD price), so the EUR site can sell them. The reference site uses EUR.
-- `warehouses.impex`: OMS sourcing data: `Default_Formula`, `SourcingConfig` `Hybris_OMS_Config`, and the delivery modes of the warehouses. Without it OMS cannot source an order and suspends it.
-- `oauth-clients.impex`: the demo OAuth client `mobile_android` (secret `secret`). See the warning above.
+1. `scripts/dev/unit-tests.sh`
+2. `ant integrationtests` (with the two variables above)
+3. `npm run e2e:changed` (only the areas that the branch changes)
 
-## Operations runbook
+Before you publish, run the full battery: `npm run e2e`.
+
+# Operations runbook
 
 Do these checks every day, and after an outage of Stripe or of the shop. Run the queries in the HAC (Console, FlexibleSearch).
 

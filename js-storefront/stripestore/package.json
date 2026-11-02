@@ -11,7 +11,9 @@
     "build:ssr": "ng build",
     "e2e": "node e2e/run.mjs",
     "e2e:fast": "node e2e/run.mjs --fast",
-    "e2e:area": "node e2e/run.mjs --area"
+    "e2e:area": "node e2e/run.mjs --area",
+    "e2e:changed": "node e2e/select/select-areas.mjs --run",
+    "e2e:select:test": "node --test e2e/select/"
   },
   "private": true,
   "dependencies": {
