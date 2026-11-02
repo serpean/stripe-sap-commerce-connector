@@ -152,6 +152,7 @@ export async function checkoutToPayment(
   await expect(page).toHaveURL(/checkout\/delivery-address/);
   await continueTo(page, /checkout\/delivery-mode/);
   await continueTo(page, /checkout\/payment-details/);
+  await expectStripeCheckoutSteps(page);
   // With 4 workers the Stripe frame can take more than 30 s to load.
   await expect(paymentElement(page).locator('input').first()).toBeAttached({ timeout: 60_000 });
   return { customer, cart, product, currency };
@@ -168,6 +169,13 @@ async function continueTo(page: Page, nextStep: RegExp): Promise<void> {
     }
     await expect(page).toHaveURL(nextStep, { timeout: 10_000 });
   }).toPass({ timeout: 60_000 });
+}
+
+/** The Stripe flow has three steps: the payment step places the order, so there is no "Review" step. */
+async function expectStripeCheckoutSteps(page: Page): Promise<void> {
+  const steps = page.locator('cx-checkout-progress .cx-item');
+  await expect(steps).toHaveCount(3);
+  await expect(steps.filter({ hasText: /review/i })).toHaveCount(0);
 }
 
 export function paymentElement(page: Page): FrameLocator {

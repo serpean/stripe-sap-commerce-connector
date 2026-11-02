@@ -1,6 +1,6 @@
 # Stripe Connector for SAP Commerce Cloud
 
-Version 4.0.0.
+Version 4.0.1.
 
 Stripe provides payment infrastructure for the internet. This connector adds Stripe payments to SAP Commerce Cloud through the Payment Intents API. It supports cards and other Stripe payment methods, 3D Secure (SCA), and the standard SAP checkout, order process, and cancel and refund flows.
 
@@ -72,7 +72,7 @@ The repository holds two things. Only the connector is published.
 | `core-customize/hybris/custom/stripe/stripecore` | Item types, Stripe gateway, PaymentIntent service, authorization strategy, webhook processing, order process steps, cancel strategy |
 | `core-customize/hybris/custom/stripe/stripefacades` | Checkout facades (child beans), checkout authorizer, webhook facade, order payment populator |
 | `core-customize/hybris/custom/stripe/stripeocc` | OCC endpoints, error codes, place-order validator advice |
-| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 4.0.0) |
+| `js-storefront/stripestore/integrations-libs/stripe` | Spartacus library `sap-commerce-stripe-payment` (version 4.0.1) |
 
 ### Reference project (not published)
 
@@ -332,7 +332,9 @@ The connector does not replace SAP classes with one alias. It adds to them.
 
 ## Spartacus frontend
 
-The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 4.0.0). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
+The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 4.0.1). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
+
+The checkout has three steps: delivery address, delivery mode, and payment. The payment step places the order, so there is no review step. Spartacus picks the checkout flow by the BaseStore `paymentProvider` (case-sensitive). The library registers this flow for `Stripe`, the value of installation step 3. The backend uses the same value for the payment transactions and the command factory, so do not use another spelling.
 
 The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
 

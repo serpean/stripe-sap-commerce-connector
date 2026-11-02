@@ -4,7 +4,15 @@ All notable changes to the Stripe connector for SAP Commerce Cloud are listed he
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.0.1] - 2026-11-02
+
+### Fixed
+
+- The Spartacus library registered its three-step checkout flow (the payment step also places the order) under
+  the key `STRIPE`, but Spartacus picks the flow by the base store's `paymentProvider`, case-sensitive, and the
+  documented value is `Stripe`. Customers saw the default four steps, with a "Review" step that did nothing. The
+  flow is now registered under `Stripe`, the value that the rest of the connector uses (base store, payment
+  transactions, command factory). If your base store has another value, set `paymentProvider=Stripe`.
 
 ### Changed
 
