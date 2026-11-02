@@ -15,7 +15,7 @@ describe('defaultStripeCheckoutConfig', () => {
     expect(steps[2].type as string[]).toEqual(['paymentDetails', 'reviewOrder']);
   });
 
-  it('keeps STRIPE as an alias with the same steps', () => {
-    expect(flows['STRIPE']?.steps).toBe(flows['Stripe']?.steps);
+  it('has no other flow, so every part of the connector uses the same value', () => {
+    expect(Object.keys(flows)).toEqual(['Stripe']);
   });
 });

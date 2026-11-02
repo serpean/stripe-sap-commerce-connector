@@ -334,7 +334,7 @@ The connector does not replace SAP classes with one alias. It adds to them.
 
 The connector supports Spartacus storefronts through OCC APIs. The library is in `js-storefront/stripestore/integrations-libs/stripe/` (version 4.0.1). The library reads the publishable key from the backend (`GET payments/stripe/config`). `StripePaymentConfig` (`stripePayment.publishableKey`) is optional. Set it only to override the backend key.
 
-The checkout has three steps: delivery address, delivery mode, and payment. The payment step places the order, so there is no review step. Spartacus picks the checkout flow by the BaseStore `paymentProvider` (case-sensitive). The library registers this flow for `Stripe` (the value of installation step 3) and for `STRIPE`.
+The checkout has three steps: delivery address, delivery mode, and payment. The payment step places the order, so there is no review step. Spartacus picks the checkout flow by the BaseStore `paymentProvider` (case-sensitive). The library registers this flow for `Stripe`, the value of installation step 3. The backend uses the same value for the payment transactions and the command factory, so do not use another spelling.
 
 The library shows the stable error codes as messages, blocks double submit, and shows a pending state for `STRIPE_PAYMENT_IN_PROGRESS`. For `STRIPE_ALREADY_PLACED` it goes to the order history.
 

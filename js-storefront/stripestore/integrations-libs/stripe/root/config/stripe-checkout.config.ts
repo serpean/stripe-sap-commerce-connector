@@ -38,14 +38,13 @@ const stripeCheckoutSteps: CheckoutStep[] = [
 ];
 
 /**
- * Spartacus picks the flow by the base store's paymentProvider, case-sensitive. 'Stripe' is the documented value;
- * 'STRIPE' stays for installations that set the upper-case value (the payment form accepts both).
+ * Spartacus picks the flow by the base store's paymentProvider, case-sensitive. The connector uses 'Stripe'
+ * everywhere (base store, payment transactions, command factory).
  */
 export const defaultStripeCheckoutConfig: CheckoutConfig = {
   checkout: {
     flows: {
       Stripe: { steps: stripeCheckoutSteps },
-      STRIPE: { steps: stripeCheckoutSteps },
     },
   },
 };
