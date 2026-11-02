@@ -7,13 +7,14 @@
 #   use-postgres  point local.properties and local_tenant_junit.properties at PostgreSQL
 #   use-hsqldb    remove what use-postgres added; the platform uses HSQLDB again
 #   status        show the container and the database that the platform uses
-# The platform is $HYBRIS_PLATFORM (default /Volumes/e/y/stripe-ref-platform).
+# The platform is $HYBRIS_PLATFORM, or the folder ../stripe-ref-platform next to this repo.
 # The database password is local and fixed. The script does not print it.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 compose_file="$root/tools/refdb/docker-compose.yml"
-platform="${HYBRIS_PLATFORM:-/Volumes/e/y/stripe-ref-platform}"
+platform="${HYBRIS_PLATFORM:-$root/../stripe-ref-platform}"
+platform="$(cd "$platform" 2>/dev/null && pwd || echo "$platform")"
 config_dir="$platform/hybris/config"
 local_props="$config_dir/local.properties"
 junit_props="$config_dir/local_tenant_junit.properties"

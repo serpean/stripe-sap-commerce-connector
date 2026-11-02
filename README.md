@@ -391,7 +391,7 @@ cd "$HYBRIS_PLATFORM/installer"
 ./install.sh -r b2c_occ_stripe start
 ```
 
-`setup` writes `local.properties` again, so run `refdb.sh use-postgres` after each `setup`. The script finds the platform in `HYBRIS_PLATFORM` (default `/Volumes/e/y/stripe-ref-platform`). It adds the `db.*` keys to `hybris/config/local.properties`, between the lines `# >>> refdb` and `# <<< refdb`. It also writes `hybris/config/local_tenant_junit.properties`, so the junit tenant uses the database `hybris_junit`.
+`setup` writes `local.properties` again, so run `refdb.sh use-postgres` after each `setup`. The script finds the platform in `HYBRIS_PLATFORM` (default: the folder `../stripe-ref-platform` next to this repo). It adds the `db.*` keys to `hybris/config/local.properties`, between the lines `# >>> refdb` and `# <<< refdb`. It also writes `hybris/config/local_tenant_junit.properties`, so the junit tenant uses the database `hybris_junit`.
 
 To go back to HSQLDB, run `scripts/dev/refdb.sh use-hsqldb`. It removes only that block and that file. A new database needs `initialize` once.
 
@@ -399,7 +399,7 @@ If the server cannot connect to `localhost:5433` and you use colima, colima may 
 
 ```bash
 colima ssh-config > "$TMPDIR/colima.ssh"
-ssh -F "$TMPDIR/colima.ssh" -N -L 127.0.0.1:5433:127.0.0.1:5433 colima &
+ssh -F "$TMPDIR/colima.ssh" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -N -L 127.0.0.1:5433:127.0.0.1:5433 colima &
 ```
 
 ### 4. Stripe CLI and webhooks
@@ -495,7 +495,7 @@ Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (defa
 
 #### Unit and integration tests
 
-To run the unit tests fast, use Gradle. It does not start SAP Commerce, and it works while the server runs. It needs Java 17 and a local platform where `ant all` ran once. The default platform is `/Volumes/e/y/stripe-ref-platform`. Change it with `HYBRIS_PLATFORM` or `--platform <dir>`.
+To run the unit tests fast, use Gradle. It does not start SAP Commerce, and it works while the server runs. It needs Java 17 and a local platform where `ant all` ran once. The default platform is the folder `../stripe-ref-platform` next to this repo. Change it with `HYBRIS_PLATFORM` or `--platform <dir>`.
 
 ```bash
 scripts/dev/unit-tests.sh

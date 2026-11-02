@@ -7,7 +7,7 @@ plugins {
 
 val platformDir: File = file(
     providers.gradleProperty("platformDir").orElse(
-        providers.environmentVariable("HYBRIS_PLATFORM").orElse("/Volumes/e/y/stripe-ref-platform")
+        providers.environmentVariable("HYBRIS_PLATFORM").orElse("../../../stripe-ref-platform")
     ).get()
 )
 val hybrisBin = File(platformDir, "hybris/bin")
