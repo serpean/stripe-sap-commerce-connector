@@ -3,7 +3,7 @@ import { getOrder, getPaymentEntries, waitFor, waitForOrderStatus } from '../sup
 import { checkoutToPayment, expectOrderConfirmation, payWithMultibanco } from '../support/checkout';
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('16. Multibanco not paid: at the connector timeout the order is cancelled and the PaymentIntent too', async ({ page }) => {
+test('16. Multibanco not paid: at the connector timeout the order is cancelled and the PaymentIntent too', { tag: ['@multibanco'] }, async ({ page }) => {
   test.setTimeout(600_000);
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   // fill_never: Stripe never pays the voucher and fails it only after 11 days. The connector timeout (120 s) acts first.
@@ -29,7 +29,7 @@ test('16. Multibanco not paid: at the connector timeout the order is cancelled a
   );
 });
 
-test('17. Multibanco voucher expired at Stripe: the order is cancelled and no money is taken', async ({ page }) => {
+test('17. Multibanco voucher expired at Stripe: the order is cancelled and no money is taken', { tag: ['@multibanco'] }, async ({ page }) => {
   test.setTimeout(600_000);
   await checkoutToPayment(page, { currency: 'EUR' });
   // expire_immediately: Stripe fails the voucher within seconds (payment_intent.payment_failed).

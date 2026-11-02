@@ -4,7 +4,7 @@ import { CARDS, checkoutToPayment, expectOrderConfirmation, payWithCard } from '
 import { getOrder } from '../support/backend';
 import { minor, retrievePaymentIntentWithLineItems, stripePost } from '../support/stripe';
 
-test('16. line items: one line per cart entry and the lines add up to the amount', async ({ page }) => {
+test('16. line items: one line per cart entry and the lines add up to the amount', { tag: ['@line-items'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'USD', quantity: 2 });
   await payWithCard(page, CARDS.noThreeDs);
   const orderCode = await expectOrderConfirmation(page);
@@ -25,7 +25,7 @@ test('16. line items: one line per cart entry and the lines add up to the amount
   expect(live.amount).toBe(minor(order.totalPrice));
 });
 
-test('16b. Stripe API check: an update with amount_details cleared works on a PaymentIntent that never had line items', async () => {
+test('16b. Stripe API check: an update with amount_details cleared works on a PaymentIntent that never had line items', { tag: ['@line-items'] }, async () => {
   // A check of Stripe, not of the shop: the connector sends amount_details="" in an update without line items, also
   // for a PaymentIntent without them. The PaymentIntent is cancelled even when an assertion fails.
   const created = await stripePost('/payment_intents', {

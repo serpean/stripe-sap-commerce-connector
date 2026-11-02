@@ -10,7 +10,7 @@ import {
   payWithCard,
 } from '../support/checkout';
 
-test('4. declined card: no order', async ({ page }) => {
+test('4. declined card: no order', { tag: ['@card'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'USD' });
   await payWithCard(page, CARDS.declined);
 
@@ -19,7 +19,7 @@ test('4. declined card: no order', async ({ page }) => {
   await expectNoOrderAndCartIntact(session);
 });
 
-test('4 (UI). after a declined card the shop shows its error and the customer can pay again', async ({ page }) => {
+test('4 (UI). after a declined card the shop shows its error and the customer can pay again', { tag: ['@card'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'USD' });
   await payWithCard(page, CARDS.declined);
   await expectPaymentStepReady(page);

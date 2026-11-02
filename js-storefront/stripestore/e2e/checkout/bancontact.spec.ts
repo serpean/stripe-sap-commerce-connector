@@ -13,7 +13,7 @@ import {
 import { getCart } from '../support/occ';
 import { retrievePaymentIntent } from '../support/stripe';
 
-test('6. Bancontact in EUR, the customer comes back: order created', async ({ page }) => {
+test('6. Bancontact in EUR, the customer comes back: order created', { tag: ['@redirect'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithBancontact(page, 'authorize', true);
 
@@ -26,10 +26,9 @@ test('6. Bancontact in EUR, the customer comes back: order created', async ({ pa
   expect((await getPaymentIntentRecord(intent.id))?.state).toBe('CAPTURED');
 });
 
-test('7. Bancontact, the customer pays and does not come back: the webhook creates the order after the grace period', async ({
-  browser,
+test('7. Bancontact, the customer pays and does not come back: the webhook creates the order after the grace period', { tag: ['@redirect', '@webhooks'] }, async ({
+  page,
 }) => {
-  const page = await browser.newPage();
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const [record] = await getPaymentIntentRecordsOfCart(session.cart.code);
   const paidAt = Date.now();
@@ -56,7 +55,7 @@ test('7. Bancontact, the customer pays and does not come back: the webhook creat
   expect(await getCart(session.customer, session.cart.code, session.currency)).toBeUndefined();
 });
 
-test('8. Bancontact cancelled on the provider page: no order, the cart is intact', async ({ page }) => {
+test('8. Bancontact cancelled on the provider page: no order, the cart is intact', { tag: ['@redirect'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const [record] = await getPaymentIntentRecordsOfCart(session.cart.code);
   const placement = waitForPlaceOrder(page);
@@ -69,14 +68,14 @@ test('8. Bancontact cancelled on the provider page: no order, the cart is intact
   await expectNoOrderAndCartIntact(session);
 });
 
-test('8 (error code). a cancelled Bancontact payment gives the stable Stripe error code', async ({ page }) => {
+test('8 (error code). a cancelled Bancontact payment gives the stable Stripe error code', { tag: ['@redirect'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   const placement = waitForPlaceOrder(page);
   await payWithBancontact(page, 'fail', true);
   expect((await placement).body.errors[0]).toMatchObject({ type: 'StripePaymentError', reason: 'STRIPE_PAYMENT_FAILED' });
 });
 
-test('8 (UI). after a cancelled Bancontact payment the shop shows a warning and the customer can pay again', async ({ page }) => {
+test('8 (UI). after a cancelled Bancontact payment the shop shows a warning and the customer can pay again', { tag: ['@redirect'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithBancontact(page, 'fail', true);
   await expectPaymentStepReady(page);

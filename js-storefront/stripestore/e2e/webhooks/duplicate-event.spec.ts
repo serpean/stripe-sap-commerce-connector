@@ -5,7 +5,7 @@ import { placeOrderWithCard } from '../support/checkout';
 import { postWebhook } from '../support/occ';
 import { findEvents, retrieveEvent, signWebhook, triggerResend } from '../support/stripe';
 
-test('16. duplicate event: processed once', async ({ page }) => {
+test('16. duplicate event: processed once', { tag: ['@webhooks'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithCard(page, { currency: 'USD' });
   const { intent } = await expectOneAuthorizedOrder(orderCode);
   const [event] = await waitFor(async () => {

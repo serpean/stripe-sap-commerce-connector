@@ -449,16 +449,46 @@ Before anything else, the global setup runs a preflight (`e2e/support/preflight.
 
 Each check has a 10 s limit.
 
-The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC: `stripe.webhook.graceperiod.seconds=20`, `stripe.payment.pending.retry.seconds=10`, `stripe.capture.mode=manual`. A server restart reads `local.properties` again.
+The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC (`TEST_TIMINGS`). A server restart reads `local.properties` again.
 
-The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
+| Property | Test value |
+|---|---|
+| `stripe.webhook.graceperiod.seconds` | `20` |
+| `stripe.payment.pending.retry.seconds` | `10` |
+| `stripe.payment.pending.timeout.sepa_debit.seconds` | `600` |
+| `stripe.payment.pending.timeout.multibanco.seconds` | `120` |
+| `stripe.payment.pending.timeout.customer_balance.seconds` | `180` |
+| `stripe.payment.pending.retry.multibanco.seconds` | `10` |
+| `stripe.payment.pending.retry.customer_balance.seconds` | `10` |
+| `stripe.cashbalance.refund.delay.seconds` | `10` |
+| `stripe.capture.mode` | `manual` |
+
+The global setup also refills the stock of the test products to 500 (local HAC only).
+
+The battery has three Playwright projects:
+
+- `parallel`: most specs. They run with 4 workers. Each test has its own customer and cart. A test that compares stock before and after uses a product of its own (`OWN_PRODUCT` in `e2e/support/checkout.ts`).
+- `serial`: specs that change the server configuration (`setConfig`), or that depend on the order or the count of webhook events: `capture-automatic`, `webhook-amount-mismatch`, `race`, `multibanco-paid`, `invalid-signature`. They run with 1 worker. `multibanco-paid` waits about 3 minutes for Stripe: the order must wait in `PAYMENT_PENDING` first, and the Stripe email `succeed_immediately` pays before the order exists. `setConfig` fails in any other project.
+- `slow`: specs that wait for Stripe for real, because no Stripe test input gives the result at once: `sepa-pending`, `sepa-failed`. They run with 2 workers.
+
+Scripts:
+
+| Script | What it runs |
+|---|---|
+| `npm run e2e` | `parallel`, then `serial`, then `slow`. A failed phase does not stop the next. The exit code is the worst one. |
+| `npm run e2e:fast` | `parallel` and `serial`, without `slow`. |
+| `npm run e2e:area -- @sepa @card` | Only the tests with one of the tags, in the three projects. |
+
+Each test has one or more area tags: `@card`, `@redirect`, `@sepa`, `@multibanco`, `@bank-transfer`, `@after-purchase`, `@webhooks`, `@line-items`. Other Playwright options go after `--`, for example `npm run e2e -- --retries=0`. A plain `npx playwright test --project=parallel` uses 1 worker unless you add `--workers`.
+
+A failed test runs once more (`retries: 1`). The report lists a test that passed on the retry as flaky. Each phase writes its own report (`playwright-report/<project>/index.html`) and its own results (`test-results/<project>`).
 
 Refund checks of the bank transfer specs: a Stripe test account can only email its own verified address, and a refund of the cash balance makes Stripe email the customer. So these specs set the email of the Stripe test customer to the account email, and Stripe sends a refund email to the account owner on each run.
 
-Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report (`playwright-report/index.html`) embeds both.
-Without it, the battery keeps video and trace only for failed tests.
+Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report embeds both.
+Without it, the battery records video and trace only when a test runs again after a failure (`on-first-retry`).
 
-Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_PATH` (default `product/816324/DSC-T20-Cyber-shot-Silver`, a product in stock).
+Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_VIDEO`. The tests pick their products themselves.
 
 #### Unit and integration tests
 

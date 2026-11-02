@@ -4,7 +4,7 @@ import { cancelOrder, waitForOrderStatus, waitForPaymentEntry } from '../support
 import { placeOrderWithBancontact } from '../support/checkout';
 import { listRefunds, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('17. cancel with the money already charged (Bancontact): full refund; refund entry accepted; order cancelled', async ({ page }) => {
+test('17. cancel with the money already charged (Bancontact): full refund; refund entry accepted; order cancelled', { tag: ['@after-purchase'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithBancontact(page);
   const { intent } = await expectOneAuthorizedOrder(orderCode);
   expect(intent.status).toBe('succeeded');

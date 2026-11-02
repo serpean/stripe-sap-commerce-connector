@@ -3,7 +3,7 @@ import { countWebhookEvents, getWebhookEvents, waitFor } from '../support/backen
 import { postWebhook } from '../support/occ';
 import { signWebhook } from '../support/stripe';
 
-test('15. invalid signature: 400; nothing changes', async () => {
+test('15. invalid signature: 400; nothing changes', { tag: ['@webhooks'] }, async () => {
   const eventId = `evt_e2e_${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
   // Built like a real Stripe event (API version of the connector's stripe-java), for a PaymentIntent that is not ours.

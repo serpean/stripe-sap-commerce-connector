@@ -21,7 +21,7 @@ import {
 import { getCart, updateCartEntry } from '../support/occ';
 import { listRefunds, minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('5. the cart changes after the PaymentIntent is created: the amount is synced before the confirmation', async ({ page }) => {
+test('5. the cart changes after the PaymentIntent is created: the amount is synced before the confirmation', { tag: ['@card'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'USD' });
   const [created] = await getPaymentIntentRecordsOfCart(session.cart.code);
   const amountBefore = (await retrievePaymentIntent(created.paymentIntentId)).amount;
@@ -44,7 +44,7 @@ test('5. the cart changes after the PaymentIntent is created: the amount is sync
   expect((await getPaymentIntentRecord(intent.id))?.amount).toBe(minor(newTotal));
 });
 
-test('5 (variant). the cart changes during the payment: the money is returned and the customer pays again', async ({ page }) => {
+test('5 (variant). the cart changes during the payment: the money is returned and the customer pays again', { tag: ['@redirect'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'EUR' });
 
   // The customer is on the Bancontact page when the cart changes in another tab.

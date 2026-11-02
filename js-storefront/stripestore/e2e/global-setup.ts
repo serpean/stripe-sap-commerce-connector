@@ -1,4 +1,4 @@
-import { refillTestStock, setConfig } from './support/backend';
+import { applyTestTimings, refillTestStock } from './support/backend';
 import { Currency, findProductCandidates } from './support/occ';
 import { preflight } from './support/preflight';
 
@@ -18,9 +18,7 @@ export const TEST_TIMINGS: Record<string, string> = {
 
 export default async function globalSetup(): Promise<void> {
   await preflight();
-  for (const [key, value] of Object.entries(TEST_TIMINGS)) {
-    await setConfig(key, value);
-  }
+  await applyTestTimings(TEST_TIMINGS);
   await refillStock();
 }
 

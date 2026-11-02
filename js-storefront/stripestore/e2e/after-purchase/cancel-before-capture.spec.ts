@@ -4,7 +4,7 @@ import { cancelOrder, getPaymentEntries, waitFor, waitForOrderStatus } from '../
 import { placeOrderWithCard } from '../support/checkout';
 import { retrievePaymentIntent } from '../support/stripe';
 
-test('13. cancel before the capture: void; PaymentIntent canceled (delivery included)', async ({ page }) => {
+test('13. cancel before the capture: void; PaymentIntent canceled (delivery included)', { tag: ['@after-purchase'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithCard(page, { currency: 'USD' });
   const { intent } = await expectOneAuthorizedOrder(orderCode);
 

@@ -8,16 +8,16 @@ import {
   waitForOrderStatus,
   waitForPaymentEntry,
 } from '../support/backend';
-import { checkoutToPayment, expectOrderConfirmation, payWithSepa, SEPA_IBANS } from '../support/checkout';
+import { checkoutToPayment, expectOrderConfirmation, OWN_PRODUCT, payWithSepa, SEPA_IBANS } from '../support/checkout';
 import { expectOneAuthorizedOrder } from '../support/assertions';
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is accepted and can ship', async ({ page }) => {
+test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is accepted and can ship', { tag: ['@sepa'] }, async ({ page }) => {
   // Stripe can take several minutes to settle a test debit (9 min seen); the waits below allow it, the test must too.
   test.setTimeout(900_000);
-  const session = await checkoutToPayment(page, { currency: 'EUR' });
+  const session = await checkoutToPayment(page, { currency: 'EUR', ownProduct: OWN_PRODUCT.sepaPending });
   const stockBefore = await getAvailableStock(session.product.code);
-  await payWithSepa(page, SEPA_IBANS.succeedsAfterDelay);
+  await payWithSepa(page, SEPA_IBANS.succeeds);
   const orderCode = await expectOrderConfirmation(page);
 
   // The debit takes time: the order exists, but the money has not arrived. No payment authorization, no sourcing.
