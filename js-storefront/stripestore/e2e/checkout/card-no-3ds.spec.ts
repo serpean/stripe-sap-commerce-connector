@@ -4,7 +4,7 @@ import { CARDS, checkoutToPayment, expectOrderConfirmation, payWithCard } from '
 import { getStripeConfigAnonymously } from '../support/occ';
 import { minor, retrievePaymentIntent } from '../support/stripe';
 
-test('1. card without 3DS: order created with an accepted AUTHORIZATION', async ({ page }) => {
+test('1. card without 3DS: order created with an accepted AUTHORIZATION', { tag: ['@card'] }, async ({ page }) => {
   // The storefront reads the publishable key from the backend without a token.
   const config = await getStripeConfigAnonymously();
   expect(config.status).toBe(200);

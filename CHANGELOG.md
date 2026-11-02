@@ -4,6 +4,17 @@ All notable changes to the Stripe connector for SAP Commerce Cloud are listed he
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- E2E tests: three Playwright projects. `parallel` runs with 4 workers, `serial` (specs that change the server
+  configuration or depend on the order of webhook events) with 1, and `slow` (SEPA, which waits for Stripe) with 2.
+  `npm run e2e` runs them one after the other; `npm run e2e:fast` leaves out `slow`; `npm run e2e:area -- @tag`
+  runs only the tests with the tags. Each test has area tags (`@card`, `@redirect`, `@sepa`, `@multibanco`,
+  `@bank-transfer`, `@after-purchase`, `@webhooks`, `@line-items`).
+- E2E tests: one retry, and video and trace only on the retry (`E2E_VIDEO=on` still records every test).
+
 ## [4.0.0] - 2026-10-27
 
 More payment methods, and orders that wait for the money (Multibanco and bank transfer).

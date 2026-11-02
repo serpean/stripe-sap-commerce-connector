@@ -4,7 +4,7 @@ import { setConfig, shipOrder, waitForOrderStatus, waitForPaymentEntry } from '.
 import { placeOrderWithCard } from '../support/checkout';
 import { minor, retrievePaymentIntent } from '../support/stripe';
 
-test.describe('automatic capture mode', () => {
+test.describe('automatic capture mode', { tag: ['@after-purchase'] }, () => {
   test.beforeAll(async () => setConfig('stripe.capture.mode', 'automatic'));
   test.afterAll(async () => setConfig('stripe.capture.mode', 'manual'));
 

@@ -36,13 +36,23 @@ async function expectOk(response: APIResponse, what: string): Promise<APIRespons
   return response;
 }
 
+/**
+ * Gets an OAuth token. Parallel workers can ask for a token of the same client at the same moment, and the server
+ * then can answer 500 (the token store rolls back one of them): such an answer is tried again.
+ */
 async function token(form: Record<string, string>): Promise<string> {
   return withApi(async (api) => {
-    const response = await api.post(`${OCC_URL}/authorizationserver/oauth/token`, {
-      form: { client_id: CLIENT_ID, client_secret: CLIENT_SECRET, ...form },
-    });
-    await expectOk(response, `OAuth token (${form['grant_type']})`);
-    return (await response.json()).access_token as string;
+    for (let attempt = 1; ; attempt++) {
+      const response = await api.post(`${OCC_URL}/authorizationserver/oauth/token`, {
+        form: { client_id: CLIENT_ID, client_secret: CLIENT_SECRET, ...form },
+      });
+      if (response.status() >= 500 && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+      await expectOk(response, `OAuth token (${form['grant_type']})`);
+      return (await response.json()).access_token as string;
+    }
   });
 }
 
@@ -100,7 +110,8 @@ export async function addDefaultAddress(customer: Customer): Promise<void> {
   );
 }
 
-const productCache = new Map<Currency, Product>();
+/** The product of each currency and slot that this worker picked. */
+const productCache = new Map<string, Product>();
 
 /** Stock statuses of the product detail that the shop can sell. */
 const SELLABLE = new Set(['inStock', 'lowStock']);
@@ -149,18 +160,22 @@ export async function findProductCandidates(currency: Currency): Promise<Candida
  * Finds a product that is in stock and has a price in the currency. The tests do not depend on the stock of one
  * product. The cheapest suitable product above 20 is used, so that the amounts stay small but not trivial. The search
  * index can be older than the stock, so the stock status of the product detail must be sellable too.
+ *
+ * Slot 0 is the product that most tests share. A test that compares the stock before and after uses a slot of its own
+ * (see OWN_PRODUCT in checkout.ts): the next suitable products, which no other test orders.
  */
-export async function findInStockProduct(currency: Currency): Promise<Product> {
-  const cached = productCache.get(currency);
+export async function findInStockProduct(currency: Currency, slot = 0): Promise<Product> {
+  const key = `${currency}:${slot}`;
+  const cached = productCache.get(key);
   if (cached) {
     return cached;
   }
-  const sellable = (await findProductCandidates(currency)).find((p) => SELLABLE.has(p.stockStatus ?? ''));
+  const sellable = (await findProductCandidates(currency)).filter((p) => SELLABLE.has(p.stockStatus ?? ''))[slot];
   if (!sellable) {
-    throw new Error(`No product in stock with a ${currency} price`);
+    throw new Error(`No product in stock with a ${currency} price for slot ${slot}`);
   }
   const product: Product = { code: sellable.code, name: sellable.name, price: sellable.price };
-  productCache.set(currency, product);
+  productCache.set(key, product);
   return product;
 }
 

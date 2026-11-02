@@ -7,7 +7,7 @@ import { findEvents, triggerResend } from '../support/stripe';
 
 const GRACE_MS = 20_000;
 
-test('9. the customer return and the webhook arrive at the same time: one order', async ({ page }) => {
+test('9. the customer return and the webhook arrive at the same time: one order', { tag: ['@card', '@webhooks'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'USD' });
   const [record] = await getPaymentIntentRecordsOfCart(session.cart.code);
 

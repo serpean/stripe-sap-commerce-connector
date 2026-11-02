@@ -6,13 +6,14 @@ import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
 const TIMEOUT_KEY = 'stripe.payment.pending.timeout.multibanco.seconds';
 
-test.describe('Multibanco', () => {
+test.describe('Multibanco', { tag: ['@multibanco'] }, () => {
   test.afterEach(async () => {
     await setConfig(TIMEOUT_KEY, TEST_TIMINGS[TIMEOUT_KEY]);
   });
 
   test('15. Multibanco paid: the order waits in PAYMENT_PENDING with the voucher, then it is accepted and can ship', async ({ page }) => {
     // Stripe test email without a prefix: the payment arrives after about 3 minutes. The connector timeout is longer.
+    // succeed_immediately is no help here: Stripe pays before the order is placed, so the order never waits.
     test.setTimeout(900_000);
     await setConfig(TIMEOUT_KEY, '900');
     const session = await checkoutToPayment(page, { currency: 'EUR' });

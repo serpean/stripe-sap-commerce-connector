@@ -4,7 +4,7 @@ import { createReturn, getSapOrder, shipOrder, waitFor, waitForOrderStatus, wait
 import { placeOrderWithCard } from '../support/checkout';
 import { listRefunds, minor, retrievePaymentIntent } from '../support/stripe';
 
-test('14. return: refund in Stripe; REFUND_FOLLOW_ON entry accepted', async ({ page }) => {
+test('14. return: refund in Stripe; REFUND_FOLLOW_ON entry accepted', { tag: ['@after-purchase'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithCard(page, { currency: 'USD' });
   const { order, intent } = await expectOneAuthorizedOrder(orderCode);
   await waitForOrderStatus(orderCode, 'READY');

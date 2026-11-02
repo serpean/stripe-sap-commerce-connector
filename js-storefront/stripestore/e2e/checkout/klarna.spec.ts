@@ -4,7 +4,7 @@ import { getPaymentIntentRecord, shipOrder, waitForOrderStatus, waitForPaymentEn
 import { checkoutToPayment, expectOrderConfirmation, payWithKlarna } from '../support/checkout';
 import { minor, netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('12. Klarna: the money is reserved, shipping in OMS captures the order total', async ({ page }) => {
+test('12. Klarna: the money is reserved, shipping in OMS captures the order total', { tag: ['@redirect', '@after-purchase'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithKlarna(page, 'approve');
   const orderCode = await expectOrderConfirmation(page);

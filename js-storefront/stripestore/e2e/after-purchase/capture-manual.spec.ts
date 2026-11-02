@@ -4,7 +4,7 @@ import { cancelOrder, getSapOrder, shipOrder, waitForOrderStatus, waitForPayment
 import { placeOrderWithCard } from '../support/checkout';
 import { minor, retrievePaymentIntent } from '../support/stripe';
 
-test('11. manual mode: the capture happens when the order ships; CAPTURE accepted; PaymentIntent succeeded', async ({ page }) => {
+test('11. manual mode: the capture happens when the order ships; CAPTURE accepted; PaymentIntent succeeded', { tag: ['@after-purchase'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithCard(page, { currency: 'USD' });
   const { order, intent } = await expectOneAuthorizedOrder(orderCode);
   expect(intent.status).toBe('requires_capture');
@@ -25,7 +25,7 @@ test('11. manual mode: the capture happens when the order ships; CAPTURE accepte
   expect(captured.amount_received).toBe(minor(order.totalPrice));
 });
 
-test('11 (partial cancel first). manual mode: the capture takes the current total, not the authorized amount', async ({ page }) => {
+test('11 (partial cancel first). manual mode: the capture takes the current total, not the authorized amount', { tag: ['@after-purchase'] }, async ({ page }) => {
   const { orderCode } = await placeOrderWithCard(page, { currency: 'USD', quantity: 2 });
   const { order: placed, intent } = await expectOneAuthorizedOrder(orderCode);
 

@@ -13,7 +13,7 @@ import {
   payWithCard,
 } from '../support/checkout';
 
-test('2. card with 3DS completed: order created', async ({ page }) => {
+test('2. card with 3DS completed: order created', { tag: ['@card'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithCard(page, CARDS.threeDs);
   await completeThreeDs(page, 'complete');
@@ -25,7 +25,7 @@ test('2. card with 3DS completed: order created', async ({ page }) => {
   expect(order.currency).toBe('EUR');
 });
 
-test('3. card with 3DS failed: no order, the customer stays on the payment step, the cart is intact', async ({ page }) => {
+test('3. card with 3DS failed: no order, the customer stays on the payment step, the cart is intact', { tag: ['@card'] }, async ({ page }) => {
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   await payWithCard(page, CARDS.threeDs);
   await completeThreeDs(page, 'fail');
@@ -42,7 +42,7 @@ test('3. card with 3DS failed: no order, the customer stays on the payment step,
   await expectNoOrderAndCartIntact(session);
 });
 
-test('3 (UI). after a failed 3DS the shop shows its error and the customer can pay again', async ({ page }) => {
+test('3 (UI). after a failed 3DS the shop shows its error and the customer can pay again', { tag: ['@card'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithCard(page, CARDS.threeDs);
   await completeThreeDs(page, 'fail');

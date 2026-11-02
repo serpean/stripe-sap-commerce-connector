@@ -17,9 +17,8 @@ test.afterEach(async () => {
   await setConfig(GRACE, TEST_TIMINGS[GRACE]);
 });
 
-test('10. the amount does not match when the webhook arrives: no order, the money is returned', async ({ browser }) => {
+test('10. the amount does not match when the webhook arrives: no order, the money is returned', { tag: ['@redirect', '@webhooks'] }, async ({ page }) => {
   test.setTimeout(600_000);
-  const page = await browser.newPage();
   const session = await checkoutToPayment(page, { currency: 'EUR' });
   const [record] = await getPaymentIntentRecordsOfCart(session.cart.code);
 

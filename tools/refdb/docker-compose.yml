@@ -1,0 +1,31 @@
+# PostgreSQL for the reference platform (local only).
+# Use scripts/dev/refdb.sh to start it and to point the platform at it.
+# The script runs init/01-databases.sql through psql. A bind mount is not used,
+# because a Docker engine in a VM does not always see the host folders.
+name: stripe-refdb
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: stripe-refdb
+    # Start again after a restart of the Docker engine (for example a colima VM restart).
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hybris
+      # Local, fixed password. It is not a production secret.
+      POSTGRES_PASSWORD: hybris
+      POSTGRES_DB: hybris
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - stripe-refdb-data:/var/lib/postgresql/data
+    healthcheck:
+      # TCP, not the socket: during the first start the init server listens only on the socket.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U hybris -d hybris"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  stripe-refdb-data:
+    name: stripe-refdb-data

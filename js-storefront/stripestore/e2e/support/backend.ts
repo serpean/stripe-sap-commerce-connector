@@ -1,4 +1,4 @@
-import { APIRequestContext } from '@playwright/test';
+import { APIRequestContext, test } from '@playwright/test';
 import { Customer, OCC_URL, getOccOrder, withApi } from './occ';
 
 /*
@@ -421,8 +421,26 @@ println created.code`,
   return code;
 }
 
-/** Changes a configuration property in the running server (not persisted; a restart reads local.properties again). */
+/**
+ * Changes a configuration property in the running server (not persisted; a restart reads local.properties again).
+ * The server is shared by all workers, so only the tests of the serial project may change it.
+ */
 export async function setConfig(key: string, value: string): Promise<void> {
+  const project = test.info().project.name;
+  if (project !== 'serial') {
+    throw new Error(`setConfig is only allowed in the serial project (this test runs in "${project}"): ${key}`);
+  }
+  await writeConfig(key, value);
+}
+
+/** Sets the test timings on the running server. Only for the global setup, before any test runs. */
+export async function applyTestTimings(timings: Record<string, string>): Promise<void> {
+  for (const [key, value] of Object.entries(timings)) {
+    await writeConfig(key, value);
+  }
+}
+
+async function writeConfig(key: string, value: string): Promise<void> {
   await groovy(
     `configurationService.configuration.setProperty(${JSON.stringify(key)}, ${JSON.stringify(value)})
 println configurationService.configuration.getString(${JSON.stringify(key)})`,

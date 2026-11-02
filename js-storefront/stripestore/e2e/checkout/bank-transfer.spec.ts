@@ -10,7 +10,7 @@ import {
   waitForOrderStatus,
   waitForPaymentEntry,
 } from '../support/backend';
-import { checkoutToPayment, CheckoutSession, expectOrderConfirmation, expectPaymentInstructions, payWithBankTransfer } from '../support/checkout';
+import { checkoutToPayment, CheckoutSession, expectOrderConfirmation, expectPaymentInstructions, OWN_PRODUCT, payWithBankTransfer } from '../support/checkout';
 import { bankTransferReference, fundCashBalance, getCashBalance, listCashBalanceTransactions, listCustomerBalanceRefunds, minor, netCaptured, retrievePaymentIntent, useAccountEmailForRefunds } from '../support/stripe';
 import { Page } from '@playwright/test';
 
@@ -23,9 +23,12 @@ interface Pending {
   reference: string;
 }
 
-/** Pays with a bank transfer and checks that the order waits in PAYMENT_PENDING with the transfer instructions. */
-async function placePendingBankTransfer(page: Page, quantity = 1): Promise<Pending> {
-  const session = await checkoutToPayment(page, { currency: 'EUR', quantity });
+/**
+ * Pays with a bank transfer and checks that the order waits in PAYMENT_PENDING with the transfer instructions. The
+ * stock check needs a product of its own (a slot of OWN_PRODUCT).
+ */
+async function placePendingBankTransfer(page: Page, ownProduct: number, quantity = 1): Promise<Pending> {
+  const session = await checkoutToPayment(page, { currency: 'EUR', quantity, ownProduct });
   const stockBefore = await getAvailableStock(session.product.code);
   await payWithBankTransfer(page);
   const orderCode = await expectOrderConfirmation(page);
@@ -48,11 +51,11 @@ async function placePendingBankTransfer(page: Page, quantity = 1): Promise<Pendi
   return { session, orderCode, intentId, total: minor(pending.totalPrice), customerId: customerId!, reference: await bankTransferReference(intentId) };
 }
 
-test.describe('Bank transfer (customer_balance)', () => {
+test.describe('Bank transfer (customer_balance)', { tag: ['@bank-transfer'] }, () => {
   test.setTimeout(900_000);
 
   test('18. exact transfer: the order is accepted', async ({ page }) => {
-    const p = await placePendingBankTransfer(page);
+    const p = await placePendingBankTransfer(page, OWN_PRODUCT.bankTransferExact);
     await fundCashBalance(p.customerId, p.total, p.reference);
 
     await waitForOrderStatus(p.orderCode, 'READY', 300_000);
@@ -65,7 +68,7 @@ test.describe('Bank transfer (customer_balance)', () => {
   });
 
   test('19. underpaid: the order stays pending, at the timeout it is cancelled and the funds go back to the customer', async ({ page }) => {
-    const p = await placePendingBankTransfer(page);
+    const p = await placePendingBankTransfer(page, OWN_PRODUCT.bankTransferUnderpaid);
     const half = Math.floor(p.total / 2);
     const since = Math.floor(Date.now() / 1000) - 5;
     // Stripe emails the customer to collect the bank details of a refund; a test account can only email itself.
@@ -96,7 +99,7 @@ test.describe('Bank transfer (customer_balance)', () => {
   });
 
   test('20. overpaid: the order is accepted and the excess goes back to the customer', async ({ page }) => {
-    const p = await placePendingBankTransfer(page);
+    const p = await placePendingBankTransfer(page, OWN_PRODUCT.bankTransferOverpaid);
     const extra = 500;
     const since = Math.floor(Date.now() / 1000) - 5;
     // Stripe emails the customer to collect the bank details of a refund; a test account can only email itself.
@@ -119,7 +122,7 @@ test.describe('Bank transfer (customer_balance)', () => {
   });
 
   test('21. a pending bank transfer order cannot be cancelled in part; a full cancel releases the PaymentIntent', async ({ page }) => {
-    const p = await placePendingBankTransfer(page, 2);
+    const p = await placePendingBankTransfer(page, OWN_PRODUCT.bankTransferCancel, 2);
 
     // The cancel service denies the partial cancel with code 7301 and the stable name in the description; the full cancel passes.
     expect(await getCancelDenial(p.orderCode, true)).toMatch(/7301.*stripe-payment-pending:/);

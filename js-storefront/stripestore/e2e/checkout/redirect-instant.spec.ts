@@ -7,7 +7,7 @@ import { minor, netCaptured } from '../support/stripe';
 // Bizum has a test simulation in Stripe test mode (the phone number is accepted, no provider page): it is used here.
 const METHOD = 'bizum';
 
-test(`13. instant redirect method (${METHOD}): the order is charged at once`, async ({ page }) => {
+test(`13. instant redirect method (${METHOD}): the order is charged at once`, { tag: ['@redirect'] }, async ({ page }) => {
   await checkoutToPayment(page, { currency: 'EUR' });
   await payWithRedirectMethod(page, METHOD, 'authorize');
   const orderCode = await expectOrderConfirmation(page);

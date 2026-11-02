@@ -355,6 +355,18 @@ rsync -a --delete core-customize/installer/recipes/b2c_occ_stripe/ /path/to/plat
 
 The recipe installs the order management (OMS) extensions, so orders use the OMS order process (`order-process`).
 
+The reference platform uses PostgreSQL 16 in Docker. Start it before the platform:
+
+```bash
+scripts/dev/refdb.sh up
+```
+
+It starts the container `stripe-refdb` on `localhost:5433`, with the volume `stripe-refdb-data`. It creates the databases `hybris` and `hybris_junit` for the user `hybris`. The password is local and fixed: it is not a secret. `scripts/dev/refdb.sh down` stops the container and keeps the data. `scripts/dev/refdb.sh status` shows the container and the database that the platform uses.
+
+The platform needs the PostgreSQL JDBC driver in `hybris/bin/platform/lib/dbdriver`. SAP Commerce 2211 includes it. If it is missing, `refdb.sh use-postgres` downloads `postgresql-42.7.11.jar` from Maven Central and checks its SHA-256.
+
+HSQLDB is the alternative without Docker. Skip `refdb.sh` and the platform uses its HSQLDB files in `hybris/data/hsqldb`.
+
 ### 2. Stripe keys
 
 Put the test keys in a `.env` file in the repository root. Git ignores it.
@@ -371,10 +383,23 @@ Use Java 17.
 
 ```bash
 set -a; . ./.env; set +a
-cd /path/to/platform/installer
-./install.sh -r b2c_occ_stripe setup -A initAdminPassword=<password>
+export HYBRIS_PLATFORM=/path/to/platform
+(cd "$HYBRIS_PLATFORM/installer" && ./install.sh -r b2c_occ_stripe setup -A initAdminPassword=<password>)
+scripts/dev/refdb.sh use-postgres
+cd "$HYBRIS_PLATFORM/installer"
 ./install.sh -r b2c_occ_stripe initialize -A initAdminPassword=<password>
 ./install.sh -r b2c_occ_stripe start
+```
+
+`setup` writes `local.properties` again, so run `refdb.sh use-postgres` after each `setup`. The script finds the platform in `HYBRIS_PLATFORM` (default: the folder `../stripe-ref-platform` next to this repo). It adds the `db.*` keys to `hybris/config/local.properties`, between the lines `# >>> refdb` and `# <<< refdb`. It also writes `hybris/config/local_tenant_junit.properties`, so the junit tenant uses the database `hybris_junit`.
+
+To go back to HSQLDB, run `scripts/dev/refdb.sh use-hsqldb`. It removes only that block and that file. A new database needs `initialize` once.
+
+If the server cannot connect to `localhost:5433` and you use colima, colima may not forward ports bound to `127.0.0.1`. Open an SSH tunnel to the VM, on `127.0.0.1` only:
+
+```bash
+colima ssh-config > "$TMPDIR/colima.ssh"
+ssh -F "$TMPDIR/colima.ssh" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -N -L 127.0.0.1:5433:127.0.0.1:5433 colima &
 ```
 
 ### 4. Stripe CLI and webhooks
@@ -416,20 +441,69 @@ cd js-storefront/stripestore
 npm run e2e
 ```
 
-The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC: `stripe.webhook.graceperiod.seconds=20`, `stripe.payment.pending.retry.seconds=10`, `stripe.capture.mode=manual`. A server restart reads `local.properties` again.
+Before anything else, the global setup runs a preflight (`e2e/support/preflight.ts`). It fails in seconds, and names the value it used, when:
 
-The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.
+- `E2E_BASE_URL` does not answer or does not serve the stripestore app (its `<title>` must be `Stripestore`);
+- `E2E_OCC_URL` + `/hac/` does not answer with 200 or 302;
+- `stripe listen ... --forward-to` is not running.
+
+Each check has a 10 s limit.
+
+The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC (`TEST_TIMINGS`). A server restart reads `local.properties` again.
+
+| Property | Test value |
+|---|---|
+| `stripe.webhook.graceperiod.seconds` | `20` |
+| `stripe.payment.pending.retry.seconds` | `10` |
+| `stripe.payment.pending.timeout.sepa_debit.seconds` | `600` |
+| `stripe.payment.pending.timeout.multibanco.seconds` | `120` |
+| `stripe.payment.pending.timeout.customer_balance.seconds` | `180` |
+| `stripe.payment.pending.retry.multibanco.seconds` | `10` |
+| `stripe.payment.pending.retry.customer_balance.seconds` | `10` |
+| `stripe.cashbalance.refund.delay.seconds` | `10` |
+| `stripe.capture.mode` | `manual` |
+
+The global setup also refills the stock of the test products to 500 (local HAC only).
+
+The battery has three Playwright projects:
+
+- `parallel`: most specs. They run with 4 workers. Each test has its own customer and cart. A test that compares stock before and after uses a product of its own (`OWN_PRODUCT` in `e2e/support/checkout.ts`).
+- `serial`: specs that change the server configuration (`setConfig`), or that depend on the order or the count of webhook events: `capture-automatic`, `webhook-amount-mismatch`, `race`, `multibanco-paid`, `invalid-signature`. They run with 1 worker. `multibanco-paid` waits about 3 minutes for Stripe: the order must wait in `PAYMENT_PENDING` first, and the Stripe email `succeed_immediately` pays before the order exists. `setConfig` fails in any other project.
+- `slow`: specs that wait for Stripe for real, because no Stripe test input gives the result at once: `sepa-pending`, `sepa-failed`. They run with 2 workers.
+
+Scripts:
+
+| Script | What it runs |
+|---|---|
+| `npm run e2e` | `parallel`, then `serial`, then `slow`. A failed phase does not stop the next. The exit code is the worst one. |
+| `npm run e2e:fast` | `parallel` and `serial`, without `slow`. |
+| `npm run e2e:area -- @sepa @card` | Only the tests with one of the tags, in the three projects. |
+| `npm run e2e:changed` | Chooses the tags from the files that the branch changes, and runs them. Runs `npm run e2e` if the result is `ALL`. Runs nothing if no e2e is needed. |
+
+Each test has one or more area tags: `@card`, `@redirect`, `@sepa`, `@multibanco`, `@bank-transfer`, `@after-purchase`, `@webhooks`, `@line-items`. Other Playwright options go after `--`, for example `npm run e2e -- --retries=0`. A plain `npx playwright test --project=parallel` uses 1 worker unless you add `--workers`.
+
+`e2e:changed` reads `git diff <base>...HEAD`, the uncommitted files and the untracked files. The base is `origin/main`; change it with `npm run e2e:changed -- --base <ref>`. The map is `e2e/select/areas.json`: an ordered list of `{ "pattern", "tags" }`, and the first rule that matches a file wins. A rule with no tags means that the file needs no e2e (for example `README.md`). A file that no rule matches, a change in the e2e support code, and a change in `areas.json` or the selector select `ALL`. If git cannot give the files (for example, an unknown base), `e2e:changed` warns and runs the whole suite. A phase with no matching test is skipped, so that its global setup does not run. To see the result without a run, use `node e2e/select/select-areas.mjs`; add `--run --dry-run` to see the command. Test the selector with `npm run e2e:select:test`. When you add a Java package or a library folder, add a rule: the test fails if a tracked Java file has none.
+
+A failed test runs once more (`retries: 1`). The report lists a test that passed on the retry as flaky. Each phase writes its own report (`playwright-report/<project>/index.html`) and its own results (`test-results/<project>`).
 
 Refund checks of the bank transfer specs: a Stripe test account can only email its own verified address, and a refund of the cash balance makes Stripe email the customer. So these specs set the email of the Stripe test customer to the account email, and Stripe sends a refund email to the account owner on each run.
 
-Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report (`playwright-report/index.html`) embeds both.
-Without it, the battery keeps video and trace only for failed tests.
+Videos: with `E2E_VIDEO=on`, every test records a video and a trace, and the HTML report embeds both.
+Without it, the battery records video and trace only when a test runs again after a failure (`on-first-retry`).
 
-Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_PRODUCT_PATH` (default `product/816324/DSC-T20-Cyber-shot-Silver`, a product in stock).
+Variables: `E2E_BASE_URL` (default `http://localhost:4200`), `E2E_OCC_URL` (default `https://localhost:9002`), `E2E_VIDEO`. The tests pick their products themselves.
 
 #### Unit and integration tests
 
-From `hybris/bin/platform`, after `. ./setantenv.sh` with Java 17:
+To run the unit tests fast, use Gradle. It does not start SAP Commerce, and it works while the server runs. It needs Java 17 and a local platform where `ant all` ran once. The default platform is the folder `../stripe-ref-platform` next to this repo. Change it with `HYBRIS_PLATFORM` or `--platform <dir>`.
+
+```bash
+scripts/dev/unit-tests.sh
+```
+
+It runs the `@UnitTest` classes of `stripecore`, `stripefacades` and `stripeocc`, and it exits with an error if one test fails. It needs `models.jar` and the `gensrc` folders of the extensions, so run `ant all` once if they are missing.
+
+Another way is `ant`. From `hybris/bin/platform`, after `. ./setantenv.sh` with Java 17:
 
 ```bash
 ant all
@@ -438,7 +512,26 @@ ant yunitinit
 ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
 ```
 
+With PostgreSQL (`refdb.sh use-postgres`), the junit tenant has its own database, `hybris_junit`. `ant yunitinit` initializes it once. The integration tests then do not change the data of the master tenant, and they can run while the server runs. When the server runs, set two variables for the tests:
+
+```bash
+y_os_rmiregistry_port=2199 y_solrserver_instances_default_autostart=false \
+  ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
+```
+
+SAP Commerce reads a `y_` environment variable as a property (`y_os_rmiregistry_port` is `os.rmiregistry.port`). The server holds the RMI port `2198` of `mediaconversion`, so the tests use another port. Without the second variable, the tests use the Solr of the server and stop it when they end.
+
 Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
+
+### Cycle of a task
+
+Keep the server running. For each task, run these three steps:
+
+1. `scripts/dev/unit-tests.sh`
+2. `ant integrationtests` (with the two variables above)
+3. `npm run e2e:changed` (only the areas that the branch changes)
+
+Before you publish, run the full battery: `npm run e2e`.
 
 ### stripesampledata
 

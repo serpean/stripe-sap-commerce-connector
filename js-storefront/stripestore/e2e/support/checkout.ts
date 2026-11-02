@@ -94,6 +94,19 @@ export function sitePath(currency: Currency): string {
   return `/electronics-spa/en/${currency}`;
 }
 
+/**
+ * Product slots (see findInStockProduct) of the tests that compare the stock of the product before and after. Each
+ * slot belongs to one test, so that the orders of the other workers do not change its stock.
+ */
+export const OWN_PRODUCT = {
+  bankTransferExact: 1,
+  bankTransferUnderpaid: 2,
+  bankTransferOverpaid: 3,
+  bankTransferCancel: 4,
+  sepaPending: 5,
+  sepaFailed: 6,
+} as const;
+
 export interface CheckoutSession {
   customer: Customer;
   cart: OccCart;
@@ -118,16 +131,16 @@ export async function login(page: Page, customer: Customer, currency: Currency):
 
 /**
  * Registers a new customer with an address, puts an in-stock product in a new cart (by OCC), logs in and goes through
- * the checkout to the payment step. Waits for the Stripe Payment Element.
+ * the checkout to the payment step. Waits for the Stripe Payment Element. ownProduct is a slot of OWN_PRODUCT.
  */
 export async function checkoutToPayment(
   page: Page,
-  options: { currency: Currency; quantity?: number }
+  options: { currency: Currency; quantity?: number; ownProduct?: number }
 ): Promise<CheckoutSession> {
   const { currency } = options;
   const customer = await registerCustomer();
   await addDefaultAddress(customer);
-  const product = await findInStockProduct(currency);
+  const product = await findInStockProduct(currency, options.ownProduct);
   await ensureTestStock(product.code);
   const cart = await createCartWithProduct(customer, currency, product.code, options.quantity ?? 1);
 
@@ -137,12 +150,24 @@ export async function checkoutToPayment(
   await page.locator('cx-progress-button').filter({ hasText: /proceed to checkout/i }).click();
 
   await expect(page).toHaveURL(/checkout\/delivery-address/);
-  await page.getByRole('button', { name: /continue/i }).click();
-  await expect(page).toHaveURL(/checkout\/delivery-mode/);
-  await page.getByRole('button', { name: /continue/i }).click();
-  await expect(page).toHaveURL(/checkout\/payment-details/);
-  await expect(paymentElement(page).locator('input').first()).toBeAttached({ timeout: 30_000 });
+  await continueTo(page, /checkout\/delivery-mode/);
+  await continueTo(page, /checkout\/payment-details/);
+  // With 4 workers the Stripe frame can take more than 30 s to load.
+  await expect(paymentElement(page).locator('input').first()).toBeAttached({ timeout: 60_000 });
   return { customer, cart, product, currency };
+}
+
+/**
+ * Clicks "Continue" until the checkout goes to the next step. On a busy server the step can still be saving its data
+ * (for example the delivery mode), and a click in that moment is lost.
+ */
+async function continueTo(page: Page, nextStep: RegExp): Promise<void> {
+  await expect(async () => {
+    if (!nextStep.test(page.url())) {
+      await page.getByRole('button', { name: /continue/i }).click({ timeout: 5_000 });
+    }
+    await expect(page).toHaveURL(nextStep, { timeout: 10_000 });
+  }).toPass({ timeout: 60_000 });
 }
 
 export function paymentElement(page: Page): FrameLocator {
@@ -363,9 +388,12 @@ export async function payWithRedirectMethod(page: Page, method: string, outcome:
   }
 }
 
-/** Test IBANs of docs.stripe.com/testing#sepa-direct-debit. */
+/**
+ * Test IBANs of docs.stripe.com/testing#sepa-direct-debit: the fastest ones ("processing to succeeded" and "processing to
+ * requires_payment_method", without "after at least three minutes"). Stripe gives no time for them: minutes were seen.
+ */
 export const SEPA_IBANS = {
-  succeedsAfterDelay: 'DE89370400440532013000',
+  succeeds: 'DE89370400440532013000',
   fails: 'DE62370400440532013001',
 } as const;
 

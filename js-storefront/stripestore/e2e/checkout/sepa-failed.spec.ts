@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { getAvailableStock, getOrderCodesOfCustomer, getSapOrder, waitFor, waitForOrderStatus } from '../support/backend';
-import { checkoutToPayment, expectOrderConfirmation, payWithSepa, SEPA_IBANS } from '../support/checkout';
+import { checkoutToPayment, expectOrderConfirmation, OWN_PRODUCT, payWithSepa, SEPA_IBANS } from '../support/checkout';
 import { netCaptured, retrievePaymentIntent } from '../support/stripe';
 
-test('15. SEPA Direct Debit fails: the order is cancelled and the stock is as before the order', async ({ page }) => {
+test('15. SEPA Direct Debit fails: the order is cancelled and the stock is as before the order', { tag: ['@sepa'] }, async ({ page }) => {
   // Stripe can take several minutes to settle a test debit (9 min seen); the waits below allow it, the test must too.
   test.setTimeout(900_000);
-  const session = await checkoutToPayment(page, { currency: 'EUR' });
+  const session = await checkoutToPayment(page, { currency: 'EUR', ownProduct: OWN_PRODUCT.sepaFailed });
   const stockBefore = await getAvailableStock(session.product.code);
   await payWithSepa(page, SEPA_IBANS.fails);
   const orderCode = await expectOrderConfirmation(page);
