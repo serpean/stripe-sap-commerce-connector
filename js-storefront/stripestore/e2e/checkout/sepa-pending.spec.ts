@@ -21,15 +21,24 @@ test('14. SEPA Direct Debit: the order waits in PAYMENT_PENDING, then it is acce
   const orderCode = await expectOrderConfirmation(page);
 
   // The debit takes time: the order exists, but the money has not arrived. No payment authorization, no sourcing.
-  // The status is set a moment after the confirmation page: wait for it.
-  const pending = await waitForOrderStatus(orderCode, 'PAYMENT_PENDING', 30_000);
-  expect(pending.status).toBe('PAYMENT_PENDING');
-  expect((await getOrder(session.customer, orderCode)).stripePaymentInfo?.paymentStatus).toBe('PENDING');
-  expect((await getPaymentEntries(orderCode)).filter((e) => e.type === 'AUTHORIZATION')).toEqual([]);
-  expect(await getAvailableStock(session.product.code)).toBe(stockBefore);
+  // The status is set a moment after the confirmation page: wait for it. Stripe can also settle the test debit at once,
+  // and then the webhook moves the order on to READY before this test looks. That is legitimate only when the
+  // PaymentIntent has really succeeded: a READY order with an unsettled debit is a connector error.
+  const pending = await waitFor(async () => {
+    const waiting = await waitForOrderStatus(orderCode, 'PAYMENT_PENDING', 5_000).catch(() => undefined);
+    return waiting ?? (await waitForOrderStatus(orderCode, 'READY', 5_000).catch(() => undefined));
+  }, 30_000, `order ${orderCode} in PAYMENT_PENDING or READY`);
   const processing = await retrievePaymentIntent(pending.paymentIntentId!);
-  // On a slow machine the test debit can already be confirmed at this point; the order checks above still ran first.
-  expect(['processing', 'succeeded']).toContain(processing.status);
+  if (pending.status === 'PAYMENT_PENDING') {
+    expect((await getOrder(session.customer, orderCode)).stripePaymentInfo?.paymentStatus).toBe('PENDING');
+    expect((await getPaymentEntries(orderCode)).filter((e) => e.type === 'AUTHORIZATION')).toEqual([]);
+    expect(await getAvailableStock(session.product.code)).toBe(stockBefore);
+    // On a slow machine the test debit can already be confirmed at this point; the order checks above still ran first.
+    expect(['processing', 'succeeded']).toContain(processing.status);
+  } else {
+    expect(pending.status).toBe('READY');
+    expect(processing.status).toBe('succeeded');
+  }
   expect(processing.amount).toBe(minor(pending.totalPrice));
 
   // Stripe confirms the debit (a few minutes in test mode): the order is accepted and sourced.
