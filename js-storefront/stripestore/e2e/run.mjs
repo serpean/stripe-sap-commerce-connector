@@ -26,6 +26,13 @@ const grep = tags.length ? ['--grep', tags.map((tag) => `${tag}\\b`).join('|'), 
 const results = [];
 for (const { project, workers } of PHASES.filter((p) => !fast || p.project !== 'slow')) {
   const started = Date.now();
+  // The global setup runs even when no test matches, so a phase without tests is skipped.
+  const listed = spawnSync('npx', ['playwright', 'test', '--list', `--project=${project}`, ...grep, ...passThrough], { encoding: 'utf8' });
+  if (listed.status === 0 && /Total: 0 tests?\b|No tests found/.test(`${listed.stdout}${listed.stderr}`)) {
+    console.log(`\n=== e2e phase ${project}: no tests, skipped ===`);
+    results.push({ project, code: 0, seconds: 0, skipped: true });
+    continue;
+  }
   console.log(`\n=== e2e phase ${project} (${workers} worker${workers > 1 ? 's' : ''}) ===`);
   const run = spawnSync('npx', ['playwright', 'test', `--project=${project}`, `--workers=${workers}`, ...grep, ...passThrough], {
     stdio: 'inherit',
@@ -35,7 +42,11 @@ for (const { project, workers } of PHASES.filter((p) => !fast || p.project !== '
 }
 
 console.log('\n=== e2e summary ===');
-for (const { project, code, seconds } of results) {
+for (const { project, code, seconds, skipped } of results) {
+  if (skipped) {
+    console.log(`${project}: skipped (no tests)`);
+    continue;
+  }
   console.log(`${project}: ${code === 0 ? 'passed' : `failed (exit ${code})`} in ${Math.floor(seconds / 60)}m ${seconds % 60}s`);
 }
 process.exit(Math.max(...results.map((r) => r.code)));

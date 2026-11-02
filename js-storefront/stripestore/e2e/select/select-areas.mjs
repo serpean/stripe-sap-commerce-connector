@@ -1,10 +1,11 @@
 // Chooses the e2e area tags from the files that a branch changes.
 //
-//   node e2e/select/select-areas.mjs [--base <ref>] [--run]
+//   node e2e/select/select-areas.mjs [--base <ref>] [--run [--dry-run]]
 //
 // It reads `git diff --name-only <base>...HEAD`, the uncommitted changes and the untracked files. It prints one tag per
 // line, or ALL. With --run it also runs `npm run e2e:area` with the tags, or `npm run e2e` for ALL. Nothing is run when
-// no e2e is needed. The default base is origin/main.
+// no e2e is needed. With --dry-run it prints the command instead. If the selector cannot decide (unknown base, git error),
+// --run warns and runs the whole suite; without --run it exits with 2. The default base is origin/main.
 //
 // areas.json is an ordered list. The first rule that matches a file wins. A rule with no tags means that the file needs
 // no e2e. The tag "ALL" means the full suite. A file that no rule matches also selects ALL.
@@ -59,7 +60,7 @@ export function selectAreas(files, rules, { strict = false } = {}) {
 }
 
 function git(root, ...args) {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
+  return execFileSync('git', ['-c', 'core.quotePath=false', ...args], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
 }
 
 export function changedFiles(root, base) {
@@ -70,8 +71,8 @@ export function changedFiles(root, base) {
   }
   return [
     ...new Set([
-      ...git(root, 'diff', '--name-only', `${base}...HEAD`),
-      ...git(root, 'diff', '--name-only', 'HEAD'),
+      ...git(root, 'diff', '--name-only', '--no-renames', `${base}...HEAD`),
+      ...git(root, 'diff', '--name-only', '--no-renames', 'HEAD'),
       ...git(root, 'ls-files', '--others', '--exclude-standard', '--full-name'),
     ]),
   ];
@@ -79,7 +80,16 @@ export function changedFiles(root, base) {
 
 function main() {
   const args = process.argv.slice(2);
-  const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+  const run = args.includes('--run');
+  const option = (name) => {
+    if (!args.includes(name)) return undefined;
+    const value = args[args.indexOf(name) + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`${name} needs a value.`);
+      process.exit(2);
+    }
+    return value;
+  };
   const base = option('--base') ?? 'origin/main';
   const repoDir = option('--repo') ?? here;
   let tags;
@@ -87,18 +97,27 @@ function main() {
     const root = git(repoDir, 'rev-parse', '--show-toplevel')[0];
     tags = selectAreas(changedFiles(root, base), loadRules());
   } catch (error) {
-    console.error(error.message);
-    process.exit(2);
+    // The selector cannot decide. To run, take the safe way: the whole suite.
+    if (!run) {
+      console.error(error.message);
+      process.exit(2);
+    }
+    console.error(`WARNING: ${error.message} Running the whole suite.`);
+    tags = [ALL];
   }
   if (tags.length) console.log(tags.join('\n'));
-  if (!args.includes('--run')) return;
+  if (!run) return;
   if (!tags.length) {
     console.log('no e2e needed');
     return;
   }
   const npmArgs = tags[0] === ALL ? ['run', 'e2e'] : ['run', 'e2e:area', '--', ...tags];
-  const run = spawnSync('npm', npmArgs, { cwd: join(here, '..', '..'), stdio: 'inherit' });
-  process.exit(run.status ?? 1);
+  if (args.includes('--dry-run')) {
+    console.log(`would run: npm ${npmArgs.join(' ')}`);
+    return;
+  }
+  const child = spawnSync('npm', npmArgs, { cwd: join(here, '..', '..'), stdio: 'inherit' });
+  process.exit(child.status ?? 1);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

@@ -103,8 +103,63 @@ test('CLI: sees committed, uncommitted and untracked files', () => {
   assert.equal(cli(dir).stdout, 'ALL\n');
 });
 
-test('CLI: an unknown base exits with 2', () => {
+test('CLI: an unknown base exits with 2 when it only prints', () => {
   const { dir } = repo();
   const run = spawnSync('node', [script, '--repo', dir, '--base', 'nope'], { encoding: 'utf8' });
   assert.equal(run.status, 2);
+});
+
+test('CLI: an unknown base with --run warns and runs the whole suite', () => {
+  const { dir } = repo();
+  const run = spawnSync('node', [script, '--repo', dir, '--base', 'nope', '--run', '--dry-run'], { encoding: 'utf8' });
+  assert.equal(run.status, 0);
+  assert.match(run.stderr, /WARNING.*Unknown base "nope".*whole suite/);
+  assert.match(run.stdout, /^ALL\nwould run: npm run e2e\n$/);
+});
+
+test('CLI: a path that is not a git repository with --run runs the whole suite', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'select-areas-nogit-'));
+  const run = spawnSync('node', [script, '--repo', dir, '--run', '--dry-run'], { encoding: 'utf8' });
+  assert.equal(run.status, 0);
+  assert.match(run.stdout, /would run: npm run e2e\n$/);
+});
+
+test('CLI: a tag list runs e2e:area', () => {
+  const { dir } = repo();
+  mkdirSync(join(dir, 'js-storefront/stripestore/e2e/checkout'), { recursive: true });
+  writeFileSync(join(dir, 'js-storefront/stripestore/e2e/checkout/sepa-failed.spec.ts'), 'x\n');
+  const run = cli(dir, '--run', '--dry-run');
+  assert.match(run.stdout, /would run: npm run e2e:area -- @sepa\n$/);
+});
+
+test('CLI: --base without a value, or with a flag as value, exits with 2', () => {
+  const { dir } = repo();
+  for (const extra of [['--base'], ['--base', '--run']]) {
+    const run = spawnSync('node', [script, '--repo', dir, ...extra], { encoding: 'utf8' });
+    assert.equal(run.status, 2, extra.join(' '));
+    assert.match(run.stderr, /--base needs a value/);
+  }
+});
+
+test('CLI: a Java file that moves out of a package still selects the old package', () => {
+  const { dir, git } = repo();
+  const old = 'core-customize/hybris/custom/stripe/stripecore/src/com/stripe/core/customer';
+  mkdirSync(join(dir, old), { recursive: true });
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  writeFileSync(join(dir, old, 'Moved.java'), 'class Moved {}\n'.repeat(20));
+  git('add', '.');
+  git('commit', '-q', '-m', 'add');
+  git('checkout', '-q', '-b', 'move');
+  git('mv', join(old, 'Moved.java'), join('docs', 'Moved.java'));
+  git('commit', '-q', '-m', 'move');
+  // The new path (docs/) needs no e2e. The old path (customer/) gives @bank-transfer.
+  assert.equal(spawnSync('node', [script, '--repo', dir, '--base', 'topic'], { encoding: 'utf8' }).stdout, '@bank-transfer\n');
+});
+
+test('CLI: a file name with non-ASCII characters is read as it is', () => {
+  const { dir } = repo();
+  const folder = 'js-storefront/stripestore/e2e/checkout';
+  mkdirSync(join(dir, folder), { recursive: true });
+  writeFileSync(join(dir, folder, 'sepa-ñandú.spec.ts'), 'x\n');
+  assert.equal(cli(dir).stdout, '@sepa\n');
 });
