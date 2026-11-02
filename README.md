@@ -441,6 +441,14 @@ cd js-storefront/stripestore
 npm run e2e
 ```
 
+Before anything else, the global setup runs a preflight (`e2e/support/preflight.ts`). It fails in seconds, and names the value it used, when:
+
+- `E2E_BASE_URL` does not answer or does not serve the stripestore app (its `<title>` must be `Stripestore`);
+- `E2E_OCC_URL` + `/hac/` does not answer with 200 or 302;
+- `stripe listen ... --forward-to` is not running.
+
+Each check has a 10 s limit.
+
 The global setup (`e2e/global-setup.ts`) sets short timings on the running server through the HAC: `stripe.webhook.graceperiod.seconds=20`, `stripe.payment.pending.retry.seconds=10`, `stripe.capture.mode=manual`. A server restart reads `local.properties` again.
 
 The battery has the projects `checkout`, `after-purchase`, and `webhooks`. Run one with `npx playwright test --project=checkout`.

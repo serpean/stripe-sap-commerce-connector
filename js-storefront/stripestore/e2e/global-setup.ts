@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
 import { refillTestStock, setConfig } from './support/backend';
 import { Currency, findProductCandidates } from './support/occ';
+import { preflight } from './support/preflight';
 
 /** Short connector timings for the tests. They change the running server only; a restart reads local.properties. */
 export const TEST_TIMINGS: Record<string, string> = {
@@ -17,10 +17,7 @@ export const TEST_TIMINGS: Record<string, string> = {
 };
 
 export default async function globalSetup(): Promise<void> {
-  const listeners = execFileSync('ps', ['-axo', 'command']).toString().split('\n').filter((c) => /stripe listen .*--forward-to/.test(c));
-  if (!listeners.length) {
-    throw new Error('Start core-customize/scripts/stripe-listen.sh first: the tests need the webhooks');
-  }
+  await preflight();
   for (const [key, value] of Object.entries(TEST_TIMINGS)) {
     await setConfig(key, value);
   }
