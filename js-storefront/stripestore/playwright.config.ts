@@ -30,7 +30,12 @@ export default defineConfig({
   retries: 1,
   // One worker unless the command line says otherwise: the serial project must never share the server.
   workers: 1,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: phase ? `playwright-report/${phase}` : 'playwright-report' }]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: phase ? `playwright-report/${phase}` : 'playwright-report' }],
+    // e2e/run.mjs reads this file to name the flaky tests (they passed only on a retry).
+    ...(phase ? [['json', { outputFile: `test-results/results-${phase}.json` }] as const] : []),
+  ],
   use: {
     ...devices['Desktop Chrome'],
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4200',

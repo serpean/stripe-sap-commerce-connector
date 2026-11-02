@@ -163,3 +163,10 @@ test('CLI: a file name with non-ASCII characters is read as it is', () => {
   writeFileSync(join(dir, folder, 'sepa-ñandú.spec.ts'), 'x\n');
   assert.equal(cli(dir).stdout, '@sepa\n');
 });
+
+test('webhook handlers select @after-purchase: the refund handler is checked only there', () => {
+  const handler = `${CORE}/webhook/impl/DefaultStripeRefundEventHandler.java`;
+  const facade = 'core-customize/hybris/custom/stripe/stripefacades/src/com/stripe/facades/webhook/impl/DefaultStripeWebhookFacade.java';
+  assert.ok(selectAreas([handler], rules).includes('@after-purchase'));
+  assert.ok(selectAreas([facade], rules).includes('@after-purchase'));
+});
