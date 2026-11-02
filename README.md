@@ -395,6 +395,13 @@ cd "$HYBRIS_PLATFORM/installer"
 
 To go back to HSQLDB, run `scripts/dev/refdb.sh use-hsqldb`. It removes only that block and that file. A new database needs `initialize` once.
 
+If the server cannot connect to `localhost:5433` and you use colima, colima may not forward ports bound to `127.0.0.1`. Open an SSH tunnel to the VM, on `127.0.0.1` only:
+
+```bash
+colima ssh-config > "$TMPDIR/colima.ssh"
+ssh -F "$TMPDIR/colima.ssh" -N -L 127.0.0.1:5433:127.0.0.1:5433 colima &
+```
+
 ### 4. Stripe CLI and webhooks
 
 Install the [Stripe CLI](https://docs.stripe.com/stripe-cli). In a second terminal:
@@ -464,13 +471,14 @@ ant yunitinit
 ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
 ```
 
-With PostgreSQL (`refdb.sh use-postgres`), the junit tenant has its own database, `hybris_junit`. `ant yunitinit` initializes it once. The integration tests then do not change the data of the master tenant, and they can run while the server runs. The running server holds the RMI port `2198` of `mediaconversion`, so give the tests another port:
+With PostgreSQL (`refdb.sh use-postgres`), the junit tenant has its own database, `hybris_junit`. `ant yunitinit` initializes it once. The integration tests then do not change the data of the master tenant, and they can run while the server runs. When the server runs, set two variables for the tests:
 
 ```bash
-y_os_rmiregistry_port=2199 ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
+y_os_rmiregistry_port=2199 y_solrserver_instances_default_autostart=false \
+  ant integrationtests -Dtestclasses.extensions=stripecore,stripefacades,stripeocc
 ```
 
-SAP Commerce reads a `y_` environment variable as a property (`y_os_rmiregistry_port` is `os.rmiregistry.port`). The server keeps its port.
+SAP Commerce reads a `y_` environment variable as a property (`y_os_rmiregistry_port` is `os.rmiregistry.port`). The server holds the RMI port `2198` of `mediaconversion`, so the tests use another port. Without the second variable, the tests use the Solr of the server and stop it when they end.
 
 Use `ant clean all` after a failed build. The Spartacus library tests run with `ng test` in `js-storefront/stripestore`.
 

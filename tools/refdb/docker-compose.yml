@@ -8,6 +8,8 @@ services:
   postgres:
     image: postgres:16
     container_name: stripe-refdb
+    # Start again after a restart of the Docker engine (for example a colima VM restart).
+    restart: unless-stopped
     environment:
       POSTGRES_USER: hybris
       # Local, fixed password. It is not a production secret.
